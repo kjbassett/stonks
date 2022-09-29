@@ -1,7 +1,7 @@
 # stonks
 A Futile Attempt at Making Money.
 
-Predicting the stock market based on price movement is hard, and it's not something I particularly want to learn. This project does not do stock market analysis in that way. Instead let's think of an easier way.
+Predicting the stock market based on price movement and statistical indicators is hard, and it's not something I particularly want to learn. This project does not do stock market analysis in that way. Instead let's think of an easier way.
 
 If someone says that the a certain company's stock price will go up, the likelihood of it going up increases. If someone says it will go down, the likelihood of it decreasing goes up. In other words, not only does the state of the market influence people's predictions, people's predictions have an influence on the stock market. I believe that most people underestimate the influence of the predicting party.
 
