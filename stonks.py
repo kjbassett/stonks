@@ -5,10 +5,10 @@ import os
 import numpy as np
 from sklearn.impute import KNNImputer
 from sklearn.model_selection import train_test_split
-from Stocks.scraper import Scraper
-from Stocks.models import ALL_MODELS
-from Stocks.ameritrade_api import calc_date, get_changes
-from pyschej import scheduler
+from scraper import Scraper
+from models import ALL_MODELS
+from ameritrade_api import calc_date, get_changes
+# from pyschej import scheduler
 import time
 
 pd.options.display.float_format = '{:.3f}'.format
