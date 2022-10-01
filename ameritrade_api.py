@@ -93,7 +93,8 @@ def get_changes(df, start, days, save=False, load_progress=True, query_only=Fals
 
     :param df: dataframe onto which a column containing the price change as a % will be added
     :param start: beginning date
-    :param save: save results for future use?
+    :param days: Number of days in the future to
+    :param save: Boolean, save results for future use
     :param load_progress: If True, loads progress if process ended before get_changes could finish
     :param query_only: Only query Ameritrade API instead of getting result from saved file if True
     :return: df with results in 'y' column
