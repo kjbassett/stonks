@@ -3,7 +3,6 @@
     # Search in a folder, each src is its own folder within. Needs a successful run first if needs column names
     # New Source Template
 
-import keyring
 import re
 from multiprocessing import Pool
 from selenium import webdriver
@@ -15,6 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
+from useful_funcs import get_cred
 import pandas as pd
 import time
 import os
@@ -241,8 +241,8 @@ class Scraper:
 
         user = WebDriverWait(driver, 10).until(ec.visibility_of_element_located((By.NAME, "su_username")))
         pw = WebDriverWait(driver, 10).until(ec.visibility_of_element_located((By.NAME, "su_password")))
-        username = keyring.get_password('ameritrade', 'username')
-        password = keyring.get_password('ameritrade', 'password')
+        username = get_cred('ameritrade', 'username')
+        password = get_cred('ameritrade', 'password')
         while user.get_attribute('value') != username or pw.get_attribute('value') != password:
             user.clear()
             pw.clear()
@@ -263,8 +263,8 @@ class Scraper:
 
             time.sleep(0.2)
             qna = {
-                keyring.get_password('ameritrade', f'security_question_{i}'):
-                keyring.get_password('ameritrade', f'security_answer_{i}')
+                get_cred('ameritrade', f'security_question_{i}'):
+                get_cred('ameritrade', f'security_answer_{i}')
                 for i in range(4)
             }
 
@@ -350,8 +350,8 @@ class Scraper:
     def rh_login(driver):
         driver.get('https://robinhood.com/login')
         user_field = WebDriverWait(driver, 10).until(ec.visibility_of_element_located((By.NAME, "username")))
-        username = keyring.get_password('robinhood', 'username')
-        password = keyring.get_password('robinhood', 'password')
+        username = get_cred('robinhood', 'username')
+        password = get_cred('robinhood', 'password')
         user_field.send_keys(username)
         for e in driver.find_elements_by_tag_name('input'):
             if e.get_attribute('type') == 'password':

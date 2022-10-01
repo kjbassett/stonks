@@ -3,6 +3,7 @@ from requests.exceptions import SSLError as SSLError_, ConnectionError
 from OpenSSL.SSL import SysCallError
 from ssl import SSLError
 from dateutil.easter import easter
+from useful_funcs import calc_date, get_cred
 import numpy as np
 import pandas as pd
 import holidays
@@ -11,28 +12,12 @@ import json
 import os
 import datetime
 import time
-import keyring
-
-
-def calc_date(date, business_days):
-    if not business_days:
-        return date
-
-    end_date = date
-    counter = 0
-    direction = abs(business_days) / business_days
-    while counter < abs(business_days):
-        end_date += datetime.timedelta(days=direction)
-        if is_open(end_date):
-            counter += 1
-
-    return end_date
 
 
 def get_price_data(ticker, start, end):
     # Currently calling this function with 9:30 as start and end
     print(ticker)
-    api_key = keyring.get_password('ameritrade_api', 'api_key')
+    api_key = get_cred('ameritrade_api', 'api_key')
     url = f'https://api.tdameritrade.com/v1/marketdata/{ticker}/pricehistory?apikey={api_key}' \
           f'&endDate={end + 3600000}&startDate={start - 3600000}&needExtendedHoursData=false '
     for tries in range(5):
