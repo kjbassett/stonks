@@ -2,6 +2,8 @@ import datetime
 import holidays
 from dateutil.easter import easter
 import keyring
+import os
+import pandas as pd
 
 
 def is_open(date):
@@ -43,3 +45,7 @@ def get_cred(service, item):
         cred = input(f'No value found for Service: {service}, Item: {item}. Please type it here: ')
         keyring.set_password(service, item, cred)
     return cred
+
+
+# Yeah, I know this isn't pep8, but I couldn't waste 4 lines on something so simple. Plus this is cooler 😎
+load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
