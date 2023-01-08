@@ -10,7 +10,8 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from useful_funcs import get_cred
 
-def rh_tickers(self, driver):
+
+def get_tickers(driver):
     while 'Trending Lists' not in driver.page_source:
         time.sleep(1)
     html = BeautifulSoup(driver.page_source, features='lxml')
@@ -38,39 +39,31 @@ def rh_tickers(self, driver):
             except TimeoutException:
                 continue
 
-    tickers = list(set(tickers))
-    tickers = pd.DataFrame({'Ticker': tickers, 'Source': ['Robinhood'] * len(tickers)})
-    self.save_progress(tickers, 'Tickers')
-
-    tickers['Robinhood'] = np.nan
-
-    return tickers.drop(columns=['Source'])
+    return pd.Series(tickers).unique()
 
 
-def _robinhood(row, driver):
+def get_rating(driver, ticker):
     # [-1, 1]
-    driver.get("https://robinhood.com/stocks/" + row['Ticker'])
+    driver.get("https://robinhood.com/stocks/" + ticker)
     if driver.title == 'Page not found | Robinhood':
-        row['Robinhood'] = 0
+        return 0
     try:
         section = WebDriverWait(driver, 2.5).until(ec.visibility_of_element_located((By.ID, "analyst-ratings")))
         chart = WebDriverWait(section, 3.5).until(ec.visibility_of_element_located((By.CLASS_NAME, "row")))
         buy, _, sell = [float(n) for n in re.findall('left: ([0-9]{1,2}.*?)%', chart.get_attribute('innerHTML'))]
         result = (buy - sell) / 100
-        row['Robinhood'] = round(result, 1)
+        return round(result, 1)
     except TimeoutException:
-        row['Robinhood'] = np.nan
+        return np.nan
     except ValueError as e:
         print(e)
-        return _robinhood(row, driver)
+        return get_rating(ticker, driver)
     except Exception as e:
         print(e)
-        row['Robinhood'] = np.nan
-
-    return row
+        return np.nan
 
 
-def rh_login(driver):
+def login(driver):
     driver.get('https://robinhood.com/login')
     user_field = WebDriverWait(driver, 10).until(ec.visibility_of_element_located((By.NAME, "username")))
     username = get_cred('robinhood', 'username')
@@ -84,3 +77,47 @@ def rh_login(driver):
         if e.get_attribute('type') == 'submit':
             e.click()
             break
+
+
+def main(send_q, recv_q):
+    driver = webdriver.Chrome()
+    login(driver)
+
+    # Todo check if tickers already retrieved
+    tickers = get_tickers(driver)
+    send_q.put({'Ticker': tickers, 'Source': 'Robinhood'})
+
+    while True:
+
+        for i in tickers.index:
+            t = tickers.pop(i)
+            print(f'Robinhood\t{t}\t{len(tickers)}')
+            send_q.put({'Ticker': t, 'Robinhood': get_rating(driver, t)})
+
+        if not recv_q.empty():
+            r = recv_q.get()
+            if isinstance(r, pd.Series):  # More tickers
+                tickers = pd.concat([tickers, r])
+            elif isinstance(r, str):
+                if r == 'STOP':
+                    break
+
+    driver.quit()
+
+
+if __name__ == '__main__':
+    from timeit import default_timer as timer
+    from datetime import timedelta
+    from multiprocessing import Queue, Process
+
+    start = timer()
+    q1 = Queue()
+    q2 = Queue()
+    p = Process(target=main, args=(q1, q2))
+    p.start()
+    msg = None
+    while not isinstance(msg, str):
+        msg = q1.get()
+        print(msg)
+    stop = timer()
+    print(timedelta(seconds=stop - start))
