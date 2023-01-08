@@ -12,15 +12,37 @@ from selenium.common.exceptions import TimeoutException, NoSuchWindowException, 
 from selenium.webdriver.support.ui import WebDriverWait
 from useful_funcs import get_cred
 
-def amer_tickers(self, driver):
+
+class_tags = {
+    'newConstructs': 'new-constructs-rating',
+    'cfra': 'cfra-rating',
+    'ford': 'ford-rating',
+    'theStreet': 'stree-rating',
+    'researchTeam': 'research-team-rating'
+}
+
+srcs = {
+    'newConstructs': 'New Constructs',
+    'researchTeam': 'Research Team',
+    'theStreet': 'The Street',
+    'cfra': 'CFRA',
+    'ford': 'Ford'
+}
+
+
+def get_tickers(driver):
+    """
+    Gets a list of tickers from the Ameritrade
+    :param driver: webdriver.Chrome(), must already be logged in
+    :return: pd.Series() of ticker symbols (str)
+    """
     dl_path = os.path.expanduser("~") + '\\Downloads\\export-net.xlsx'
     if os.path.exists(dl_path):
         os.remove(dl_path)
-    tickers = []
     driver.get('https://invest.ameritrade.com/grid/p/site#r=MarketCalendar?eventType=ratings')
     time.sleep(3)
 
-    for _ in range(3):
+    for _ in range(3):  # Due to bug on Ameritrade's side, might need to try more than once
         driver.get(
             'https://invest.ameritrade.com/grid/p/site#r=jPage/https://research.ameritrade.com/grid/wwws/screener'
             '/stocks/results.asp?section=stocks&savedName=Strong%20Buys&recentNumber=0&c_name=invest_VENDOR')
@@ -30,29 +52,17 @@ def amer_tickers(self, driver):
             time.sleep(0.5)
         time.sleep(3)
         file = pd.read_excel(dl_path, sheet_name='Basic View', skiprows=1)
-        # os.remove(dl_path)
-        if len(file.index) < 2000:  # Sometimes there is a bug that pulls in nearly 10000 tickers
-            tickers = pd.DataFrame({'Ticker': file['Symbol'].unique(), 'Source': 'Ameritrade'})
-            tickers = tickers[tickers['Ticker'].str.len() < 5]
-            tickers = tickers.head(min(200, len(tickers.index)))
-            self.save_progress(tickers, 'Tickers')
-            break
-
-    # Add in empty columns
-    for col in ['New Constructs', 'Research Team', 'The Street', 'CFRA', 'Ford']:
-        tickers[col] = np.nan
-    return tickers.drop(columns=['Source'])
+        os.remove(dl_path)
+        if len(file.index) < 2000:  # Bug mentioned above pulls in nearly 10000 tickers
+            return file['Symbol'].unique().rename('Ticker')
 
 
-def _ameritrade(self, row, driver):
-    print(row['Ticker'])
+def get_rating(driver, ticker):
     url1 = 'https://invest.ameritrade.com/grid/p/site#r=jPage/'
-    url2 = f'https://research.ameritrade.com/grid/wwws/research/stocks/analystreports?symbol={row["Ticker"]}'
+    url2 = f'https://research.ameritrade.com/grid/wwws/research/stocks/analystreports?symbol={ticker}'
     url = url1 + url2
-
-    srcs = {'newConstructs': 'New Constructs', 'researchTeam': 'Research Team', 'theStreet': 'The Street',
-            'cfra': 'CFRA', 'ford': 'Ford'}
     tries = 0
+    data = dict()
 
     while tries < 3:
         try:
@@ -67,12 +77,12 @@ def _ameritrade(self, row, driver):
         except (TimeoutException, WebDriverException):
             if re.findall('/etfs/', driver.current_url) or 'symbolFailure' in driver.current_url:
                 print('ETF or not found')
-                return row
+                return data
             continue
 
     if re.findall('/etfs/', driver.current_url) or tries == 3 or 'symbolFailure' in driver.current_url:
         print('Ameritrade: max tries exceeded or ETF or not found')
-        return row
+        return data
 
     for tries in range(3):
         try:
@@ -87,13 +97,13 @@ def _ameritrade(self, row, driver):
         except AttributeError as e:
             print(e)
     else:
-        return row
+        return data
 
     for rating in ratings:
         name = rating.find('td').attrs['data-value']
         if name not in srcs.keys() or rating.find_all('div', attrs={'class': 'no-rating-provided'}):
             continue
-        rating_box = rating.find('div', attrs={'class': self.class_tags[name]})
+        rating_box = rating.find('div', attrs={'class': class_tags[name]})
         for rec, r in enumerate(rating_box.find_all('div')):
             if r.has_attr('class'):
                 break
@@ -107,20 +117,19 @@ def _ameritrade(self, row, driver):
             elif name == 'ford':
                 rec = - 0.5 * rec + 1
             if rec > 1 or rec < -1:
-                print(f'Check {name} for {row["Ticker"]}. {rec}')
+                print(f'Check {name} for {ticker}. {rec}')
                 rec = np.nan
         except ValueError:
             rec = np.nan
         except Exception as e:
             print(type(e), e)
             rec = np.nan
-        row[srcs[name]] = rec
+        data[srcs[name]] = rec
 
-    return row
+    return data
 
 
-@staticmethod
-def amer_login(driver):
+def login(driver):
     driver.get('https://invest.ameritrade.com/grid/p/login')
 
     btn = WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CLASS_NAME, "cafeLoginButton")))
@@ -174,3 +183,50 @@ def amer_login(driver):
     while driver.current_url != 'https://invest.ameritrade.com/grid/p/site#r=home':
         pass
     time.sleep(1)
+
+
+def main(send_q, recv_q):
+    driver = webdriver.Chrome()
+    login(driver)
+
+    # Todo check if tickers already retrieved
+    tickers = get_tickers(driver)
+    send_q.put({'Ticker': tickers, 'Source': 'Ameritrade'})
+
+    while True:
+
+        for i in tickers.index:
+            t = tickers.pop(i)
+            print(f'Ameritrade\t{t}\t{len(tickers)}')
+            send_q.put({'Ticker': t, **get_rating(driver, t)})
+
+        if not recv_q.empty():
+            r = recv_q.get()
+            if isinstance(r, pd.Series):  # More tickers
+                tickers = pd.concat([tickers, r])
+            elif isinstance(r, str):
+                if r == 'STOP':
+                    break
+
+    driver.quit()
+
+
+if __name__ == '__main__':
+    from timeit import default_timer as timer
+    from datetime import timedelta
+    from multiprocessing import Queue, Process
+
+    start = timer()
+    q1 = Queue()
+    q2 = Queue()
+    p = Process(target=main, args=(q1, q2))
+    p.start()
+    msg = None
+    while not isinstance(msg, str):
+        msg = q1.get()
+        print(msg)
+    stop = timer()
+    print(timedelta(seconds=stop - start))
+
+# TODO
+#  Handle saving in parent process
