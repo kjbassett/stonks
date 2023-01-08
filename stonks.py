@@ -1,15 +1,18 @@
 import datetime
-from multiprocessing import Pool
+from functools import reduce
 import pandas as pd
 import os
 import numpy as np
+import time
+import importlib
 from sklearn.impute import KNNImputer
-from sklearn.model_selection import train_test_split
-from scraper import Scraper
+from sklearn.model_selection import StratifiedShuffleSplit
 from models import ALL_MODELS
 from ameritrade_api import calc_date, get_changes
+from multiprocessing import Pool, Queue
 # from pyschej import scheduler
-import time
+
+
 
 pd.options.display.float_format = '{:.3f}'.format
 
@@ -39,7 +42,7 @@ def compile_recs(max_date, days, min_date=datetime.date(1900, 1, 1), change=True
 def update_training_data(days):
     """
     Updates and returns all training data according to real world time.
-    Unfiltered data is saved for faster future updates. Filtered (~y.isnull) data is returned
+    Unfiltered data is saved for faster load. Filtered (~y.isnull) data is returned
     :param days: The number days forward your model predicts
     :return: DataFrame of all up-to-date training data
     """
@@ -127,12 +130,11 @@ def compile_sources(one_hot=False):
     # Returns dataframe of date, ticker, and the source that recommended it on that day.
     df = pd.DataFrame(columns=['Date', 'Ticker', 'Source'])
     for fol in os.listdir('DailyRecs'):
-        path = 'DailyRecs' + f'/{fol}'
-        for file in os.listdir(path):
-            if file[:7] == 'Tickers':
-                new = pd.read_csv(path + f'/{file}')
-                new['Date'] = datetime.datetime.strptime(fol, '%Y-%m-%d').date()
-                df = pd.concat([df, new], ignore_index=True)
+        path = 'DailyRecs/' + f'{fol}/' + 'Symbols.csv'
+        if os.path.exists(path):
+            new = pd.read_csv(path)
+            new['Date'] = datetime.datetime.strptime(fol, '%Y-%m-%d').date()
+            df = pd.concat([df, new], ignore_index=True)
 
     if one_hot:
         df['val'] = 1
@@ -299,7 +301,7 @@ def predict(date, days, train, test, new):
     return summary
 
 
-def main(date=datetime.date.today(),
+def old_main(date=datetime.date.today(),
          days=5,
          include=None):
     if not include:
@@ -309,7 +311,7 @@ def main(date=datetime.date.today(),
     scraper.run()
 
     print(f'Compiling Historical data')
-    train = update_training_data(days)
+    train = update_training_data(days)  # update in case any past days are missing
     print(f"Compiling data for {date}")
     new = compile_recs(date, days, calc_date(date, -1), change=False)
 
@@ -364,13 +366,185 @@ def main(date=datetime.date.today(),
     print(results)
 
 
+def tts(data, y, n_splits=1):
+    # Create a StratifiedShuffleSplit object
+    sss = StratifiedShuffleSplit(n_splits=n_splits, test_size=0.2, random_state=42)
+
+    # Select the target column
+    y = data['target']
+
+    # Drop the target column from the dataframe
+    X = data.drop('target', axis=1)
+
+    # Generate the splits
+    for train_index, test_index in sss.split(X, y):
+        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+
+def train_models(date, prediction_range):
+    train = update_training_data(prediction_range)  # update in case any past days are missing
+    # Todo make sure Date and Symbol are part of the index
+
+    # Get SRC columns in one-hot format
+    sources = compile_sources(one_hot=True)
+    train = train.merge(sources, how='inner')
+
+    train['na%'] = train.isnull().sum(axis=1) / len(train.columns)
+    train = filter_data(train, date, prediction_range)
+    train['y'] = train['y'] * 100  # TODO convert historical data and get_changes to this format
+
+    # Split train into train and test
+    train, test = tts(train, 'y', n_splits=1)
+
+    # Imputation
+    imp_col = [c for c in train.columns if c not in ['na%', 'Date', 'Ticker']]  # columns to impute
+    imputer = KNNImputer(n_neighbors=20)
+    imputer.fit(train[imp_col])
+    t = time.perf_counter()
+    print('Imputing')
+    train[imp_col] = imputer.transform(train[imp_col])
+    test[imp_col] = imputer.transform(test[imp_col])
+    print(f'Imputation took {time.perf_counter() - t} seconds.')
+
+
+def format_data(new: [dict, pd.DataFrame]):
+    if isinstance(new, dict):
+        new = pd.DataFrame(new)
+
+    if 'Source' in new.columns:
+        for s in new['Source'].unique():
+            new['SRC_' + s] = 0
+            new['SRC_' + s] = new.where(new['Source'] == s, 1)
+        new = new.drop(columns=['Source'])
+
+    new = new.set_index('Symbol')
+    return new
+
+
+def check_completion(folder):
+    if os.path.exists(folder + 'data.csv'):
+        return True
+    return False
+
+
+def is_complete(pool):
+    if all(p.is_alive() for p in pool):
+        return True
+    return False
+
+
+def start_sources():
+    sources = dict()
+    pool = Pool(7)
+    recv_q = Queue()
+    send_qs = []
+    for file in os.listdir('Sources'):
+        if file.endswith('.py'):
+            sources[file] = {
+                'main': importlib.import_module('Sources.' + file[:-3]).main,
+                'recv_q': Queue(),
+                'last_t': time.time()
+            }
+
+            pool.apply_async(sources[file].main, args=(recv_q, send_qs[-1]))
+    return pool, recv_q, send_qs
+
+
+def fancy_update(data, new):
+    # Todo data needs new columns from new
+    data = data.merge(new[[c for c in new.columns if c not in data.columns]])
+
+    data = data.set_index(data.index.join(new.index, how='outer'))
+    data.update(new)
+
+    return data
+
+
+def get_new_data(recv_q):
+    new = None
+    while not recv_q.empty():
+        if new is None:
+            new = format_data(recv_q.get())
+        else:
+            new = fancy_update(new, format_data(recv_q.get()))
+    return new
+
+
+def handle_incoming(pool, recv_q, send_qs, models):
+    puq = {}
+    i = 0
+    while not is_complete(pool):
+        new = get_new_data(recv_q)
+        data = fancy_update(data, new)
+
+        # prediction update queue. Don't need to update prediction on every iteration
+        puq.update(new['Symbol'])
+
+        for queue in send_qs:
+            queue.put(new[~new['Source'].isna()]['Symbol'])
+
+        if i % 10 == 0:
+            new_ys = predict(data.loc[list(puq)].drop(columns='y'), models)
+            data.update(new_ys)
+            save_progress(data)
+            puq = {}
+
+        i += 1
+    pool.close()
+    pool.join()
+    data.update(predict(data.drop(columns='y'), models))
+    save_progress(data)
+    clean_temp(date)
+
+
+def save_progress(folder, data):
+    # Undo one-hot encoding for sources
+    srcs = [col for col in data.columns if col.startswith('SRC_')]
+
+    d1 = data.drop(srcs).remove_duplicates()
+    d1.to_csv(folder + 'data.csv')
+
+    # Good luck with this one. I wanted to see if I could put it in one line.
+    d2 = reduce(lambda df1, df2: df1.merge(df2), map([data[data[s] == 1][[s]].replace(1, s[4:]) for s in srcs]))
+    d2.to_csv(folder + 'sources.csv')
+
+
+def clean_temp(folder):
+    for f in os.listdir(folder):
+        if f not in ['data.csv', 'sources.csv']:
+            os.remove(folder + f)
+
+
+def main(prediction_range, date=datetime.date.today(), user_symbols=None):
+    d = date.strftime('%Y-%m-%d')
+    f = f"DailyRecs\\{d}\\"
+    if not os.path.exists(f):
+        os.mkdir(f)
+
+    check_completion(f)
+
+    if user_symbols is None:
+        user_symbols = []
+
+        data = pd.DataFrame(index={'Symbol': user_symbols, 'y': None})
+
+    pool, recv_q, send_qs = start_sources()
+    for q in send_qs:
+        q.put(user_symbols)
+
+    # Train models while other processes are working
+    models = train_models(date, prediction_range)  # Contains imputer
+
+    data = handle_incoming(pool, recv_q, send_qs, models)
+
+
 if __name__ == '__main__':
     print(ALL_MODELS)
 
     # Args
     prediction_range = 5  # How many days in the future we are predicting
     start_time = datetime.datetime(2022, 5, 4, 9, 5)  # year month day hour minute
-    mimicUser = True  # Move mouse occasionally
     tcks = pd.read_csv('tickers.csv')['Ticker'].unique().tolist()
     # restart_freq
 
