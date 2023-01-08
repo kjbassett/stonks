@@ -4,27 +4,7 @@ from bs4 import BeautifulSoup
 import re
 
 
-def dm(self):
-    data = self.load_progress('DailyMax')
-    if all([col in data.columns for col in ['Ticker', 'DMDaily', 'DMWeekly']]):
-        if (data['DMDaily'] != 0).any() and (data['DMWeekly'] != 0).any():
-            return data
-    driver = webdriver.Chrome(executable_path=self.driver_path)
-    daily = self.dailyMaxALL(driver)
-    weekly = {**self.dailyMaxTSLT10(driver), **self.dailyMaxTTS(driver)}
-    tickers = sorted(set(list(weekly.keys()) + list(daily.keys())))
-    data = pd.DataFrame({'Ticker': tickers})
-    data['DMDaily'] = data.apply(lambda row: daily[row['Ticker']] if row['Ticker'] in daily.keys() else 0, axis=1)
-    data['DMWeekly'] = data.apply(lambda row: daily[row['Ticker']] if row['Ticker'] in daily.keys() else 0,
-                                  axis=1)
-
-    self.save_progress(data, 'DailyMax')
-    self.save_progress(pd.DataFrame({'Ticker': tickers, 'Source': 'DailyMax'}), 'Tickers')
-    driver.quit()
-    return data
-
-
-def dailyMaxALL(driver):
+def daily_max_all(driver):
     # All free daily stock picks
     # -1, 0, 1
     driver.get("http://www.dailymaxoptions.com/free-stock-picks/")
@@ -48,7 +28,7 @@ def dailyMaxALL(driver):
     return dict(results)
 
 
-def dailyMaxTSLT10(driver):
+def daily_max_tslt10(driver):
     # Top Stocks Less Than $10
     # -1, -0.5, 0, 0.5, 1
     driver.get("http://www.dailymaxoptions.com/top-rated-under-10-stocks/")
@@ -72,7 +52,7 @@ def dailyMaxTSLT10(driver):
     return dict(results)
 
 
-def dailyMaxTTS(driver):
+def daily_max_tts(driver):
     # Top Tech Stocks
     # -1, -0.5, 0, 0.5, 1
     # headers = {'user-agent': 'my-app/0.0.1'}
@@ -95,3 +75,38 @@ def dailyMaxTTS(driver):
     if not results:
         print('dailyMaxTTS did not find any tickers')
     return dict(results)
+
+
+def main(send_q):
+    driver = webdriver.Chrome()
+    daily = daily_max_all(driver)
+    weekly = {**daily_max_tslt10(driver), **daily_max_tts(driver)}
+    tickers = sorted(set(list(weekly.keys()) + list(daily.keys())))
+    data = pd.DataFrame({'Ticker': tickers})
+    data['DMDaily'] = data.apply(lambda row: daily[row['Ticker']] if row['Ticker'] in daily.keys() else 0, axis=1)
+    data['DMWeekly'] = data.apply(lambda row: weekly[row['Ticker']] if row['Ticker'] in weekly.keys() else 0, axis=1)
+    data['Source'] = 'DailyMax'
+
+    send_q.put(data)
+    driver.quit()
+
+
+if __name__ == '__main__':
+    from timeit import default_timer as timer
+    from datetime import timedelta
+    from multiprocessing import Queue, Process
+
+    start = timer()
+    q1 = Queue()
+    q2 = Queue()
+    p = Process(target=main, args=(q1, q2))
+    p.start()
+    msg = None
+    while not isinstance(msg, str):
+        msg = q1.get()
+        print(msg)
+    stop = timer()
+    print(timedelta(seconds=stop - start))
+    q1.close()
+    q2.close()
+    p.join()
