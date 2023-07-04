@@ -1,6 +1,6 @@
 # I'm not really sure why why I used OOP either, but it works.
 # TODO New Source Template
-from multiprocessing import Pool
+from multiprocessing import Pool, Queue
 from selenium import webdriver
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.chrome.options import Options
@@ -9,7 +9,7 @@ import time
 import os
 import numpy as np
 import datetime
-import glob
+import importlib
 
 
 class Scraper:
@@ -51,14 +51,13 @@ class Scraper:
                            'theStreet': 'stree-rating',
                            'researchTeam': 'research-team-rating'}
 
-
         self.driver_path = r'C:\Users\Ken\Dropbox\Programming\chromedriver.exe'
 
         self.mimicUser = mimicUser
 
     def get_ratings(self, y, rating_func=None, login_func=None, ticker_func=None, extension_path=None):
         caps = DesiredCapabilities().CHROME
-        #uBlock path
+        # uBlock path
         chrome_options = Options()
         if extension_path:
             version = os.listdir(extension_path)[0]
@@ -74,7 +73,7 @@ class Scraper:
             ticker_func = self.rh_tickers
         elif y == 'Zacks':
             rating_func = self._zacks
-            #caps["pageLoadStrategy"] = "eager"
+            # caps["pageLoadStrategy"] = "eager"
         elif y == 'DailyMax':
             return self.dm()
         else:
@@ -114,7 +113,6 @@ class Scraper:
 
         driver.quit()
         return data
-
 
     def run(self):
         # Main is only made at the very end after all files are merged. Read in finished file
@@ -156,30 +154,6 @@ class Scraper:
         self.clean()
         return results
 
-    def load_progress(self, source):
-        filepath = self.filepaths[source]
-
-        if source == 'Tickers':
-            if os.path.exists(filepath):
-                return pd.read_csv(filepath).drop_duplicates(subset='Ticker')
-            elif self.date == datetime.date.today():
-                return pd.DataFrame({'Ticker': self.include, 'Source': 'User'})
-            else:
-                return pd.DataFrame({'Ticker': [], 'Source': []})
-
-        # Check for completed file
-        if os.path.exists(filepath):
-            return pd.read_csv(filepath)
-
-        fld, fle = os.path.split(filepath)
-        filepath = os.path.join(fld, '_' + fle)
-
-        # Check for incomplete file
-        if os.path.exists(filepath):
-            return pd.read_csv(filepath)
-        else:
-            return pd.DataFrame({'Ticker': [], **{col: [] for col in self.sources[source]}}).astype({'Ticker': str})
-
     def save_progress(self, data, source, finished=True):
         filepath = self.filepaths[source]
 
@@ -203,3 +177,28 @@ class Scraper:
         for file in os.listdir(fld):
             if not (file in self.filepaths['Main'] or file in self.filepaths['Tickers']):
                 os.remove(os.path.join(fld, file))
+
+
+"""
+Thinking time:
+
+Need to keep track of which tickers came from where
+Need to know when all ticker_funcs are done so processes don't have to keep waiting
+Some main funcs are ticker funcs
+Easiest if each one saves its own progress, but each process needs to see tickers from other sources as they run
+    Can be accomplished with queue/pipe, individual files, or class object
+
+Ideas:
+    1. Each process keeps rereading other processes' ticker files.
+        Pros: 
+            Easiest
+        Cons:
+            Will make lots of files
+
+    2. Keep same structure, add argument that lets user choose if a Source's rating func will also count as ticker func
+
+    3. multiprocessing queue, child processes set data to parent via queue. Each process checks it's own progress
+        Data format = pd.DataFrame() with ticker, source (optional), and rating columns
+        or a dict that can immediately be converted to dataframe of above format with pd.DataFrame(dict_)
+            
+"""

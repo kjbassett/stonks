@@ -164,4 +164,3 @@ def is_open(date):
 
     return True
 
-

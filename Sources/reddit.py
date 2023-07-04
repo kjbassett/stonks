@@ -8,22 +8,46 @@ from useful_funcs import get_cred, load_progress
 import os
 
 
-client = get_cred('reddit_api', 'client_id')
-secret = get_cred('reddit_api', 'client_secret')
-username = get_cred('reddit_api', 'username')
-password = get_cred('reddit_api', 'password')
+"""
+Effective July 1, 2023, the rate limits to use the Data API free of charge are 100 queries per minute per OAuth client
+id if you are using OAuth authentication and ten queries per minute if you are not using OAuth authentication.
+"""
 
-subs = [
-    'wallstreetbets',
-    'stocks',
-    'StockMarket',
-    'investing'
-]
+client = get_cred("reddit_api", "client_id")
+secret = get_cred("reddit_api", "client_secret")
+username = get_cred("reddit_api", "username")
+password = get_cred("reddit_api", "password")
+
+subs = ["wallstreetbets", "stocks", "StockMarket", "investing"]
 subs = sorted(subs)
 
-buy_words = ['ape', 'buy', 'bull', 'up', 'increase', 'green', 'top', 'safe', 'yolo']
-sell_words = ['sell', 'bear', 'down', 'decrease', 'red', 'pump', 'dump']
-negate_words = ['not', 'never', "n't", "no"]
+buy_words = [
+    "ape",
+    "buy",
+    "bull",
+    "up",
+    "increase",
+    "green",
+    "top",
+    "safe",
+    "yolo",
+    "buying",
+    "increasing",
+]
+sell_words = [
+    "sell",
+    "bear",
+    "down",
+    "decrease",
+    "red",
+    "pump",
+    "dump",
+    "selling",
+    "decreasing",
+    "pumping",
+    "dumping",
+]
+negate_words = ["not", "never", "n't", "no"]
 
 
 data_file = f'reddit{datetime.date.today().strftime("%Y-%m-%d")}.csv'
@@ -44,8 +68,8 @@ def post_eater():
             post = yield data
             continue
         for i, post in enumerate([post] + post.comments.list()):
-            text = ''
-            for attr in ['title', 'body']:
+            text = ""
+            for attr in ["title", "body"]:
                 if hasattr(post, attr):
                     text += getattr(post, attr)
 
@@ -55,7 +79,7 @@ def post_eater():
             sw = 0  # counter for "sell" words
             for j, word in enumerate(words):
                 if word in buy_words:
-                    if words[j-1] in negate_words and j:
+                    if words[j - 1] in negate_words and j:
                         sw += 1
                     else:
                         bw += 1
@@ -65,16 +89,16 @@ def post_eater():
                     else:
                         sw += 1
 
-            for tck in re.findall(r'(?<=\$)\w+|[A-Z]{3,6}', text):  # magic
+            for tck in re.findall(r"(?<=\$)\w+|[A-Z]{3,6}", text):  # magic
                 data.append(
                     {
-                        'ID': post.id,
-                        'Ticker': tck,
-                        'Sentiment': sia.polarity_scores(text)['compound'],
-                        'Score': post.score,
-                        'Buy Words': bw,
-                        'Sell Words': sw,
-                        'Timestamp': post.created
+                        "ID": post.id,
+                        "Ticker": tck,
+                        "Sentiment": sia.polarity_scores(text)["compound"],
+                        "Score": post.score,
+                        "Buy Words": bw,
+                        "Sell Words": sw,
+                        "Timestamp": post.created,
                     }
                 )
                 # print(data[-1])
@@ -84,15 +108,16 @@ def post_eater():
 
 def main(queue, save_path):
     # Load progress
-    prog_path = save_path + '_' + data_file
+    prog_path = save_path + "_" + data_file
     data = load_progress(prog_path)  # _ indicates a saved progress file
 
-    reddit = praw.Reddit(client_id=client,
-                         client_secret=secret,
-                         password=password,
-                         user_agent='stonks',
-                         username=username
-                         )
+    reddit = praw.Reddit(
+        client_id=client,
+        client_secret=secret,
+        password=password,
+        user_agent="stonks",
+        username=username,
+    )
 
     pe = post_eater()
     next(pe)
@@ -100,44 +125,57 @@ def main(queue, save_path):
     counter = 0
     for s in enumerate(subs):
         # Check if subreddit is already complete by checking if next sub has started
-        if s in data['Subreddit']:
+        if s in data["Subreddit"]:
             continue
         sub = reddit.subreddit(s)
-        for post in sub.top(time_filter='day'):
+        for post in sub.top(time_filter="day"):
             new = pd.DataFrame(pe.send(post))
-            new['Subreddit'] = s
+            new["Subreddit"] = s
             data = pd.concat([data, new])
             counter += 1
             print(counter)
-        data.to_csv(prog_path)  # Save here because we need to groupBy + aggregate before sending data to parent process
+        data.to_csv(
+            prog_path
+        )  # Save here because we need to groupBy + aggregate before sending data to parent process
 
     # Todo map company name to ticker symbol.
-    data = data.drop_duplicates(['ID', 'Ticker'])
-    data = data.groupby('Ticker').agg(
-        {'Sentiment': 'mean', 'Score': 'mean', 'Buy Words': 'mean', 'Sell Words': 'mean', 'ID': 'count'}
+    data = data.drop_duplicates(["ID", "Ticker"])
+    data = data.groupby("Ticker").agg(
+        {
+            "Sentiment": "mean",
+            "Score": "mean",
+            "Buy Words": "mean",
+            "Sell Words": "mean",
+            "ID": "count",
+        }
     )
-    data = data.rename(columns={
-        'Sentiment': 'Avg Reddit Sentiment',
-        'Score': 'Avg Reddit Score',
-        'Buy Words': 'Avg Reddit Buy Words',
-        'Sell Words': 'Avg Reddit Sell Words',
-        'ID': 'Total Reddit Mentions'
-    })
-    data['Source'] = 'Reddit'
+    data = data.rename(
+        columns={
+            "Sentiment": "Avg Reddit Sentiment",
+            "Score": "Avg Reddit Score",
+            "Buy Words": "Avg Reddit Buy Words",
+            "Sell Words": "Avg Reddit Sell Words",
+            "ID": "Total Reddit Mentions",
+        }
+    )
+    data["Source"] = "Reddit"
     data.to_csv(save_path + data_file)
     os.remove(prog_path)
 
     queue.put(data)
-    queue.put('reddit complete')
+    queue.put("reddit complete")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from timeit import default_timer as timer
     from datetime import timedelta
     from multiprocessing import Queue, Process
+
     start = timer()
     q = Queue()
-    p = Process(target=main, args=(q, 'C:\\Users\\Ken\\Dropbox\\Programming\\Stonks\\tmp\\'))
+    p = Process(
+        target=main, args=(q, "C:\\Users\\Ken\\Dropbox\\Programming\\Stonks\\tmp\\")
+    )
     p.start()
     msg = None
     while not isinstance(msg, str):
@@ -150,3 +188,5 @@ if __name__ == '__main__':
 # TODO
 #  In parent func: track if company is hasn't been mentioned recently
 #  Filter out false positives for ticker symbol detection? Or leave that to the filtering step before analysis?
+#  Save posts to hard drive and abstract out the encoding.
+#  Convert to standard interface

@@ -2,76 +2,16 @@ import datetime
 from functools import reduce
 import pandas as pd
 import os
-import numpy as np
 import time
 import importlib
-from sklearn.impute import KNNImputer
-from sklearn.model_selection import StratifiedShuffleSplit
 from models import ALL_MODELS
-from ameritrade_api import calc_date, get_changes
+from ameritrade_api import calc_date
 from multiprocessing import Pool, Queue
+from train_models import main as train_models
+from train_models import compile_sources
 # from pyschej import scheduler
 
-
-
 pd.options.display.float_format = '{:.3f}'.format
-
-
-def compile_recs(max_date, days, min_date=datetime.date(1900, 1, 1), change=True):
-    df = pd.DataFrame()
-    for fld in os.listdir('DailyRecs'):
-        try:
-            date = datetime.datetime.strptime(fld, '%Y-%m-%d').date()
-            if date > max_date or date < min_date:
-                continue
-            next_ = pd.read_csv(f'DailyRecs\\{fld}\\main{fld}.csv')
-
-            next_['Date'] = date
-            if change:
-                next_ = get_changes(next_, date, days, save=True)  # changes in y variable
-            print(f'Using Data from {date}')
-            df = pd.concat([df, next_], ignore_index=True)
-        except ValueError:
-            continue
-
-    if 'index' in df.columns:
-        df.drop('index', axis=1, inplace=True)
-    return df
-
-
-def update_training_data(days):
-    """
-    Updates and returns all training data according to real world time.
-    Unfiltered data is saved for faster load. Filtered (~y.isnull) data is returned
-    :param days: The number days forward your model predicts
-    :return: DataFrame of all up-to-date training data
-    """
-    max_date = datetime.datetime.today()  # latest possible date
-    if max_date.hour < 9:
-        max_date -= datetime.timedelta(days=1)
-    max_date = max_date.date()
-    max_date = calc_date(max_date, -days)  # Latest date of complete data (assuming ending price is collected at 9)
-
-    if os.path.exists(f'TrainingData\\{days}.csv'):
-        tdata = pd.read_csv(f'TrainingData\\{days}.csv')
-        tdata['Date'] = tdata.apply(lambda row: datetime.datetime.strptime(row['Date'], '%Y-%m-%d').date(), axis=1)
-        last_date = tdata['Date'].max()  # date last calculated
-        if last_date >= max_date:
-            return tdata
-    else:
-        tdata = None
-        last_date = datetime.date(1900, 1, 1)
-
-    # new for training data, not for today
-    new_data = compile_recs(max_date, days, min_date=last_date)
-    new_data = new_data[new_data['Date'] > last_date]
-    if isinstance(tdata, pd.DataFrame):
-        tdata = pd.concat([tdata, new_data], ignore_index=True)
-    else:
-        tdata = new_data.reset_index()
-    # Even if price change isn't available on a certain date, ratings are used to find dratings for previous days.
-    tdata.to_csv(f'TrainingData\\{days}.csv', index=False)
-    return tdata
 
 
 def calc_dRatings(df, exclude=None, keep=True):
@@ -126,24 +66,6 @@ def calc_dRatings(df, exclude=None, keep=True):
     return df.reset_index()
 
 
-def compile_sources(one_hot=False):
-    # Returns dataframe of date, ticker, and the source that recommended it on that day.
-    df = pd.DataFrame(columns=['Date', 'Ticker', 'Source'])
-    for fol in os.listdir('DailyRecs'):
-        path = 'DailyRecs/' + f'{fol}/' + 'Symbols.csv'
-        if os.path.exists(path):
-            new = pd.read_csv(path)
-            new['Date'] = datetime.datetime.strptime(fol, '%Y-%m-%d').date()
-            df = pd.concat([df, new], ignore_index=True)
-
-    if one_hot:
-        df['val'] = 1
-        df = df.pivot(index=['Date', 'Ticker'], columns=['Source'], values=['val'])
-        df = df.fillna(0)
-        df.columns = ['Source_' + col[1] for col in df.columns]
-    return df
-
-
 def calc_metadata(data):
     # Potential to add more to this one?
     weekDays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -152,80 +74,6 @@ def calc_metadata(data):
         data[d] = data[d].astype(int)
 
     return data
-
-
-def filter_data(historical, new, date, days):
-    # Cutoff invalid days in historical data
-    historical = historical[historical['Date'] <= calc_date(date, -days)]
-
-    # Remove Outliers
-    # historical = historical[np.abs(stats.zscore(historical['y'], nan_policy='omit')) < 3]
-
-    """
-    # Remove columns of data from both datasets if it's 90?% NaN in either dataset
-    # This keeps too many rows from being removed in the next step
-    for col in new.columns:
-        if (
-                new[col].isna().sum() > 0.9 * len(new.index)
-        ) or (
-                historical[col].isna().sum() > 0.9 * len(historical.index)
-        ):
-            new = new.drop(columns=[col])
-            historical = historical.drop(columns=[col])
-    """
-
-    new = new.replace([np.inf, -np.inf], np.nan)
-    historical.replace([np.inf, -np.inf], np.nan)
-
-    # Remove rows from historical if y data is unavailable
-    historical = historical[~historical['y'].isna()]
-
-    # Make column to indicate "missingness" of row
-    new['na_count'] = new.isnull().sum(axis=1)
-    historical['na_count'] = historical.isnull().sum(axis=1)
-
-    # Remove rows with too many nulls
-    # Todo make it a % instead of a flat value
-    new = new[new['na_count'] < 5]
-    historical = historical[historical['na_count'] < 5]
-
-    return historical, new
-
-
-def create_masks(date, data):
-    """
-    Creates multiple subsets of data to apply predictions methods to
-    :param date: Date of prediction
-    :param data: Data to apply masks to
-    :return: dict, {'subset_name': mask, ...}
-    """
-    masks = dict()
-
-    weekdays = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-    other_cols = ['y', 'Date', 'Ticker', 'na_count', 'prev_na_count'] + weekdays
-    src_cols = []
-    d_cols = []
-    rec_cols = []
-    for col in data.columns:
-
-        # d prefix means the col is the change in recommendatiaon from the previous date that the stock market was open
-        if col[0] == 'd':
-            d_cols.append(col)
-        # for columns that start with "Source", 1 if ticker came from source, 0 otherwise
-        elif col[:6] == 'Source':
-            src_cols.append(col)
-        # Actual recommended values, between -1 (sell) and 1 (buy)
-        elif col not in other_cols:
-            rec_cols.append(col)
-
-    masks['Positive Sum'] = data[rec_cols].sum(axis=1) > 0
-    masks['Positive Delta'] = data[d_cols].sum(axis=1) > 0
-    masks['Same Weekday'] = data['Date'].apply(lambda row: row.weekday()) == date.weekday()
-    masks['All Data'] = pd.Series([True] * len(data.index))
-    for col in src_cols:
-        masks[col] = data[col] > 0
-
-    return masks
 
 
 def predict(date, days, train, test, new):
@@ -307,32 +155,6 @@ def old_main(date=datetime.date.today(),
     if not include:
         include = []
 
-    scraper = Scraper(date, include=include, mimicUser=True)
-    scraper.run()
-
-    print(f'Compiling Historical data')
-    train = update_training_data(days)  # update in case any past days are missing
-    print(f"Compiling data for {date}")
-    new = compile_recs(date, days, calc_date(date, -1), change=False)
-
-    # Filter & Format
-    train, new = filter_data(train, new, date, days)
-    train['y'] = train['y'] * 100
-
-    # Split train into train and test
-    train, test = train_test_split(train)
-
-    # Imputation
-    imp_col = [c for c in new.columns if c not in ['na_count', 'Date', 'Ticker']]  # columns to impute
-    imputer = KNNImputer(n_neighbors=20)
-    imputer.fit(train[imp_col])
-    t = time.perf_counter()
-    print('Imputing')
-    train[imp_col] = imputer.transform(train[imp_col])
-    test[imp_col] = imputer.transform(test[imp_col])
-    new[imp_col] = imputer.transform(new[imp_col])
-    print(f'Imputation took {time.perf_counter() - t} seconds.')
-
     # Get change in ratings
     new = calc_dRatings(new, exclude=['na_count'])
     test = calc_dRatings(test, exclude=['na_count'])
@@ -364,48 +186,6 @@ def old_main(date=datetime.date.today(),
 
     results = predict(date, days, train, test, new)
     print(results)
-
-
-def tts(data, y, n_splits=1):
-    # Create a StratifiedShuffleSplit object
-    sss = StratifiedShuffleSplit(n_splits=n_splits, test_size=0.2, random_state=42)
-
-    # Select the target column
-    y = data['target']
-
-    # Drop the target column from the dataframe
-    X = data.drop('target', axis=1)
-
-    # Generate the splits
-    for train_index, test_index in sss.split(X, y):
-        X_train, X_test = X.iloc[train_index], X.iloc[test_index]
-        y_train, y_test = y.iloc[train_index], y.iloc[test_index]
-
-
-def train_models(date, prediction_range):
-    train = update_training_data(prediction_range)  # update in case any past days are missing
-    # Todo make sure Date and Symbol are part of the index
-
-    # Get SRC columns in one-hot format
-    sources = compile_sources(one_hot=True)
-    train = train.merge(sources, how='inner')
-
-    train['na%'] = train.isnull().sum(axis=1) / len(train.columns)
-    train = filter_data(train, date, prediction_range)
-    train['y'] = train['y'] * 100  # TODO convert historical data and get_changes to this format
-
-    # Split train into train and test
-    train, test = tts(train, 'y', n_splits=1)
-
-    # Imputation
-    imp_col = [c for c in train.columns if c not in ['na%', 'Date', 'Ticker']]  # columns to impute
-    imputer = KNNImputer(n_neighbors=20)
-    imputer.fit(train[imp_col])
-    t = time.perf_counter()
-    print('Imputing')
-    train[imp_col] = imputer.transform(train[imp_col])
-    test[imp_col] = imputer.transform(test[imp_col])
-    print(f'Imputation took {time.perf_counter() - t} seconds.')
 
 
 def format_data(new: [dict, pd.DataFrame]):
@@ -471,9 +251,10 @@ def get_new_data(recv_q):
     return new
 
 
-def handle_incoming(pool, recv_q, send_qs, models):
+def predict_incoming(pool, recv_q, send_qs, models):
     puq = {}
     i = 0
+    data = pd.DataFrame(index={'Symbol': []})
     while not is_complete(pool):
         new = get_new_data(recv_q)
         data = fancy_update(data, new)
@@ -495,7 +276,6 @@ def handle_incoming(pool, recv_q, send_qs, models):
     pool.join()
     data.update(predict(data.drop(columns='y'), models))
     save_progress(data)
-    clean_temp(date)
 
 
 def save_progress(folder, data):
@@ -527,16 +307,21 @@ def main(prediction_range, date=datetime.date.today(), user_symbols=None):
     if user_symbols is None:
         user_symbols = []
 
-        data = pd.DataFrame(index={'Symbol': user_symbols, 'y': None})
-
     pool, recv_q, send_qs = start_sources()
     for q in send_qs:
         q.put(user_symbols)
 
-    # Train models while other processes are working
-    models = train_models(date, prediction_range)  # Contains imputer
+    # load model
+    models = load_model(date, prediction_range)  # Contains imputer
 
-    data = handle_incoming(pool, recv_q, send_qs, models)
+    # train on latest complete data?
+
+    # start updating predictions as new data comes in
+    data = predict_incoming(pool, recv_q, send_qs, models)
+
+    clean_temp()
+
+    train_new_model(date, prediction_range, )
 
 
 if __name__ == '__main__':

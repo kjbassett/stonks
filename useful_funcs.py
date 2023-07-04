@@ -7,10 +7,14 @@ import pandas as pd
 
 
 def is_open(date):
+    # TODO check an API for this
     us_holidays = holidays.US()
 
     # If a holiday
-    if date in us_holidays and us_holidays[date] not in ['Veterans Day', 'Columbus Day']:
+    if date in us_holidays and us_holidays[date] not in [
+        "Veterans Day",
+        "Columbus Day",
+    ]:
         return False
 
     # Good Friday not included above, but stock market is closed
@@ -42,10 +46,14 @@ def calc_date(date, business_days):
 def get_cred(service, item):
     cred = keyring.get_password(service, item)
     if not cred:
-        cred = input(f'No value found for Service: {service}, Item: {item}. Please type it here: ')
+        cred = input(
+            f"No value found for Service: {service}, Item: {item}. Please type it here: "
+        )
         keyring.set_password(service, item, cred)
     return cred
 
 
 # Yeah, I know this isn't pep8, but I couldn't waste 4 lines on something so simple. Plus this is cooler 😎
-load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+load_progress = (
+    lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+)
