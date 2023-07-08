@@ -2,8 +2,10 @@ import pandas as pd
 import requests
 import os
 from APIs import API
+import datetime
 
 # https://developer.tdameritrade.com/price-history/apis/get/marketdata/%7Bsymbol%7D/pricehistory
+# Off by one minute?
 
 DISABLED = False
 
@@ -11,6 +13,10 @@ name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
     "limits": {"per_second": 2},
+    "time_range": {
+        "min": datetime.date.today() - datetime.timedelta(days=45),
+        "max": datetime.datetime.now() - datetime.timedelta(minutes=15),
+    },
 }
 
 
@@ -35,7 +41,7 @@ class API(API):
             self.log_call()
             return data
         except Exception as e:
-            print(f'ERROR from {name} on api call')
+            print(f"ERROR from {name} on api call")
             print(e)
             self.error_logger.error(
                 f"Exception occurred for Ameritrade API on symbol {symbol} with url {url} and params {params}",
@@ -44,9 +50,7 @@ class API(API):
 
 
 def convert_to_df(data):
-    return pd.DataFrame(data["candles"]).rename(columns={'datetime': 'timestamp'})
-
-
+    return pd.DataFrame(data["candles"]).rename(columns={"datetime": "timestamp"})
 
 
 if __name__ == "__main__":
@@ -64,12 +68,13 @@ if __name__ == "__main__":
         t2,
     )
 
-    print(d['timestamp'].min())
-    print(d['timestamp'].max())
-    print((t1 - d['timestamp'].min())/60000)
-    print((t2 - d['timestamp'].max())/60000)
-    print(f"{(d['timestamp'].max() - d['timestamp'].min())/len(d.index)/60000} minutes between timestamps")
-    print(d[d['timestamp'] == 1687950000000])
+    print(d["timestamp"].min())
+    print(d["timestamp"].max())
+    print((t1 - d["timestamp"].min()) / 60000)
+    print((t2 - d["timestamp"].max()) / 60000)
+    print(
+        f"{(d['timestamp'].max() - d['timestamp'].min())/len(d.index)/60000} minutes between timestamps"
+    )
+    print(d[d["timestamp"] == 1687950000000])
     # 1688036400000 7:00 AM ET
     # 1687391940000 7:59 PM ET
-

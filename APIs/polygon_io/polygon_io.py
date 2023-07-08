@@ -3,11 +3,19 @@ from polygon.exceptions import NoResultsError
 from APIs import API
 import os
 import pandas as pd
+import datetime
 
-DISABLED = False
+DISABLED = True
 
 name = os.path.split(__file__)[1].split(".")[0]
-info = {"name": name, "limits": {"per_second": 100, "per_minute": 5}}
+info = {
+    "name": name,
+    "limits": {"per_second": 100, "per_minute": 5},
+    "time_range": {
+        "min": datetime.datetime.today() - datetime.timedelta(days=730),
+        "max": datetime.date.today(),
+    },
+}
 
 
 class API(API):
@@ -16,6 +24,7 @@ class API(API):
         self.client = RESTClient(api_key=self.api_key)
 
     def api_call(self, symbol, start, end):
+        print("POLYGON")
         params = {
             "ticker": symbol,
             "multiplier": 1,
@@ -29,7 +38,7 @@ class API(API):
             self.log_call()
             return data
         except Exception as e:
-            print(f'ERROR from {name} on api call')
+            print(f"ERROR from {name} on api call")
             print(e)
             self.error_logger.error(
                 f"Exception occurred for polygon.io API on symbol {symbol} with params {params}",
@@ -45,7 +54,7 @@ def convert_to_df(data):
             "low": agg.low,
             "close": agg.close,
             "volume": agg.volume,
-            "timestamp": agg.timestamp
+            "timestamp": agg.timestamp,
         }
         for agg in data
     ]
@@ -72,11 +81,13 @@ if __name__ == "__main__":
         t2,
     )
 
-    print(d['timestamp'].min())
-    print(d['timestamp'].max())
-    print((t1 - d['timestamp'].min()) / 60000)
-    print((t2 - d['timestamp'].max()) / 60000)
-    print(f"{(d['timestamp'].max() - d['timestamp'].min()) / len(d.index) / 60000} minutes between timestamps")
-    print(d[d['timestamp'] == 1687950000000])
+    print(d["timestamp"].min())
+    print(d["timestamp"].max())
+    print((t1 - d["timestamp"].min()) / 60000)
+    print((t2 - d["timestamp"].max()) / 60000)
+    print(
+        f"{(d['timestamp'].max() - d['timestamp'].min()) / len(d.index) / 60000} minutes between timestamps"
+    )
+    print(d[d["timestamp"] == 1687950000000])
     # 1687939200000 04:00 AM ET
     # 1687996740000 07:59 PM ET
