@@ -13,15 +13,16 @@ info = {
     "name": name,
     "limits": {"per_minute": 5, "per_day": 500},
     "time_range": {"min": datetime.date(2000, 1, 1), "max": datetime.date.today()},
+    "hours": {"min": 4, "max": 20}
 }
 
 
-class API(API):  # TODO specify month
+class API(API):
     def __init__(self):
         super().__init__(name, info)
 
     def api_call(self, symbol, start, end):
-        # Convert
+        # TODO Convert (from start to end) into monthly calls
         base_url = "https://www.alphavantage.co/query"
         params = {
             "function": "TIME_SERIES_INTRADAY",

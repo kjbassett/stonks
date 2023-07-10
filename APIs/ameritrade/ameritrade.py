@@ -17,6 +17,7 @@ info = {
         "min": datetime.date.today() - datetime.timedelta(days=45),
         "max": datetime.datetime.now() - datetime.timedelta(minutes=15),
     },
+    "hours": {"min": 7, "max": 20}
 }
 
 

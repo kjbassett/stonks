@@ -54,7 +54,6 @@ def add_symbols_to_queue(ticker_symbols, symbol_queue):
             last_timestamp = int(
                 datetime.datetime(2023, 1, 1, 0, 0, 0).timestamp()*1000
             )
-        print(symbol, last_timestamp)
         symbol_queue.put((symbol, last_timestamp))
 
 
@@ -77,7 +76,6 @@ def process_symbols(api, symbol_queue, result_queue):
         if result['timestamp'].max() < datetime.datetime.now().timestamp() * 1000 - 960000:
             symbol_queue.put((symbol, result['timestamp'].max() + 1))
         result_queue.put((symbol, result))
-
 
 
 def distribute_requests(ticker_symbols):

@@ -15,6 +15,7 @@ info = {
         "min": datetime.datetime.today() - datetime.timedelta(days=730),
         "max": datetime.date.today(),
     },
+    "hours": {"min": 4, "max": 20}
 }
 
 
@@ -24,7 +25,7 @@ class API(API):
         self.client = RESTClient(api_key=self.api_key)
 
     def api_call(self, symbol, start, end):
-        print("POLYGON")
+        # TODO Convert (from start to end) into multiple calls
         params = {
             "ticker": symbol,
             "multiplier": 1,
