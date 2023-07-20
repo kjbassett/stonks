@@ -1,5 +1,5 @@
 import requests
-from APIs import API
+from APIs.API import API
 import pandas as pd
 import os
 import datetime
@@ -15,14 +15,14 @@ info = {
     "time_range": {"min": datetime.date(2000, 1, 1), "max": datetime.date.today()},
     "hours": {"min": 4, "max": 20}
 }
+# TODO Convert (from start to end) into monthly calls
 
 
 class API(API):
     def __init__(self):
         super().__init__(name, info)
 
-    def api_call(self, symbol, start, end):
-        # TODO Convert (from start to end) into monthly calls
+    def _api_call(self, symbol, start, end):
         base_url = "https://www.alphavantage.co/query"
         params = {
             "function": "TIME_SERIES_INTRADAY",
@@ -32,21 +32,13 @@ class API(API):
             "datatype": "json",
             "apikey": self.api_key,
         }
-        try:
-            response = requests.get(base_url, params=params)
-            data = response.json()
-            data = convert_to_df(data)
-            data = data[(data["timestamp"] >= start) & (data["timestamp"] <= end)]
-            self.log_call()
-            return data
-
-        except Exception as e:
-            print(f"ERROR from {name} on api call")
-            print(e)
-            self.error_logger.error(
-                f"Exception occurred for Alpha Vantage API on symbol {symbol} with params {params}",
-                exc_info=True,
-            )
+        response = requests.get(base_url, params=params)
+        data = response.json()
+        data = convert_to_df(data)
+        data = data[(data["timestamp"] >= start) & (data["timestamp"] <= end)]
+        data = convert_to_df(data)
+        self.log_call()
+        return data
 
 
 def convert_to_df(data):

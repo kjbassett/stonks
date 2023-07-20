@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 import os
-from APIs import API
+from APIs.API import API
 import datetime
 
 # https://developer.tdameritrade.com/price-history/apis/get/marketdata/%7Bsymbol%7D/pricehistory
@@ -20,12 +20,11 @@ info = {
     "hours": {"min": 7, "max": 20}
 }
 
-
 class API(API):
     def __init__(self):
         super().__init__(name, info)
 
-    def api_call(self, symbol, start, end):
+    def _api_call(self, symbol, start, end):
         url = f"https://api.tdameritrade.com/v1/marketdata/{symbol}/pricehistory"
         params = {
             "apikey": self.api_key,
@@ -35,23 +34,11 @@ class API(API):
             "endDate": end,
             "needExtendedHoursData": "true",
         }
-        try:
-            response = requests.get(url, params=params)
-            data = response.json()
-            data = convert_to_df(data)
-            self.log_call()
-            return data
-        except Exception as e:
-            print(f"ERROR from {name} on api call")
-            print(e)
-            self.error_logger.error(
-                f"Exception occurred for Ameritrade API on symbol {symbol} with url {url} and params {params}",
-                exc_info=True,
-            )
-
-
-def convert_to_df(data):
-    return pd.DataFrame(data["candles"]).rename(columns={"datetime": "timestamp"})
+        response = requests.get(url, params=params)
+        response = response.json()
+        # Convert to dataframe
+        response = pd.DataFrame(response["candles"]).rename(columns={"datetime": "timestamp"})
+        return response
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from polygon import RESTClient
 from polygon.exceptions import NoResultsError
-from APIs import API
+from APIs.API import API
 import os
 import pandas as pd
 import datetime
@@ -33,18 +33,10 @@ class API(API):
             "from_": start,
             "to": end,
         }
-        try:
-            data = self.client.get_aggs(**params)
-            data = convert_to_df(data)
-            self.log_call()
-            return data
-        except Exception as e:
-            print(f"ERROR from {name} on api call")
-            print(e)
-            self.error_logger.error(
-                f"Exception occurred for polygon.io API on symbol {symbol} with params {params}",
-                exc_info=True,
-            )
+        data = self.client.get_aggs(**params)
+        data = convert_to_df(data)
+        self.log_call()
+        return data
 
 
 def convert_to_df(data):
