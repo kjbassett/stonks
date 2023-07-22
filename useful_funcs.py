@@ -7,7 +7,7 @@ import pandas as pd
 
 
 def is_open(date):
-    # TODO check an API for this
+    # TODO check an AlphaVantage for this
     us_holidays = holidays.US()
 
     # If a holiday

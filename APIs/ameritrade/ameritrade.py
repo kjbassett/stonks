@@ -20,25 +20,29 @@ info = {
     "hours": {"min": 7, "max": 20}
 }
 
-class API(API):
+class Ameritrade(API):
     def __init__(self):
         super().__init__(name, info)
 
-    def _api_call(self, symbol, start, end):
+    def _api_call(self, params):
+        symbol = params.pop('symbol')
         url = f"https://api.tdameritrade.com/v1/marketdata/{symbol}/pricehistory"
-        params = {
+        response = requests.get(url, params=params)
+        response = response.json()
+        response = pd.DataFrame(response["candles"]).rename(columns={"datetime": "timestamp"})
+        return response
+
+    def get_params(self, symbol, start, end):
+        return [{
+            "symbol": symbol,
             "apikey": self.api_key,
             "frequencyType": "minute",
             "frequency": 1,
             "startDate": start,
             "endDate": end,
-            "needExtendedHoursData": "true",
-        }
-        response = requests.get(url, params=params)
-        response = response.json()
-        # Convert to dataframe
-        response = pd.DataFrame(response["candles"]).rename(columns={"datetime": "timestamp"})
-        return response
+            "needExtendedHoursData": "true"
+        }]
+
 
 
 if __name__ == "__main__":

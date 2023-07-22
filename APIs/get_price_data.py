@@ -106,7 +106,6 @@ def distribute_requests(ticker_symbols):
 # TODO
 # alpha vantage docs say "You can query both raw (as-traded) and split/dividend-adjusted (default) intraday data."
 # hit run and fix until it works
-
 # Keep in mind that this will be run every day
 
 if __name__ == "__main__":

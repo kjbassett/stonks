@@ -19,18 +19,33 @@ class API:
 
     def api_call(self, symbol, start, end):
         try:
-            ranges = self.split_job(start, end)
-            all_data = []
-            for s, e in ranges:
-                data = self._api_call(symbol, s, e)
-                all_data.append(data)
-            all_data = pd.concat(all_data)
+            # split into multiple api calls due to api limits
+            params = self.get_params(symbol, start, end)
+            all_data = pd.DataFrame(
+                columns=["open", "high", "low", "close", "volume", "timestamp"]
+            )
+            for param in params:
+                try:
+                    data = self._api_call(param)
+                except Exception as e:
+                    print(f"ERROR from {self.name} on _api_call")
+                    print(e)
+                    self.error_logger.error(
+                        f"Exception occurred for {self.name}._api_call on symbol {symbol} with parameters {param}",
+                        exc_info=True,
+                    )
+                all_data = pd.concat([all_data, data])
+                self.log_call()
+            all_data = all_data.drop_duplicates()
+            all_data = all_data[
+                (all_data["timestamp"] >= start) & (all_data["timestamp"] <= end)
+            ]
             return all_data
         except Exception as e:
             print(f"ERROR from {self.name} on api call")
             print(e)
             self.error_logger.error(
-                f"Exception occurred for {self.name} API on symbol {symbol} with start {start} and end {end}",
+                f"Exception occurred for {self.name}.api_call on symbol {symbol} with start {start} and end {end}",
                 exc_info=True,
             )
 
@@ -40,7 +55,7 @@ class API:
                 name, key = line.strip().split("=")
                 if name == self.name:
                     return key
-        raise ValueError(f"No key found for API: {self.name}")
+        raise ValueError(f"No key found for AlphaVantage: {self.name}")
 
     def create_error_logger(self):
         # Create a logger
@@ -88,10 +103,10 @@ class API:
 
         return latest
 
-    def _api_call(self, symbol, start, end):
+    def _api_call(self, params):
         raise NotImplementedError("API._api_call not defined")
 
     @staticmethod
-    def split_job(start, end):
-        # default is to return start and end in an iterable
-        return [(start, end)]
+    def get_params(symbol, start, end) -> [dict]:
+        # splits the job into multiple jobs as a list of dicts of parameters for request
+        raise NotImplementedError("API.split_job not defined")

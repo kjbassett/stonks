@@ -9,7 +9,7 @@ import os
 
 
 """
-Effective July 1, 2023, the rate limits to use the Data API free of charge are 100 queries per minute per OAuth client
+Effective July 1, 2023, the rate limits to use the Data AlphaVantage free of charge are 100 queries per minute per OAuth client
 id if you are using OAuth authentication and ten queries per minute if you are not using OAuth authentication.
 """
 

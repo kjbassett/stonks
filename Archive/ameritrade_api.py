@@ -96,7 +96,7 @@ def get_changes(df, start, days, save=False, load_progress=True, query_only=Fals
     :param days: Number of days in the future to
     :param save: Boolean, save results for future use
     :param load_progress: If True, loads progress if process ended before get_changes could finish
-    :param query_only: Only query Ameritrade API instead of getting result from saved file if True
+    :param query_only: Only query Ameritrade AlphaVantage instead of getting result from saved file if True
     :return: df with results in 'y' column
     """
 
@@ -120,7 +120,7 @@ def get_changes(df, start, days, save=False, load_progress=True, query_only=Fals
     t1 = int(datetime.datetime(start.year, start.month, start.day, 9, 30).timestamp() * 1000)
     t2 = int(datetime.datetime(end.year, end.month, end.day, 9, 30).timestamp() * 1000)
 
-    # 30 days is limit on Ameritrade API.
+    # 30 days is limit on Ameritrade AlphaVantage.
     # Next day's recs must be available for data points to be valid in the first place
     if datetime.datetime.now().date() - datetime.timedelta(days=30) <= start\
             and calc_date(start, 1).strftime('%Y-%m-%d') in os.listdir('DailyRecs'):

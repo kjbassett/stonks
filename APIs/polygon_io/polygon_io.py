@@ -19,7 +19,7 @@ info = {
 }
 
 
-class API(API):
+class PolygonIO(API):
     def __init__(self):
         super().__init__(name, info)
         self.client = RESTClient(api_key=self.api_key)
@@ -35,7 +35,6 @@ class API(API):
         }
         data = self.client.get_aggs(**params)
         data = convert_to_df(data)
-        self.log_call()
         return data
 
 
@@ -67,7 +66,7 @@ if __name__ == "__main__":
     t1 = int(datetime.datetime(2023, 6, 28, 4, 0, 0, 0).timestamp() * 1000)
     t2 = int(datetime.datetime(2023, 6, 28, 20, 0, 0, 0).timestamp() * 1000)
 
-    api = API()
+    api = PolygonIO()
     d = api.api_call(
         "AAPL",
         t1,

@@ -3,6 +3,7 @@ from APIs.API import API
 import pandas as pd
 import os
 import datetime
+from dateutil.relativedelta import relativedelta
 
 # https://www.alphavantage.co/documentation/#
 
@@ -15,30 +16,41 @@ info = {
     "time_range": {"min": datetime.date(2000, 1, 1), "max": datetime.date.today()},
     "hours": {"min": 4, "max": 20}
 }
-# TODO Convert (from start to end) into monthly calls
+# TODO Convert (from start to end) into monthly calls. Generate params?
 
 
-class API(API):
+class AlphaVantage(API):
     def __init__(self):
         super().__init__(name, info)
 
-    def _api_call(self, symbol, start, end):
+    def _api_call(self, params):
         base_url = "https://www.alphavantage.co/query"
-        params = {
-            "function": "TIME_SERIES_INTRADAY",
-            "symbol": symbol,
-            "interval": "1min",
-            "outputsize": "full",
-            "datatype": "json",
-            "apikey": self.api_key,
-        }
         response = requests.get(base_url, params=params)
         data = response.json()
         data = convert_to_df(data)
-        data = data[(data["timestamp"] >= start) & (data["timestamp"] <= end)]
-        data = convert_to_df(data)
-        self.log_call()
         return data
+
+    def get_params(self, symbol, start, end):
+        params = []
+        start = datetime.datetime.fromtimestamp(start//1000)
+        while start < end:
+            param = {
+                "function": "TIME_SERIES_INTRADAY",
+                "symbol": symbol,
+                "interval": "1min",
+                "outputsize": "full",
+                "datatype": "json",
+                "apikey": self.api_key
+            }
+
+            if start < datetime.datetime.now() - datetime.timedelta(days=30):
+                yr_mth = start.strftime('%Y-%m')
+                params['month'] = yr_mth
+                start += relativedelta(months=1)
+                params.append(param)
+            else:
+                params.append(param)
+                break
 
 
 def convert_to_df(data):
@@ -71,7 +83,7 @@ if __name__ == "__main__":
     t1 = int(datetime.datetime(2023, 7, 3, 9, 30, 0, 0).timestamp() * 1000)
     t2 = int(datetime.datetime(2023, 7, 3, 10, 0, 0, 0).timestamp() * 1000)
 
-    api = API()
+    api = AlphaVantage()
     d = api.api_call(
         "AAPL",
         t1,
