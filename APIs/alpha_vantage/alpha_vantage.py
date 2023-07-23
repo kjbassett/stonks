@@ -51,9 +51,11 @@ class AlphaVantage(API):
             else:
                 params.append(param)
                 break
+        return params
 
 
 def convert_to_df(data):
+    # TODO Test this
     price_data = data["Time Series (1min)"]
     df = pd.DataFrame.from_dict(price_data, orient="index")
 

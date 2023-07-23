@@ -23,9 +23,22 @@ class PolygonIO(API):
     def __init__(self):
         super().__init__(name, info)
         self.client = RESTClient(api_key=self.api_key)
+        self.latest_timestamps = {}
 
-    def api_call(self, symbol, start, end):
+    def _api_call(self, params):
         # TODO Convert (from start to end) into multiple calls
+        data = self.client.get_aggs(**params)
+        data = convert_to_df(data)
+        self.latest_timestamps[params['symbol']] = data['timestamp'].max()
+        return data
+
+    def get_params(self, symbol, start, end):
+        if symbol in self.latest_timestamps:
+            if start < self.latest_timestamps[symbol]:
+                start = self.latest_timestamps[symbol] + 1
+        if start > end:
+            return
+
         params = {
             "ticker": symbol,
             "multiplier": 1,
@@ -33,9 +46,7 @@ class PolygonIO(API):
             "from_": start,
             "to": end,
         }
-        data = self.client.get_aggs(**params)
-        data = convert_to_df(data)
-        return data
+        yield params
 
 
 def convert_to_df(data):
