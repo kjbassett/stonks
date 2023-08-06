@@ -10,6 +10,8 @@ keys.txt
 *.log
 *.txt
 *.parquet
+Archive/
+Data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

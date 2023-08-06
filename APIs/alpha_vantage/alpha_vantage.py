@@ -1,5 +1,5 @@
 import requests
-from APIs.API import API
+from APIs.API import BaseAPI
 import pandas as pd
 import os
 import datetime
@@ -7,32 +7,41 @@ from dateutil.relativedelta import relativedelta
 
 # https://www.alphavantage.co/documentation/#
 
-DISABLED = True
+DISABLED = False
 
 name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
     "limits": {"per_minute": 5, "per_day": 500},
-    "time_range": {"min": datetime.date(2000, 1, 1), "max": datetime.date.today()},
+    "time_range": {
+        "min": datetime.datetime(2000, 1, 1, 4),
+        "max": datetime.datetime.combine(
+            datetime.date.today() - datetime.timedelta(days=1),
+            datetime.time(hour=20)
+        )
+    },
     "hours": {"min": 4, "max": 20}
 }
 # TODO Convert (from start to end) into monthly calls. Generate params?
 
 
-class AlphaVantage(API):
+class API(BaseAPI):
     def __init__(self):
         super().__init__(name, info)
 
     def _api_call(self, params):
+        print('API CALL')
         base_url = "https://www.alphavantage.co/query"
         response = requests.get(base_url, params=params)
+        print(response)
         data = response.json()
         data = convert_to_df(data)
         return data
 
     def get_params(self, symbol, start, end):
         params = []
-        start = datetime.datetime.fromtimestamp(start//1000)
+        start = datetime.datetime.fromtimestamp(start // 1000)
+        end = datetime.datetime.fromtimestamp(end // 1000)
         while start < end:
             param = {
                 "function": "TIME_SERIES_INTRADAY",
@@ -45,7 +54,7 @@ class AlphaVantage(API):
 
             if start < datetime.datetime.now() - datetime.timedelta(days=30):
                 yr_mth = start.strftime('%Y-%m')
-                params['month'] = yr_mth
+                param['month'] = yr_mth
                 start += relativedelta(months=1)
                 params.append(param)
             else:
@@ -56,6 +65,7 @@ class AlphaVantage(API):
 
 def convert_to_df(data):
     # TODO Test this
+    print(data)
     price_data = data["Time Series (1min)"]
     df = pd.DataFrame.from_dict(price_data, orient="index")
 
@@ -85,7 +95,7 @@ if __name__ == "__main__":
     t1 = int(datetime.datetime(2023, 7, 3, 9, 30, 0, 0).timestamp() * 1000)
     t2 = int(datetime.datetime(2023, 7, 3, 10, 0, 0, 0).timestamp() * 1000)
 
-    api = AlphaVantage()
+    api = API()
     d = api.api_call(
         "AAPL",
         t1,

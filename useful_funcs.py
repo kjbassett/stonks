@@ -1,59 +1,55 @@
 import datetime
-import holidays
-from dateutil.easter import easter
-import keyring
+import requests
 import os
 import pandas as pd
+import pandas_market_calendars
 
 
-def is_open(date):
-    # TODO check an AlphaVantage for this
-    us_holidays = holidays.US()
-
-    # If a holiday
-    if date in us_holidays and us_holidays[date] not in [
-        "Veterans Day",
-        "Columbus Day",
-    ]:
+def open_today():
+    today = datetime.date.today()
+    if today.weekday() > 4:
         return False
-
-    # Good Friday not included above, but stock market is closed
-    if date == easter(date.year) - datetime.timedelta(days=2):
-        return False
-
-    # If it's a weekend
-    if date.weekday() > 4:
-        return False
-
-    return True
+    params = {
+        'apikey': get_api_key('ameritrade'),
+        'date': today.strftime("%Y-%m-%d"),
+    }
+    url = 'https://api.tdameritrade.com/v1/marketdata/EQUITY/hours'
+    response = requests.get(url, params=params)
+    return response.json()
 
 
-def calc_date(date, business_days):
-    if not business_days:
+def get_api_key(api_name):
+    with open("keys.txt", "r") as f:
+        for line in f:
+            name, key = line.strip().split("=")
+            if name == api_name:
+                return key
+    raise ValueError(f"No key found for API: {api_name}")
+
+
+def market_date_delta(date, n):
+    """
+    Calculates the date that is n days of the market being open after date
+    :param date:
+    :param n:
+    :return:
+    """
+    if not n:
         return date
+    direction = abs(n) / n
+    cal = pandas_market_calendars.get_calendar("NYSE")
 
-    end_date = date
-    counter = 0
-    direction = abs(business_days) / business_days
-    while counter < abs(business_days):
-        end_date += datetime.timedelta(days=direction)
-        if is_open(end_date):
-            counter += 1
-
-    return end_date
-
-
-def get_cred(service, item):
-    cred = keyring.get_password(service, item)
-    if not cred:
-        cred = input(
-            f"No value found for Service: {service}, Item: {item}. Please type it here: "
-        )
-        keyring.set_password(service, item, cred)
-    return cred
+    start = date + datetime.timedelta(days=direction)
+    end = date + datetime.timedelta(days=min(2*n, 7*direction))  # safe upper and lower bounds ?
+    if start < end:
+        cal = cal.schedule(start_date=start, end_date=end)
+        cal = cal.head(n)
+        return cal.index[-1]
+    else:
+        cal = cal.schedule(start_date=end, end_date=start)
+        cal = cal.tail(abs(n))
+        return cal.index[0]
 
 
 # Yeah, I know this isn't pep8, but I couldn't waste 4 lines on something so simple. Plus this is cooler 😎
-load_progress = (
-    lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
-)
+load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()

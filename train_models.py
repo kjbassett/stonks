@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from ameritrade_api import get_changes
-from useful_funcs import calc_date
+from useful_funcs import market_date_delta
 
 from EZMT import ModelTuner
 
@@ -21,7 +21,7 @@ def update_training_data(days):
     if max_date.hour < 9:
         max_date -= datetime.timedelta(days=1)
     max_date = max_date.date()
-    max_date = calc_date(
+    max_date = market_date_delta(
         max_date, -days
     )  # Latest date of complete data (assuming ending price is collected at 9:00am)
 
@@ -70,7 +70,7 @@ def compile_sources(one_hot=False):
 
 def prefilter(data, date, days):
     # Cutoff invalid days in historical data
-    data = data[data["Date"] <= calc_date(date, -days)]
+    data = data[data["Date"] <= market_date_delta(date, -days)]
 
     # Remove rows from data if y is unavailable
     data = data.replace([np.inf, -np.inf], np.nan)

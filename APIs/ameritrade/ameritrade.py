@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 import os
-from APIs.API import API
+from APIs.API import BaseAPI
 import datetime
 
 # https://developer.tdameritrade.com/price-history/apis/get/marketdata/%7Bsymbol%7D/pricehistory
@@ -20,7 +20,7 @@ info = {
     "hours": {"min": 7, "max": 20}
 }
 
-class Ameritrade(API):
+class API(BaseAPI):
     def __init__(self):
         super().__init__(name, info)
 
@@ -42,7 +42,6 @@ class Ameritrade(API):
             "endDate": end,
             "needExtendedHoursData": "true"
         }]
-
 
 
 if __name__ == "__main__":

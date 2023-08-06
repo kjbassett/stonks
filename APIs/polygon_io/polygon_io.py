@@ -1,25 +1,31 @@
 from polygon import RESTClient
 from polygon.exceptions import NoResultsError
-from APIs.API import API
+from APIs.API import BaseAPI
 import os
 import pandas as pd
 import datetime
 
-DISABLED = True
+DISABLED = False
 
 name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
     "limits": {"per_second": 100, "per_minute": 5},
     "time_range": {
-        "min": datetime.datetime.today() - datetime.timedelta(days=730),
-        "max": datetime.date.today(),
+        "min": datetime.datetime.combine(
+            datetime.date.today() - datetime.timedelta(days=730),
+            datetime.time(hour=4)
+        ),
+        "max": datetime.datetime.combine(
+            datetime.date.today() - datetime.timedelta(days=1),
+            datetime.time(hour=20)
+        ),
     },
     "hours": {"min": 4, "max": 20}
 }
 
 
-class PolygonIO(API):
+class API(BaseAPI):
     def __init__(self):
         super().__init__(name, info)
         self.client = RESTClient(api_key=self.api_key)
@@ -27,26 +33,27 @@ class PolygonIO(API):
 
     def _api_call(self, params):
         # TODO Convert (from start to end) into multiple calls
+        print('API call')
         data = self.client.get_aggs(**params)
         data = convert_to_df(data)
-        self.latest_timestamps[params['symbol']] = data['timestamp'].max()
+        self.latest_timestamps[params['ticker']] = data['timestamp'].max()
         return data
 
     def get_params(self, symbol, start, end):
-        if symbol in self.latest_timestamps:
-            if start < self.latest_timestamps[symbol]:
-                start = self.latest_timestamps[symbol] + 1
-        if start > end:
-            return
-
-        params = {
-            "ticker": symbol,
-            "multiplier": 1,
-            "timespan": "minute",
-            "from_": start,
-            "to": end,
-        }
-        yield params
+        while True:
+            if symbol in self.latest_timestamps:
+                if start < self.latest_timestamps[symbol]:
+                    start = self.latest_timestamps[symbol] + 1
+            if start > min(end, info["time_range"]["max"]):
+                return
+            params = {
+                "ticker": symbol,
+                "multiplier": 1,
+                "timespan": "minute",
+                "from_": start,
+                "to": end,
+            }
+            yield params
 
 
 def convert_to_df(data):
@@ -77,7 +84,7 @@ if __name__ == "__main__":
     t1 = int(datetime.datetime(2023, 6, 28, 4, 0, 0, 0).timestamp() * 1000)
     t2 = int(datetime.datetime(2023, 6, 28, 20, 0, 0, 0).timestamp() * 1000)
 
-    api = PolygonIO()
+    api = API()
     d = api.api_call(
         "AAPL",
         t1,

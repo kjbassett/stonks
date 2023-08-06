@@ -2,16 +2,17 @@ import logging
 import os
 import pandas as pd
 import time
+from useful_funcs import get_api_key
 
 
 durations = {"per_second": 1, "per_minute": 60, "per_hour": 3600, "per_day": 86400}
 
 
-class API:
+class BaseAPI:
     def __init__(self, name, info):
         self.name = name
         self.info = info
-        self.api_key = self.get_api_key()
+        self.api_key = get_api_key(name)
         self.error_logger = None
         self.call_log = None
         self.create_error_logger()
@@ -21,12 +22,24 @@ class API:
         try:
             # split into multiple api calls due to api limits
             params = self.get_params(symbol, start, end)
+            print(params)
             all_data = pd.DataFrame(
                 columns=["open", "high", "low", "close", "volume", "timestamp"]
             )
             for param in params:
+                print(param)
+                # determine if api needs to wait
+                wait = self.next_available_time() - time.time()
+                print(wait)
+                if wait < 10:
+                    time.sleep(max(wait, 0))
+                else:
+                    break  # return data if waiting too long
+
                 try:
+                    self.log_call()
                     data = self._api_call(param)
+                    all_data = pd.concat([all_data, data])
                 except Exception as e:
                     print(f"ERROR from {self.name} on _api_call")
                     print(e)
@@ -34,28 +47,22 @@ class API:
                         f"Exception occurred for {self.name}._api_call on symbol {symbol} with parameters {param}",
                         exc_info=True,
                     )
-                all_data = pd.concat([all_data, data])
-                self.log_call()
+                    break
+
             all_data = all_data.drop_duplicates()
             all_data = all_data[
                 (all_data["timestamp"] >= start) & (all_data["timestamp"] <= end)
             ]
             return all_data
         except Exception as e:
-            print(f"ERROR from {self.name} on api call")
+            print(f"ERROR from {self.name} on api_call")
             print(e)
             self.error_logger.error(
                 f"Exception occurred for {self.name}.api_call on symbol {symbol} with start {start} and end {end}",
                 exc_info=True,
             )
 
-    def get_api_key(self):
-        with open("../keys.txt", "r") as f:
-            for line in f:
-                name, key = line.strip().split("=")
-                if name == self.name:
-                    return key
-        raise ValueError(f"No key found for AlphaVantage: {self.name}")
+
 
     def create_error_logger(self):
         # Create a logger
@@ -98,6 +105,7 @@ class API:
             recent_calls = self.call_log[
                 self.call_log > time.time() - durations[limit_type]
             ]
+            print(recent_calls)
             if recent_calls.size >= limit_value:
                 latest = max(latest, recent_calls.min() + durations[limit_type])
 
@@ -110,3 +118,4 @@ class API:
     def get_params(symbol, start, end) -> [dict]:
         # splits the job into multiple jobs as a list of dicts of parameters for request
         raise NotImplementedError("API.split_job not defined")
+
