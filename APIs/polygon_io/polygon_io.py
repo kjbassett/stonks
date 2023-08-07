@@ -11,17 +11,12 @@ name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
     "limits": {"per_second": 100, "per_minute": 5},
-    "time_range": {
-        "min": datetime.datetime.combine(
-            datetime.date.today() - datetime.timedelta(days=730),
-            datetime.time(hour=4)
-        ),
-        "max": datetime.datetime.combine(
-            datetime.date.today() - datetime.timedelta(days=1),
-            datetime.time(hour=20)
-        ),
+    "date_range": {
+        "min": datetime.date.today() - datetime.timedelta(days=730),
+        "max": datetime.date.today() - datetime.timedelta(days=1)
     },
-    "hours": {"min": 4, "max": 20}
+    "hours": {"min": 4, "max": 20},
+    'delay': datetime.timedelta()
 }
 
 
@@ -44,7 +39,7 @@ class API(BaseAPI):
             if symbol in self.latest_timestamps:
                 if start < self.latest_timestamps[symbol]:
                     start = self.latest_timestamps[symbol] + 1
-            if start > min(end, info["time_range"]["max"]):
+            if start >= min(end, self.latest_possible_time().timestamp() * 1000):
                 return
             params = {
                 "ticker": symbol,

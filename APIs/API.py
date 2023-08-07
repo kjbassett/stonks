@@ -2,7 +2,8 @@ import logging
 import os
 import pandas as pd
 import time
-from useful_funcs import get_api_key
+from useful_funcs import get_api_key, market_date_delta
+import datetime
 
 
 durations = {"per_second": 1, "per_minute": 60, "per_hour": 3600, "per_day": 86400}
@@ -22,14 +23,12 @@ class BaseAPI:
         try:
             # split into multiple api calls due to api limits
             params = self.get_params(symbol, start, end)
-            print(params)
-            all_data = pd.DataFrame(
-                columns=["open", "high", "low", "close", "volume", "timestamp"]
-            )
+            cols = ["open", "high", "low", "close", "volume", "timestamp"]
+            all_data = pd.DataFrame(columns=cols)
             for param in params:
                 print(param)
                 # determine if api needs to wait
-                wait = self.next_available_time() - time.time()
+                wait = self.next_available_call_time() - time.time()
                 print(wait)
                 if wait < 10:
                     time.sleep(max(wait, 0))
@@ -38,7 +37,7 @@ class BaseAPI:
 
                 try:
                     self.log_call()
-                    data = self._api_call(param)
+                    data = self._api_call(param)[cols]
                     all_data = pd.concat([all_data, data])
                 except Exception as e:
                     print(f"ERROR from {self.name} on _api_call")
@@ -62,7 +61,22 @@ class BaseAPI:
                 exc_info=True,
             )
 
+    def earliest_possible_time(self):
+        # Get the next open day AFTER the minimum day - 1
+        ept = self.info["date_range"]["min"] - datetime.timedelta(days=1)
+        ept = market_date_delta(ept, 1)
+        ept = datetime.datetime.combine(ept, datetime.time(hour=self.info["hours"]["min"]))
+        print('earliest possible time:', ept)
+        return ept
 
+    def latest_possible_time(self):
+        # Get the last open day BEFORE the maximum day + 1
+        lpt = self.info["date_range"]["max"] + datetime.timedelta(days=1)
+        lpt = market_date_delta(lpt, -1)
+        lpt = datetime.datetime.combine(lpt, datetime.time(hour=self.info["hours"]["max"]))
+        lpt = min(lpt, datetime.datetime.now() - self.info["delay"])
+        print('latest possible time:', lpt)
+        return lpt
 
     def create_error_logger(self):
         # Create a logger
@@ -98,14 +112,13 @@ class BaseAPI:
         # Save the log
         self.call_log.to_csv(self.name + "/call_log.csv")
 
-    def next_available_time(self):
-        # update next_available_time
-        latest = 0
+    def next_available_call_time(self):
+        # update next_available_call_time
+        latest = time.time()
         for limit_type, limit_value in self.info["limits"].items():
             recent_calls = self.call_log[
                 self.call_log > time.time() - durations[limit_type]
             ]
-            print(recent_calls)
             if recent_calls.size >= limit_value:
                 latest = max(latest, recent_calls.min() + durations[limit_type])
 
@@ -115,7 +128,6 @@ class BaseAPI:
         raise NotImplementedError("API._api_call not defined")
 
     @staticmethod
-    def get_params(symbol, start, end) -> [dict]:
+    def get_params(symbol, start, end):
         # splits the job into multiple jobs as a list of dicts of parameters for request
         raise NotImplementedError("API.split_job not defined")
-

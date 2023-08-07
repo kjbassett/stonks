@@ -13,12 +13,16 @@ name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
     "limits": {"per_second": 2},
-    "time_range": {
-        "min": datetime.date.today() - datetime.timedelta(days=45),
-        "max": datetime.datetime.now() - datetime.timedelta(minutes=15),
+    "date_range": {
+        # min 45 days ago, but Ameritrade has worse extended hours, so it's better to use it just for the current day
+        # a better solution would be to enable full time range and detect gaps in data when adding symbols to queue
+        "min": datetime.date.today(),
+        "max": datetime.date.today()
     },
-    "hours": {"min": 7, "max": 20}
+    "hours": {"min": 7, "max": 20},
+    'delay': datetime.timedelta(minutes=15),
 }
+
 
 class API(BaseAPI):
     def __init__(self):

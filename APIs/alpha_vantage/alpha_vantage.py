@@ -13,16 +13,13 @@ name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
     "limits": {"per_minute": 5, "per_day": 500},
-    "time_range": {
-        "min": datetime.datetime(2000, 1, 1, 4),
-        "max": datetime.datetime.combine(
-            datetime.date.today() - datetime.timedelta(days=1),
-            datetime.time(hour=20)
-        )
+    "date_range": {
+        "min": datetime.date(2000, 1, 1),
+        "max": datetime.date.today() - datetime.timedelta(days=1)
     },
-    "hours": {"min": 4, "max": 20}
+    "hours": {"min": 4, "max": 20},
+    'delay': datetime.timedelta()
 }
-# TODO Convert (from start to end) into monthly calls. Generate params?
 
 
 class API(BaseAPI):

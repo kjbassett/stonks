@@ -1,25 +1,21 @@
 import datetime
-import requests
 import os
 import pandas as pd
 import pandas_market_calendars
 
 
-def open_today():
-    today = datetime.date.today()
-    if today.weekday() > 4:
+def is_open(date):
+    if date.weekday() > 4:
         return False
-    params = {
-        'apikey': get_api_key('ameritrade'),
-        'date': today.strftime("%Y-%m-%d"),
-    }
-    url = 'https://api.tdameritrade.com/v1/marketdata/EQUITY/hours'
-    response = requests.get(url, params=params)
-    return response.json()
+    cal = pandas_market_calendars.get_calendar("NYSE")
+    cal = cal.schedule(start_date=date, end_date=date)
+    if len(cal.index) == 0:
+        return False
+    return True
 
 
 def get_api_key(api_name):
-    with open("keys.txt", "r") as f:
+    with open("../keys.txt", "r") as f:
         for line in f:
             name, key = line.strip().split("=")
             if name == api_name:
@@ -34,13 +30,17 @@ def market_date_delta(date, n):
     :param n:
     :return:
     """
-    if not n:
-        return date
+    if n == 0:
+        # If n is 0, then we get the next day that the market is open.
+        date = date - datetime.timedelta(days=1)
+        n = 1
+
     direction = abs(n) / n
     cal = pandas_market_calendars.get_calendar("NYSE")
 
     start = date + datetime.timedelta(days=direction)
-    end = date + datetime.timedelta(days=min(2*n, 7*direction))  # safe upper and lower bounds ?
+    days = max(abs(2*n), 7)# safe upper and lower bounds ?
+    end = date + datetime.timedelta(days=days * direction)
     if start < end:
         cal = cal.schedule(start_date=start, end_date=end)
         cal = cal.head(n)
