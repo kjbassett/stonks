@@ -101,11 +101,14 @@ def process_symbols(api, symbol_queue, result_queue):
             continue
         print(f'New data points: {len(result.index)}')
 
-        # If the last timestamp of the result is older that the latest possible timestamp
+        # If the last timestamp of the result is older that the timestamp of the latest available data
         # then add it back into to the queue
         # The latest possible timestamp is not this specific api's latest possible timestamp
         lmt = latest_market_time()
         if result['timestamp'].max() < lmt:
+            # TODO this is causing ameritrade api to think the job is not in the available time range.
+            #  Next time of open market could be hours or days later.
+            #  Change here or at comparison with earliest_possible_time()
             symbol_queue.put((symbol, result['timestamp'].max() + 1))
 
         result_queue.put((symbol, result))
@@ -139,13 +142,15 @@ def distribute_requests(ticker_symbols):
             continue
 
 # TODO
-# incorporate market_date_delta into api.earliest_possible_time() and api.latest_possible_time()
-# Adjust API selection logic and get data termination logic based on latest_time_available and earliest_time_available
-# All timestamps should be seconds
-# Adjust ameritrade's min to be opening time of last open day so that the other APIs with better extended hours will be used for historical data
-# Figure out why APIs rate limits are not being respected (noticed on polygon)
-# hit run and fix until it works
-# Explore other API calls
+#  Re-adding timestamp to queue should have a better new time
+#    Next available API time
+#    Need ability to fill in timestamp gaps
+#      Change to add_symbols_to_queue()
+#  All timestamps should be seconds
+#  Adjust ameritrade's min to be opening time of last open day so that the other APIs with better extended hours will be used for historical data
+#  Figure out why APIs rate limits are not being respected (noticed on polygon)
+#  hit run and fix until it works
+#  Explore other API calls
 #   https://polygon.io/docs/stocks/get_v2_reference_news
 # Keep in mind that this will be run every day
 
