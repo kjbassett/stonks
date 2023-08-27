@@ -51,5 +51,19 @@ def market_date_delta(date, n):
         return cal.index[0]
 
 
+def last_open_date():
+    return market_date_delta(datetime.datetime.today() + datetime.timedelta(days=1), -1)
+
+
+def get_open_dates(start, end):
+    cal = pandas_market_calendars.get_calendar("NYSE")
+    cal = cal.schedule(start_date=start, end_date=end)
+    return cal.index
+
+
 # Yeah, I know this isn't pep8, but I couldn't waste 4 lines on something so simple. Plus this is cooler 😎
 load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+
+
+if __name__ == "__main__":
+    print(get_open_dates(datetime.date(2023, 8, 1), datetime.datetime.today()))

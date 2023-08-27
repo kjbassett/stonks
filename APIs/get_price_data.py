@@ -2,10 +2,12 @@ import time
 import queue
 import threading
 import pandas as pd
+import numpy as np
 import os
 import importlib
 import datetime
-from useful_funcs import is_open, market_date_delta
+import pytz
+from useful_funcs import last_open_date
 
 
 def load_apis():
@@ -43,6 +45,52 @@ def save_new_data(symbol, df):
         df.to_parquet(filepath, engine='fastparquet')
 
 
+def find_data_gaps(df):
+    """
+    Find gaps in a DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to find gaps in.
+    Returns
+    -------
+    gaps : pd.DataFrame
+        A DataFrame of gaps.
+    """
+    df = df.sort_values(by='timestamp')
+    df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
+
+    # Previous timestamp
+    df['previous'] = df['timestamp'].shift(1)
+
+    # Add columns with datetimes of timestamp and previous columns
+    df['datetime'] = pd.to_datetime(df.timestamp, unit='s', utc=True).dt.tz_convert('US/Eastern')
+    df['previous_dt'] = pd.to_datetime(df.previous, unit='s', utc=True).dt.tz_convert('US/Eastern')
+
+    # dt4 is date of timestamp column + 4pm
+    est = pytz.timezone('US/Eastern')
+    df['dt4'] = df.apply(
+        lambda row: est.localize(datetime.datetime.combine(row['datetime'].date(), datetime.time(4))),
+        axis=1
+    ).astype(np.int64) // 10**9
+
+    # Previous is the last timestamp if last timestamp is on the same day
+    # Otherwise previous is at 4am
+    # In other words, don't count gaps if their on different days
+    df['previous'] = np.where(
+        df['previous_dt'].dt.date == df['datetime'].dt.date,
+        df['previous'],
+        df['dt8']
+    )
+
+    df['gap'] = df['timestamp'] - df['previous']
+    df = df[df['gap'] > 1800]  # gaps > 30 minutes are counted
+    gaps = df[['previous', 'timestamp']]
+    gaps.columns = ['start', 'end']
+    return gaps
+
+
 def add_symbols_to_queue(ticker_symbols, symbol_queue):
     """Add symbols to the queue, checking the last timestamp of saved data for each one."""
     for symbol in ticker_symbols:
@@ -61,11 +109,11 @@ def add_symbols_to_queue(ticker_symbols, symbol_queue):
 
 def latest_market_time():
     # lmt = latest market time
-    lmt1 = datetime.datetime.now().timestamp() * 1000 - 960000
+    lmt1 = datetime.datetime.now().timestamp() * 1000 - 960000  # todo check all apis info for latest possible
 
-    lmt2 = market_date_delta(datetime.datetime.today() + datetime.timedelta(days=1), -1)
-    lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20)) # (latest extended market hours data of all apis)
-    lmt2 = lmt2.timestamp() * 1000  # Last open date
+    lmt2 = last_open_date()
+    lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
+    lmt2 = lmt2.timestamp() * 1000
     return min(lmt1, lmt2)
 
 
@@ -157,4 +205,6 @@ def distribute_requests(ticker_symbols):
 if __name__ == "__main__":
     print(f'Latest market data at: {datetime.datetime.fromtimestamp(latest_market_time() / 1000)}')
     tcks = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
+    # tcks = ['AAPL', 'NVDA']
+
     distribute_requests(tcks)
