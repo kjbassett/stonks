@@ -60,14 +60,13 @@ def add_symbols_to_queue(ticker_symbols, symbol_queue):
 
 
 def latest_market_time():
-    today = datetime.datetime.today()
-    if is_open(today):  # lpt is # 16 minutes ago
-        lpt = datetime.datetime.now().timestamp() * 1000 - 960000
-    else:  # lpt is last open date at 20:00 (latest extended market hours data of all apis)
-        lpt = market_date_delta(today, -1)
-        lpt = datetime.datetime.combine(lpt, datetime.time(hour=20))
-        lpt = lpt.timestamp() * 1000  # Last open date
-    return lpt
+    # lmt = latest market time
+    lmt1 = datetime.datetime.now().timestamp() * 1000 - 960000
+
+    lmt2 = market_date_delta(datetime.datetime.today() + datetime.timedelta(days=1), -1)
+    lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20)) # (latest extended market hours data of all apis)
+    lmt2 = lmt2.timestamp() * 1000  # Last open date
+    return min(lmt1, lmt2)
 
 
 def process_symbols(api, symbol_queue, result_queue):
@@ -154,6 +153,8 @@ def distribute_requests(ticker_symbols):
 #   https://polygon.io/docs/stocks/get_v2_reference_news
 # Keep in mind that this will be run every day
 
+
 if __name__ == "__main__":
+    print(f'Latest market data at: {datetime.datetime.fromtimestamp(latest_market_time() / 1000)}')
     tcks = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
     distribute_requests(tcks)
