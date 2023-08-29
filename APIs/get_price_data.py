@@ -7,7 +7,7 @@ import os
 import importlib
 import datetime
 import pytz
-from useful_funcs import last_open_date
+from useful_funcs import latest_market_time
 
 
 def load_apis():
@@ -92,18 +92,6 @@ def find_data_gaps(df):
     return gaps
 
 
-def latest_market_time():
-    # lmt = latest market time
-    # todo check all apis info for latest possible
-    # Todo convert milliseconds to seconds
-    lmt1 = (datetime.datetime.now().timestamp() - 60 * 20) * 1000  # 20 minutes ago
-
-    lmt2 = last_open_date()
-    lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
-    lmt2 = lmt2.timestamp() * 1000
-    return min(lmt1, lmt2)
-
-
 def process_symbols(api, assign_queue, input_queue, result_queue):
     # Load historical API call log if it exists, otherwise initialize an empty DataFrame
     # Remember this function is what is parallelized
@@ -176,7 +164,7 @@ def distribute_requests(ticker_symbols):
             symbol, result = result_queue.get(timeout=1)
             save_new_data(symbol, result)
             assign_queue.put(symbol)  # It will be checked for gaps again. If no gaps, it won't be assigned.
-            # TODO other gap could already be in symbol queue!!!
+            # TODO other gap could already be in input queue!!!
         except queue.Empty:
             pass
 

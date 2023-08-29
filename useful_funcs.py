@@ -61,6 +61,18 @@ def get_open_dates(start, end):
     return cal.index
 
 
+def latest_market_time():
+    # lmt = latest market time
+    # todo check all apis info for latest possible
+    # Todo convert milliseconds to seconds
+    lmt1 = (datetime.datetime.now().timestamp() - 60 * 20) * 1000  # 20 minutes ago
+
+    lmt2 = last_open_date()
+    lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
+    lmt2 = lmt2.timestamp() * 1000
+    return min(lmt1, lmt2)
+
+
 # Yeah, I know this isn't pep8, but I couldn't waste 4 lines on something so simple. Plus this is cooler 😎
 load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
 
