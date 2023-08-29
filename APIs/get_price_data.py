@@ -36,6 +36,7 @@ def load_saved_data(symbol):
 
 def save_new_data(symbol, df):
     """Save a DataFrame to a Parquet file, appending if the file already exists."""
+    # TODO remove duplicates
     if df.empty:
         return
     filepath = os.path.join("../Data", f"{symbol}.parquet")
@@ -91,25 +92,11 @@ def find_data_gaps(df):
     return gaps
 
 
-def add_symbols_to_queue(ticker_symbols, symbol_queue):
-    """Add symbols to the queue, checking the last timestamp of saved data for each one."""
-    for symbol in ticker_symbols:
-        data = load_saved_data(symbol)
-        if data is not None and len(data.index) > 0:
-            last_timestamp = data.timestamp.max() + 1
-            # You could add a check here to only add the symbol to the queue if the last timestamp
-            # is more than a certain amount of time ago.
-        else:
-            last_timestamp = int(
-                datetime.datetime(2023, 7, 31, 0, 0, 0).timestamp()*1000
-            )
-        print(symbol, last_timestamp)
-        symbol_queue.put((symbol, last_timestamp))
-
-
 def latest_market_time():
     # lmt = latest market time
-    lmt1 = datetime.datetime.now().timestamp() * 1000 - 960000  # todo check all apis info for latest possible
+    # todo check all apis info for latest possible
+    # Todo convert milliseconds to seconds
+    lmt1 = (datetime.datetime.now().timestamp() - 60 * 20) * 1000  # 20 minutes ago
 
     lmt2 = last_open_date()
     lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
@@ -117,7 +104,7 @@ def latest_market_time():
     return min(lmt1, lmt2)
 
 
-def process_symbols(api, symbol_queue, result_queue):
+def process_symbols(api, assign_queue, input_queue, result_queue):
     # Load historical API call log if it exists, otherwise initialize an empty DataFrame
     # Remember this function is what is parallelized
 
@@ -128,14 +115,14 @@ def process_symbols(api, symbol_queue, result_queue):
 
         # Get next symbol to process
         try:
-            symbol, start_time = symbol_queue.get(timeout=10)
+            symbol, start_time = input_queue.get(timeout=10)
         except queue.Empty:  # No more symbols to process
             return
 
         # Check if the symbol is in the time range for the API
         if datetime.datetime.fromtimestamp(start_time//1000) < api.earliest_possible_time():
             print(f'{symbol} not in time range for {api.name}')
-            symbol_queue.put((symbol, start_time))
+            assign_queue.put((symbol, start_time))
             continue
 
         # get result from the API
@@ -144,49 +131,54 @@ def process_symbols(api, symbol_queue, result_queue):
 
         if result is None:
             print(f'No results from {symbol} + {api.name}')
-            symbol_queue.put((symbol, start_time))
+            assign_queue.put((symbol, start_time))
             continue
         print(f'New data points: {len(result.index)}')
-
-        # If the last timestamp of the result is older that the timestamp of the latest available data
-        # then add it back into to the queue
-        # The latest possible timestamp is not this specific api's latest possible timestamp
-        lmt = latest_market_time()
-        if result['timestamp'].max() < lmt:
-            # TODO this is causing ameritrade api to think the job is not in the available time range.
-            #  Next time of open market could be hours or days later.
-            #  Change here or at comparison with earliest_possible_time()
-            symbol_queue.put((symbol, result['timestamp'].max() + 1))
 
         result_queue.put((symbol, result))
 
 
 def distribute_requests(ticker_symbols):
-    # Create a shared queue for symbols and a shared queue for results
-    symbol_queue = queue.Queue()
+    # Create a shared queue for symbols before they are assigned to an api's
+    assign_queue = queue.Queue()
+    # Create a shared queue for incoming results from other threads
     result_queue = queue.Queue()
 
-    add_symbols_to_queue(ticker_symbols, symbol_queue)
+    # Add symbols to the queue for assignment to an api
+    for symbol in ticker_symbols:
+        assign_queue.put(symbol)
 
     # Create and start a thread for each API
     threads = []
     for api in load_apis():
+        input_queue = queue.Queue()
         thread = threading.Thread(
-            target=process_symbols, args=(api, symbol_queue, result_queue)
+            target=process_symbols, args=(api, assign_queue, input_queue, result_queue)
         )
         thread.start()
-        threads.append(thread)
+        threads.append({'thread': thread, 'input_queue': input_queue, 'api': api})
 
     print('Threads started')
 
     # While threads are running
-    while any(thread.is_alive() for thread in threads):
+    while any(t['thread'].is_alive() for t in threads):
+        # Try to get a symbol from the queue
+        try:
+            symbol = assign_queue.get(timeout=1)
+            data = load_saved_data(symbol)  # TODO locks? or something
+            for i, row in find_data_gaps(data):
+                input_queue = choose_api(row['start'], row['end'], threads)
+                input_queue.put((symbol, row['start'], row['end']))
+        except queue.Empty:
+            pass
         # Try to get a result from the queue
         try:
-            symbol, result = result_queue.get(timeout=1)  # Adjust timeout as needed
+            symbol, result = result_queue.get(timeout=1)
             save_new_data(symbol, result)
+            assign_queue.put(symbol)  # It will be checked for gaps again. If no gaps, it won't be assigned.
+            # TODO other gap could already be in symbol queue!!!
         except queue.Empty:
-            continue
+            pass
 
 # TODO
 #  Re-adding timestamp to queue should have a better new time

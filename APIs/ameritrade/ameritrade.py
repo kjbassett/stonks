@@ -16,6 +16,8 @@ info = {
     "date_range": {
         # min 45 days ago, but Ameritrade has worse extended hours, so it's better to use it just for the current day
         # a better solution would be to enable full time range and detect gaps in data when adding symbols to queue
+        # Would also need a function to decide which thread gets the data
+        # Which means APIs aren't pulling directly from shared queue
         "min": datetime.date.today(),
         "max": datetime.date.today()
     },
