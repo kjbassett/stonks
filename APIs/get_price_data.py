@@ -46,9 +46,10 @@ def save_new_data(symbol, df):
         df.to_parquet(filepath, engine='fastparquet')
 
 
-def find_data_gaps(df):
+def find_gap(df):
     """
-    Find gaps in a DataFrame.
+    Finds gaps in available data and returns the first in chronological order.
+    If no gaps are found, returns None
 
     Parameters
     ----------
@@ -56,9 +57,10 @@ def find_data_gaps(df):
         The DataFrame to find gaps in.
     Returns
     -------
-    gaps : pd.DataFrame
-        A DataFrame of gaps.
+    start : starting timestamp of first gap
+    end : ending timestamp of first gap
     """
+
     df = df.sort_values(by='timestamp')
     df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
 
@@ -82,14 +84,22 @@ def find_data_gaps(df):
     df['previous'] = np.where(
         df['previous_dt'].dt.date == df['datetime'].dt.date,
         df['previous'],
-        df['dt8']
+        df['dt4']
     )
 
     df['gap'] = df['timestamp'] - df['previous']
-    df = df[df['gap'] > 1800]  # gaps > 30 minutes are counted
-    gaps = df[['previous', 'timestamp']]
-    gaps.columns = ['start', 'end']
-    return gaps
+    gaps = df[df['gap'] > 1800]  # gaps > 30 minutes are counted
+    if len(gaps.index) > 0:
+        start, end = gaps.loc[0]['previous'], gaps.loc[0]['timestamp']
+        return start, end
+
+    lmt = latest_market_time() / 1000
+    last = df.loc[-1]['timestamp']
+    # check if latest timestamp is more than 30 minutes earlier than the latest possible market data
+    if last < lmt - 30 * 60:
+        return last, lmt
+
+
 
 
 def process_symbols(api, assign_queue, input_queue, result_queue):
@@ -154,9 +164,9 @@ def distribute_requests(ticker_symbols):
         try:
             symbol = assign_queue.get(timeout=1)
             data = load_saved_data(symbol)  # TODO locks? or something
-            for i, row in find_data_gaps(data):
-                input_queue = choose_api(row['start'], row['end'], threads)
-                input_queue.put((symbol, row['start'], row['end']))
+            start, end = find_gap(data)
+            input_queue = choose_api(row['start'], row['end'], threads)
+            input_queue.put((symbol, row['start'], row['end']))
         except queue.Empty:
             pass
         # Try to get a result from the queue
@@ -170,9 +180,9 @@ def distribute_requests(ticker_symbols):
 
 # TODO
 #  Re-adding timestamp to queue should have a better new time
-#    Next available API time
-#    Need ability to fill in timestamp gaps
-#      Change to add_symbols_to_queue()
+#  Convert Queue to list with locks so that code can decide if it should add symbol to assign_queue again
+#  choose_api
+
 #  All timestamps should be seconds
 #  Adjust ameritrade's min to be opening time of last open day so that the other APIs with better extended hours will be used for historical data
 #  Figure out why APIs rate limits are not being respected (noticed on polygon)
