@@ -127,12 +127,6 @@ def process_symbols(api, assign_queue, input_queue, result_queue):
         print(symbol, api.name)
         result = api.api_call(symbol, start_time, int(datetime.datetime.now().timestamp()*1000))
 
-        if result is None:
-            print(f'No results from {symbol} + {api.name}')
-            assign_queue.put((symbol, start_time))
-            continue
-        print(f'New data points: {len(result.index)}')
-
         result_queue.put((symbol, result))
 
 
