@@ -7,7 +7,8 @@ import os
 import importlib
 import datetime
 import pytz
-from useful_funcs import latest_market_time
+from useful_funcs import latest_market_time, get_open_dates, market_date_delta
+from functools import partial
 
 
 def load_apis():
@@ -46,10 +47,81 @@ def save_new_data(symbol, df):
         df.to_parquet(filepath, engine='fastparquet')
 
 
-def find_gap(df):
+def choose_best_api(start, end, threads):
+    # The below 2 lines may not work if run outside the US/Eastern time zone
+    start = datetime.datetime.fromtimestamp(start)
+    end = datetime.datetime.fromtimestamp(end)
+
+    # delete this. It's just here for testing
+    for t in threads:
+        print(f"{t['api'].name}: {t['api'].covered_hours(start, end)}")
+
+    ts = sorted(threads, key=lambda t: (
+        -t['api'].covered_hours(start, end),
+        t['input_queue'].qsize()
+    ))
+    if ts[0]['api'].covered_hours(start, end) > 0:
+        return ts[0]
+
+
+def find_gap_in_data(df):
+    df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
+
+    # add in beginning and end of time range
+    ends = [datetime.datetime.combine(min_date, datetime.time(4)).timestamp(),
+            latest_market_time()]
+
+    df = pd.concat([df, pd.DataFrame({'timestamp': ends})])
+    df = df.sort_values(by='timestamp')
+
+    # Previous timestamp
+    df['previous'] = df['timestamp'].shift(1)
+
+    # Convert timestamp and previous to datetime columns
+    df['date'] = pd.to_datetime(df.timestamp, unit='s', utc=True).dt.tz_convert('US/Eastern').dt.normalize()
+    df['prev_date'] = pd.to_datetime(df.previous, unit='s', utc=True).dt.tz_convert('US/Eastern').dt.normalize()
+    df['days_apart'] = (df['date'] - df['prev_date']).dt.days
+
+    df['gap'] = df['timestamp'] - df['previous']
+    # if previous timestamp is a previous day, don't include closed hours in the gap
+    # 28800 is the time at the tail ends of the gap. 4 hrs after 8 pm and 4 hours before 4am is 8 hours * 3600
+    open_dates = get_open_dates(df['date'].dt.date.min(), datetime.date.today())
+    df = df.iloc[1:, :]
+
+    # these two columns are needed for the adjust gap function
+    df['gap'] = df.apply(partial(adjust_gap, open_dates), axis=1)
+    # TODO gap adjustment treats all days in between as closed days.
+    #  open days should only remove 8 hours from gap
+
+    gaps = df[df['gap'] > 1800]  # gaps > 30 minutes are counted
+    # check if gap has been tried before for each api
+    if len(gaps.index) == 0:
+        return
+    return gaps.iloc[0]
+
+
+def adjust_gap(open_dates, row):
+    # only adjust if the data is on two separate days
+    if row['days_apart'] > 0:
+        # Don't count the time outside the market hours
+        # Only count days the market is open. Gap could cover an open and a closed day.
+        d1 = row['prev_date'].replace(tzinfo=None)
+        d2 = row['date'].replace(tzinfo=None)
+        i1 = open_dates.searchsorted(d1)
+        i2 = open_dates.searchsorted(d2)
+        if i1 == len(open_dates) or open_dates[i1] != d1:
+            raise ValueError(f"{d1} is not in {open_dates}")
+        if i2 == len(open_dates) or open_dates[i2] != d2:
+            raise ValueError(f"{d2} is not in {open_dates}")
+        open = i2 - i1
+        closed = row['days_apart'] - open
+        row['gap'] = row['gap'] - 28800 * open - 86400 * closed
+    return row['gap']
+
+
+def build_request(symbol, threads, min_date):
     """
-    Finds gaps in available data and returns the first in chronological order.
-    If no gaps are found, returns None
+    Finds gaps in available data. Chooses an api best suited to fill in the first gap.
 
     Parameters
     ----------
@@ -60,49 +132,29 @@ def find_gap(df):
     start : starting timestamp of first gap
     end : ending timestamp of first gap
     """
+    # min date is the earliest day since min_date that is covered by api limits
+    min_date = max(min_date, min([t['api'].info['date_range']['min'] for t in threads]))
+    # the day also has to be open
+    min_date = market_date_delta(min_date)
 
-    df = df.sort_values(by='timestamp')
-    df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
+    df = load_saved_data(symbol)
+    if df is None:
+        start = datetime.datetime.combine(min_date, datetime.time(4)).timestamp()
+        end = latest_market_time()
+    else:
+        gap = find_gap_in_data(df)
+        if gap is None:
+            return
+        start, end = gap['previous'], gap['timestamp']
 
-    # Previous timestamp
-    df['previous'] = df['timestamp'].shift(1)
+    api = choose_best_api(start, end, threads)
+    if api is None:
+        return
 
-    # Add columns with datetimes of timestamp and previous columns
-    df['datetime'] = pd.to_datetime(df.timestamp, unit='s', utc=True).dt.tz_convert('US/Eastern')
-    df['previous_dt'] = pd.to_datetime(df.previous, unit='s', utc=True).dt.tz_convert('US/Eastern')
-
-    # dt4 is date of timestamp column + 4pm
-    est = pytz.timezone('US/Eastern')
-    df['dt4'] = df.apply(
-        lambda row: est.localize(datetime.datetime.combine(row['datetime'].date(), datetime.time(4))),
-        axis=1
-    ).astype(np.int64) // 10**9
-
-    # Previous is the last timestamp if last timestamp is on the same day
-    # Otherwise previous is at 4am
-    # In other words, don't count gaps if their on different days
-    df['previous'] = np.where(
-        df['previous_dt'].dt.date == df['datetime'].dt.date,
-        df['previous'],
-        df['dt4']
-    )
-
-    df['gap'] = df['timestamp'] - df['previous']
-    gaps = df[df['gap'] > 1800]  # gaps > 30 minutes are counted
-    if len(gaps.index) > 0:
-        start, end = gaps.loc[0]['previous'], gaps.loc[0]['timestamp']
-        return start, end
-
-    lmt = latest_market_time() / 1000
-    last = df.loc[-1]['timestamp']
-    # check if latest timestamp is more than 30 minutes earlier than the latest possible market data
-    if last < lmt - 30 * 60:
-        return last, lmt
+    return api['input_queue'], start, end
 
 
-
-
-def process_symbols(api, assign_queue, input_queue, result_queue):
+def process_symbols(api, input_queue, result_queue):
     # Load historical API call log if it exists, otherwise initialize an empty DataFrame
     # Remember this function is what is parallelized
 
@@ -113,24 +165,18 @@ def process_symbols(api, assign_queue, input_queue, result_queue):
 
         # Get next symbol to process
         try:
-            symbol, start_time = input_queue.get(timeout=10)
+            symbol, start, end = input_queue.get(timeout=10)
         except queue.Empty:  # No more symbols to process
             return
 
-        # Check if the symbol is in the time range for the API
-        if datetime.datetime.fromtimestamp(start_time//1000) < api.earliest_possible_time():
-            print(f'{symbol} not in time range for {api.name}')
-            assign_queue.put((symbol, start_time))
-            continue
-
         # get result from the API
         print(symbol, api.name)
-        result = api.api_call(symbol, start_time, int(datetime.datetime.now().timestamp()*1000))
+        result = api.api_call(symbol, start*1000, end*1000)
 
         result_queue.put((symbol, result))
 
 
-def distribute_requests(ticker_symbols):
+def distribute_requests(ticker_symbols, min_date):
     # Create a shared queue for symbols before they are assigned to an api's
     assign_queue = queue.Queue()
     # Create a shared queue for incoming results from other threads
@@ -145,7 +191,7 @@ def distribute_requests(ticker_symbols):
     for api in load_apis():
         input_queue = queue.Queue()
         thread = threading.Thread(
-            target=process_symbols, args=(api, assign_queue, input_queue, result_queue)
+            target=process_symbols, args=(api, input_queue, result_queue)
         )
         thread.start()
         threads.append({'thread': thread, 'input_queue': input_queue, 'api': api})
@@ -156,26 +202,24 @@ def distribute_requests(ticker_symbols):
     while any(t['thread'].is_alive() for t in threads):
         # Try to get a symbol from the queue
         try:
-            symbol = assign_queue.get(timeout=1)
-            data = load_saved_data(symbol)  # TODO locks? or something
-            start, end = find_gap(data)
-            input_queue = choose_api(row['start'], row['end'], threads)
-            input_queue.put((symbol, row['start'], row['end']))
+            symbol = assign_queue.get_nowait()
+            # Evaluate data and api limitations to determine which one should be used and for what time period
+            request = build_request(symbol, threads, min_date)
+            if request is None: # No request possible
+                continue
+            input_queue, start, end = request
+            input_queue.put((symbol, start, end))
         except queue.Empty:
             pass
         # Try to get a result from the queue
         try:
-            symbol, result = result_queue.get(timeout=1)
+            symbol, result = result_queue.get_nowait()
             save_new_data(symbol, result)
             assign_queue.put(symbol)  # It will be checked for gaps again. If no gaps, it won't be assigned.
-            # TODO other gap could already be in input queue!!!
         except queue.Empty:
             pass
 
 # TODO
-#  Re-adding timestamp to queue should have a better new time
-#  Convert Queue to list with locks so that code can decide if it should add symbol to assign_queue again
-#  choose_api
 
 #  All timestamps should be seconds
 #  Adjust ameritrade's min to be opening time of last open day so that the other APIs with better extended hours will be used for historical data
@@ -191,4 +235,6 @@ if __name__ == "__main__":
     tcks = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
     # tcks = ['AAPL', 'NVDA']
 
-    distribute_requests(tcks)
+    min_date = (datetime.datetime.now() - datetime.timedelta(days=730)).date()  # data cutoff
+
+    distribute_requests(tcks, min_date)

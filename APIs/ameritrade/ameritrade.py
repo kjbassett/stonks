@@ -14,11 +14,7 @@ info = {
     "name": name,
     "limits": {"per_second": 2},
     "date_range": {
-        # min 45 days ago, but Ameritrade has worse extended hours, so it's better to use it just for the current day
-        # a better solution would be to enable full time range and detect gaps in data when adding symbols to queue
-        # Would also need a function to decide which thread gets the data
-        # Which means APIs aren't pulling directly from shared queue
-        "min": datetime.date.today(),
+        "min": datetime.date.today() - datetime.timedelta(days=45),
         "max": datetime.date.today()
     },
     "hours": {"min": 7, "max": 20},
@@ -44,8 +40,8 @@ class API(BaseAPI):
             "apikey": self.api_key,
             "frequencyType": "minute",
             "frequency": 1,
-            "startDate": start,
-            "endDate": end,
+            "startDate": int(start),
+            "endDate": int(end),
             "needExtendedHoursData": "true"
         }]
 

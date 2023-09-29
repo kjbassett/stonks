@@ -23,9 +23,10 @@ def get_api_key(api_name):
     raise ValueError(f"No key found for API: {api_name}")
 
 
-def market_date_delta(date, n):
+def market_date_delta(date, n=0):
     """
-    Calculates the date that is n days of the market being open after date
+    Calculates the date that is n days of the market being open after date.
+    If n is 0, return the next day that the market is open.
     :param date:
     :param n:
     :return:
@@ -39,7 +40,7 @@ def market_date_delta(date, n):
     cal = pandas_market_calendars.get_calendar("NYSE")
 
     start = date + datetime.timedelta(days=direction)
-    days = max(abs(2*n), 7)# safe upper and lower bounds ?
+    days = max(abs(2*n), 7)  # safe upper and lower bounds ?
     end = date + datetime.timedelta(days=days * direction)
     if start < end:
         cal = cal.schedule(start_date=start, end_date=end)
@@ -52,6 +53,8 @@ def market_date_delta(date, n):
 
 
 def last_open_date():
+    if datetime.datetime.now().hour < 4:
+        return market_date_delta(datetime.datetime.today(), -1)
     return market_date_delta(datetime.datetime.today() + datetime.timedelta(days=1), -1)
 
 
@@ -65,11 +68,11 @@ def latest_market_time():
     # lmt = latest market time
     # todo check all apis info for latest possible
     # Todo convert milliseconds to seconds
-    lmt1 = (datetime.datetime.now().timestamp() - 60 * 20) * 1000  # 20 minutes ago
+    lmt1 = (datetime.datetime.now().timestamp() - 60 * 20)  # 20 minutes ago
 
     lmt2 = last_open_date()
     lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
-    lmt2 = lmt2.timestamp() * 1000
+    lmt2 = lmt2.timestamp()
     return min(lmt1, lmt2)
 
 
@@ -79,3 +82,4 @@ load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.D
 
 if __name__ == "__main__":
     print(get_open_dates(datetime.date(2023, 8, 1), datetime.datetime.today()))
+    print(latest_market_time())
