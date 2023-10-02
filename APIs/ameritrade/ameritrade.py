@@ -40,8 +40,8 @@ class API(BaseAPI):
             "apikey": self.api_key,
             "frequencyType": "minute",
             "frequency": 1,
-            "startDate": int(start),
-            "endDate": int(end),
+            "startDate": start,
+            "endDate": end,
             "needExtendedHoursData": "true"
         }]
 

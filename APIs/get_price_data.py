@@ -2,13 +2,12 @@ import time
 import queue
 import threading
 import pandas as pd
-import numpy as np
 import os
 import importlib
 import datetime
-import pytz
 from useful_funcs import latest_market_time, get_open_dates, market_date_delta
 from functools import partial
+from icecream import ic
 
 
 def load_apis():
@@ -53,18 +52,18 @@ def choose_best_api(start, end, threads):
     end = datetime.datetime.fromtimestamp(end)
 
     # delete this. It's just here for testing
-    for t in threads:
-        print(f"{t['api'].name}: {t['api'].covered_hours(start, end)}")
+    for th in threads:
+        ic(th['api'].name, th['api'].covered_hours(start, end))
 
     ts = sorted(threads, key=lambda t: (
-        -t['api'].covered_hours(start, end),
-        t['input_queue'].qsize()
+        -t['api'].covered_hours(start, end),  # Sort first by covered hours, descending
+        t['input_queue'].qsize()  # Then by queue size. TODO Would be better as queue time. Use Little's Law
     ))
     if ts[0]['api'].covered_hours(start, end) > 0:
         return ts[0]
 
 
-def find_gap_in_data(df):
+def find_gap_in_data(df, min_date):
     df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
 
     # add in beginning and end of time range
@@ -90,8 +89,6 @@ def find_gap_in_data(df):
 
     # these two columns are needed for the adjust gap function
     df['gap'] = df.apply(partial(adjust_gap, open_dates), axis=1)
-    # TODO gap adjustment treats all days in between as closed days.
-    #  open days should only remove 8 hours from gap
 
     gaps = df[df['gap'] > 1800]  # gaps > 30 minutes are counted
     # check if gap has been tried before for each api
@@ -113,24 +110,19 @@ def adjust_gap(open_dates, row):
             raise ValueError(f"{d1} is not in {open_dates}")
         if i2 == len(open_dates) or open_dates[i2] != d2:
             raise ValueError(f"{d2} is not in {open_dates}")
-        open = i2 - i1
-        closed = row['days_apart'] - open
-        row['gap'] = row['gap'] - 28800 * open - 86400 * closed
+        open_days = i2 - i1
+        closed = row['days_apart'] - open_days
+        row['gap'] = row['gap'] - 28800 * open_days - 86400 * closed
     return row['gap']
 
 
 def build_request(symbol, threads, min_date):
     """
-    Finds gaps in available data. Chooses an api best suited to fill in the first gap.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        The DataFrame to find gaps in.
-    Returns
-    -------
-    start : starting timestamp of first gap
-    end : ending timestamp of first gap
+    Builds a request based on the data needed for a symbol and the api's ability to provide that data
+    :param symbol: ticker symbol for a company
+    :param threads: objects containing the api's and other relation objects
+    :param min_date: The earliest date that we care about
+    :return: the chosen api's input queue, the start time of the request, and the end time of the request
     """
     # min date is the earliest day since min_date that is covered by api limits
     min_date = max(min_date, min([t['api'].info['date_range']['min'] for t in threads]))
@@ -142,10 +134,10 @@ def build_request(symbol, threads, min_date):
         start = datetime.datetime.combine(min_date, datetime.time(4)).timestamp()
         end = latest_market_time()
     else:
-        gap = find_gap_in_data(df)
+        gap = find_gap_in_data(df, min_date)
         if gap is None:
             return
-        start, end = gap['previous'], gap['timestamp']
+        start, end = int(gap['previous']), int(gap['timestamp'])
 
     api = choose_best_api(start, end, threads)
     if api is None:
@@ -170,9 +162,9 @@ def process_symbols(api, input_queue, result_queue):
             return
 
         # get result from the API
-        print(symbol, api.name)
+        ic(symbol, api.name)
         result = api.api_call(symbol, start*1000, end*1000)
-
+        ic(result)
         result_queue.put((symbol, result))
 
 
@@ -196,7 +188,7 @@ def distribute_requests(ticker_symbols, min_date):
         thread.start()
         threads.append({'thread': thread, 'input_queue': input_queue, 'api': api})
 
-    print('Threads started')
+    ic('Threads started')
 
     # While threads are running
     while any(t['thread'].is_alive() for t in threads):
@@ -220,10 +212,10 @@ def distribute_requests(ticker_symbols, min_date):
             pass
 
 # TODO
-
-#  All timestamps should be seconds
-#  Adjust ameritrade's min to be opening time of last open day so that the other APIs with better extended hours will be used for historical data
 #  Figure out why APIs rate limits are not being respected (noticed on polygon)
+#  covered_hours returning negative values
+#  Run ends early
+#  All timestamps should be seconds
 #  hit run and fix until it works
 #  Explore other API calls
 #   https://polygon.io/docs/stocks/get_v2_reference_news
@@ -235,6 +227,7 @@ if __name__ == "__main__":
     tcks = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
     # tcks = ['AAPL', 'NVDA']
 
-    min_date = (datetime.datetime.now() - datetime.timedelta(days=730)).date()  # data cutoff
-
-    distribute_requests(tcks, min_date)
+    distribute_requests(
+        tcks,
+        (datetime.datetime.now() - datetime.timedelta(days=730)).date()
+    )
