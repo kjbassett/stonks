@@ -101,6 +101,7 @@ class BaseAPI:
 
     def log_call(self):
         # Log the call
+        ic('logging call')
         t = time.time()
         self.call_log.at[len(self.call_log)] = t
 

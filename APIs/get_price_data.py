@@ -138,7 +138,7 @@ def build_request(symbol, threads, min_date):
         if gap is None:
             return
         start, end = int(gap['previous']), int(gap['timestamp'])
-
+    ic(symbol)
     api = choose_best_api(start, end, threads)
     if api is None:
         return
@@ -146,44 +146,46 @@ def build_request(symbol, threads, min_date):
     return api['input_queue'], start, end
 
 
-def process_symbols(api, input_queue, result_queue):
+def process_symbols(api, input_queue, result_queue, stop_event):
     # Load historical API call log if it exists, otherwise initialize an empty DataFrame
     # Remember this function is what is parallelized
 
-    while True:  # TODO replace with signal handling
+    while not stop_event.is_set():
         # Wait for api rate limit
         print(f'Waiting for {max(0, api.next_available_call_time() - time.time())} seconds')
         time.sleep(max(0, api.next_available_call_time() - time.time()))
 
         # Get next symbol to process
         try:
-            symbol, start, end = input_queue.get(timeout=10)
-        except queue.Empty:  # No more symbols to process
-            return
+            symbol, start, end = input_queue.get_nowait()
+        except queue.Empty:
+            time.sleep(0.25)
+            continue
 
         # get result from the API
         ic(symbol, api.name)
         result = api.api_call(symbol, start*1000, end*1000)
-        ic(result)
+        ic(len(result.index))
         result_queue.put((symbol, result))
 
 
 def distribute_requests(ticker_symbols, min_date):
     # Create a shared queue for symbols before they are assigned to an api's
-    assign_queue = queue.Queue()
+    assign_queue = []
     # Create a shared queue for incoming results from other threads
     result_queue = queue.Queue()
 
     # Add symbols to the queue for assignment to an api
     for symbol in ticker_symbols:
-        assign_queue.put(symbol)
+        assign_queue.append(symbol)
 
     # Create and start a thread for each API
+    stop_event = threading.Event()
     threads = []
     for api in load_apis():
         input_queue = queue.Queue()
         thread = threading.Thread(
-            target=process_symbols, args=(api, input_queue, result_queue)
+            target=process_symbols, args=(api, input_queue, result_queue, stop_event)
         )
         thread.start()
         threads.append({'thread': thread, 'input_queue': input_queue, 'api': api})
@@ -191,28 +193,29 @@ def distribute_requests(ticker_symbols, min_date):
     ic('Threads started')
 
     # While threads are running
-    while any(t['thread'].is_alive() for t in threads):
+    while any(t['thread'].is_alive() for t in threads):  # TODO check for user input or some smarter way
         # Try to get a symbol from the queue
-        try:
-            symbol = assign_queue.get_nowait()
+        if assign_queue:
+            symbol = assign_queue.pop()
             # Evaluate data and api limitations to determine which one should be used and for what time period
             request = build_request(symbol, threads, min_date)
-            if request is None: # No request possible
+            if request is None:  # No request covering new data possible
                 continue
             input_queue, start, end = request
             input_queue.put((symbol, start, end))
-        except queue.Empty:
-            pass
+
         # Try to get a result from the queue
         try:
             symbol, result = result_queue.get_nowait()
             save_new_data(symbol, result)
-            assign_queue.put(symbol)  # It will be checked for gaps again. If no gaps, it won't be assigned.
+            assign_queue.append(symbol)  # It will be checked for gaps again. If no gaps, it won't be assigned.
         except queue.Empty:
             pass
+    stop_event.set()
+    for t in threads:
+        t['thread'].join()
 
 # TODO
-#  Figure out why APIs rate limits are not being respected (noticed on polygon)
 #  covered_hours returning negative values
 #  Run ends early
 #  All timestamps should be seconds
@@ -226,6 +229,7 @@ if __name__ == "__main__":
     print(f'Latest market data at: {datetime.datetime.fromtimestamp(latest_market_time() / 1000)}')
     tcks = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
     # tcks = ['AAPL', 'NVDA']
+    # Clear error logs
 
     distribute_requests(
         tcks,

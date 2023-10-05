@@ -12,7 +12,7 @@ DISABLED = False
 name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
-    "limits": {"per_minute": 5, "per_day": 500},
+    "limits": {"per_minute": 5, "per_day": 100},
     "date_range": {
         "min": datetime.date(2000, 1, 1),
         "max": datetime.date.today() - datetime.timedelta(days=1)
