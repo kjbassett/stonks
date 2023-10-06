@@ -28,7 +28,7 @@ class API(BaseAPI):
 
     def _api_call(self, params):
         # TODO Convert (from start to end) into multiple calls
-        print('API call')
+        print('API CALL ' + self.name)
         data = self.client.get_aggs(**params)
         data = convert_to_df(data)
         self.latest_timestamps[params['ticker']] = data['timestamp'].max()

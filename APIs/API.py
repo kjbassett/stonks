@@ -95,7 +95,6 @@ class BaseAPI:
     def load_call_log(self):
         if os.path.exists(self.name + "/call_log.csv"):
             self.call_log = pd.read_csv(self.name + "/call_log.csv", header=None).iloc[:, 0]
-            ic(type(self.call_log))
         else:
             self.call_log = pd.Series()
 
@@ -123,8 +122,6 @@ class BaseAPI:
             ]
             if recent_calls.size >= limit_value:
                 latest = max(latest, recent_calls.min() + durations[limit_type])
-        ic(self.name, recent_calls)
-        ic(self.call_log)
         return latest
 
     def calculate_day_covered_hours(self, day, day_start_time, day_end_time):

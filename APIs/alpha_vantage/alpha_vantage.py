@@ -27,10 +27,9 @@ class API(BaseAPI):
         super().__init__(name, info)
 
     def _api_call(self, params):
-        print('API CALL')
+        print('API CALL ' + self.name)
         base_url = "https://www.alphavantage.co/query"
         response = requests.get(base_url, params=params)
-        print(response)
         data = response.json()
         data = convert_to_df(data)
         return data

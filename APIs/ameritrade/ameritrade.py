@@ -27,6 +27,7 @@ class API(BaseAPI):
         super().__init__(name, info)
 
     def _api_call(self, params):
+        print('API CALL ' + self.name)
         symbol = params.pop('symbol')
         url = f"https://api.tdameritrade.com/v1/marketdata/{symbol}/pricehistory"
         response = requests.get(url, params=params)
