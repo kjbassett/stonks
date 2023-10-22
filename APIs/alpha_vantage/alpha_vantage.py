@@ -61,7 +61,6 @@ class API(BaseAPI):
 
 def convert_to_df(data):
     # TODO Test this
-    print(data)
     price_data = data["Time Series (1min)"]
     df = pd.DataFrame.from_dict(price_data, orient="index")
 

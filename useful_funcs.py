@@ -2,6 +2,8 @@ import datetime
 import os
 import pandas as pd
 import pandas_market_calendars
+from config import CONFIG
+from functools import cache
 
 
 def is_open(date):
@@ -23,13 +25,11 @@ def get_api_key(api_name):
     raise ValueError(f"No key found for API: {api_name}")
 
 
+@cache
 def market_date_delta(date, n=0):
     """
     Calculates the date that is n days of the market being open after date.
     If n is 0, return the next day that the market is open.
-    :param date:
-    :param n:
-    :return:
     """
     if n == 0:
         # If n is 0, then we get the next day that the market is open.
@@ -61,7 +61,8 @@ def last_open_date():
 def get_open_dates(start, end):
     cal = pandas_market_calendars.get_calendar("NYSE")
     cal = cal.schedule(start_date=start, end_date=end)
-    return cal.index
+    cal = pd.Series(cal.index).dt.date
+    return cal
 
 
 def latest_market_time():
@@ -74,6 +75,14 @@ def latest_market_time():
     lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
     lmt2 = lmt2.timestamp()
     return min(lmt1, lmt2)
+
+
+all_open_dates = get_open_dates(CONFIG['min_date'], datetime.datetime.today())
+
+
+@cache
+def filter_open_dates(start_date, end_date):
+    return all_open_dates[(all_open_dates >= start_date) & (all_open_dates <= end_date)]
 
 
 # Yeah, I know this isn't pep8, but I couldn't waste 4 lines on something so simple. Plus this is cooler 😎

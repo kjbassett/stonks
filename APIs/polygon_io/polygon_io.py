@@ -31,14 +31,14 @@ class API(BaseAPI):
         print('API CALL ' + self.name)
         data = self.client.get_aggs(**params)
         data = convert_to_df(data)
-        self.latest_timestamps[params['ticker']] = data['timestamp'].max()
+        self.latest_param_end = data['timestamp'].max()
         return data
 
     def get_params(self, symbol, start, end):
+        self.latest_param_end = 0
         while True:
-            if symbol in self.latest_timestamps:
-                if start < self.latest_timestamps[symbol]:
-                    start = self.latest_timestamps[symbol] + 1
+            if start < self.latest_param_end:
+                start = self.latest_param_end + 1
             if start >= min(end, self.latest_possible_time().timestamp() * 1000):
                 return
             params = {

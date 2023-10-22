@@ -5,11 +5,12 @@ import pandas as pd
 import os
 import importlib
 import datetime
-from useful_funcs import latest_market_time, get_open_dates, market_date_delta
+from useful_funcs import latest_market_time, market_date_delta, all_open_dates
 from functools import partial
 from icecream import ic
 import tkinter as tk
 from tkinter import ttk
+from config import CONFIG
 
 
 def load_apis():
@@ -31,7 +32,11 @@ def load_saved_data(symbol):
     """Load saved data for a symbol if it exists, otherwise return None."""
     filepath = os.path.join("../Data", f"{symbol}.parquet")
     if os.path.exists(filepath):
-        return pd.read_parquet(filepath, engine="fastparquet")
+        data = pd.read_parquet(filepath, engine="fastparquet")
+        # Filter out any data that is older than the min_date
+        min_ts = datetime.datetime.combine(CONFIG["min_date"], datetime.time.min).timestamp() * 1000  # TODO ms to s
+        data = data[data['timestamp'] >= min_ts]
+        return data
     else:
         return None
 
@@ -54,8 +59,11 @@ def choose_best_api(start, end, threads):
     end = datetime.datetime.fromtimestamp(end)
 
     # delete this. It's just here for testing
-    for th in threads:
-        ic(th["api"].name, th["api"].covered_hours(start, end))
+    # for th in threads:
+    #     ic(th["api"].name,
+    #        th["api"].covered_hours(start, end),
+    #        th["input_queue"].qsize()
+    #        )
 
     ts = sorted(
         threads,
@@ -63,7 +71,7 @@ def choose_best_api(start, end, threads):
             -t["api"].covered_hours(
                 start, end
             ),  # Sort first by covered hours, descending
-            -t[
+            t[
                 "input_queue"
             ].qsize(),  # Then by queue size. TODO Would be better as queue time. Use Little's Law
         ),
@@ -72,12 +80,11 @@ def choose_best_api(start, end, threads):
         return ts[0]
 
 
-def find_gap_in_data(df, min_date):
+def find_gap_in_data(df):
     df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
-
     # add in beginning and end of time range
     ends = [
-        datetime.datetime.combine(min_date, datetime.time(4)).timestamp(),
+        datetime.datetime.combine(CONFIG['min_date'], datetime.time(4)).timestamp(),
         latest_market_time(),
     ]
 
@@ -101,13 +108,12 @@ def find_gap_in_data(df, min_date):
     df["days_apart"] = (df["date"] - df["prev_date"]).dt.days
 
     df["gap"] = df["timestamp"] - df["previous"]
+
     # if previous timestamp is a previous day, don't include closed hours in the gap
     # 28800 is the time at the tail ends of the gap. 4 hrs after 8 pm and 4 hours before 4am is 8 hours * 3600
-    open_dates = get_open_dates(df["date"].dt.date.min(), datetime.date.today())
     df = df.iloc[1:, :]
-
     # these two columns are needed for the adjust gap function
-    df["gap"] = df.apply(partial(adjust_gap, open_dates), axis=1)
+    df["gap"] = df.apply(partial(adjust_gap), axis=1)
 
     gaps = df[df["gap"] > 1800]  # gaps > 30 minutes are counted
     # check if gap has been tried before for each api
@@ -116,26 +122,26 @@ def find_gap_in_data(df, min_date):
     return gaps.iloc[0]
 
 
-def adjust_gap(open_dates, row):
+def adjust_gap(row):
     # only adjust if the data is on two separate days
     if row["days_apart"] > 0:
         # Don't count the time outside the market hours
         # Only count days the market is open. Gap could cover an open and a closed day.
-        d1 = row["prev_date"].replace(tzinfo=None)
-        d2 = row["date"].replace(tzinfo=None)
-        i1 = open_dates.searchsorted(d1)
-        i2 = open_dates.searchsorted(d2)
-        if i1 == len(open_dates) or open_dates[i1] != d1:
-            raise ValueError(f"{d1} is not in {open_dates}")
-        if i2 == len(open_dates) or open_dates[i2] != d2:
-            raise ValueError(f"{d2} is not in {open_dates}")
+        d1 = row["prev_date"].date()
+        d2 = row["date"].date()
+        i1 = all_open_dates.searchsorted(d1)
+        i2 = all_open_dates.searchsorted(d2)
+        if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
+            raise ValueError(f"{d1} is not in {all_open_dates}")
+        if i2 == len(all_open_dates) or all_open_dates[i2] != d2:
+            raise ValueError(f"{d2} is not in {all_open_dates}")
         open_days = i2 - i1
         closed = row["days_apart"] - open_days
         row["gap"] = row["gap"] - 28800 * open_days - 86400 * closed
     return row["gap"]
 
 
-def build_request(symbol, threads, min_date):
+def build_request(symbol, threads):
     """
     Builds a request based on the data needed for a symbol and the api's ability to provide that data
     :param symbol: ticker symbol for a company
@@ -144,7 +150,7 @@ def build_request(symbol, threads, min_date):
     :return: the chosen api's input queue, the start time of the request, and the end time of the request
     """
     # min date is the earliest day since min_date that is covered by api limits
-    min_date = max(min_date, min([t["api"].info["date_range"]["min"] for t in threads]))
+    min_date = max(CONFIG['min_date'], min([t["api"].info["date_range"]["min"] for t in threads]))
     # the day also has to be open
     min_date = market_date_delta(min_date)
 
@@ -153,11 +159,10 @@ def build_request(symbol, threads, min_date):
         start = datetime.datetime.combine(min_date, datetime.time(4)).timestamp()
         end = latest_market_time()
     else:
-        gap = find_gap_in_data(df, min_date)
+        gap = find_gap_in_data(df)
         if gap is None:
             return
         start, end = int(gap["previous"]), int(gap["timestamp"])
-    print('building request for ' + symbol)
     api = choose_best_api(start, end, threads)
     if api is None:
         return
@@ -182,9 +187,8 @@ def process_symbols(api, input_queue, result_queue, stop_event):
             continue
 
         # get result from the API
-        ic(symbol, api.name)
         result = api.api_call(symbol, start * 1000, end * 1000)
-        ic(len(result.index))
+        ic(symbol, api.name, len(result.index))
         result_queue.put((symbol, result))
 
 
@@ -213,7 +217,7 @@ def create_components():
     }
 
 
-def distribute_requests(components, ticker_symbols, min_date):
+def distribute_requests(components, ticker_symbols):
     # Add symbols to the queue for assignment to an api
     assign_queue = components["assign_queue"]
     threads = components["threads"]
@@ -231,7 +235,7 @@ def distribute_requests(components, ticker_symbols, min_date):
         if assign_queue:
             symbol = assign_queue.pop()
             # Evaluate data and api limitations to determine which one should be used and for what time period
-            request = build_request(symbol, threads, min_date)
+            request = build_request(symbol, threads)
             if request is None:  # No request covering new data possible
                 continue
             input_queue, start, end = request
@@ -252,7 +256,6 @@ def distribute_requests(components, ticker_symbols, min_date):
 
 def main():
     ticker_symbols = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
-    min_date = datetime.date.today() - datetime.timedelta(days=730)
 
     # Create Queues and Threads
     components = create_components()
@@ -260,8 +263,7 @@ def main():
         target=distribute_requests,
         args=(
             components,
-            ticker_symbols,
-            min_date,
+            ticker_symbols
         ),
     )
 
@@ -326,8 +328,10 @@ def main():
 
 
 # TODO
+#  skip previously tried gaps
+#  Clear Logs on start
 #  Fix stop button
-#  covered_hours preferring alpha_vantage? Small chance it's correct. compare start and end of request to api time limits
+#  Move functions to appropriate files
 #  All timestamps should be seconds
 #  hit run and fix until it works
 #  Explore other API calls
@@ -339,7 +343,4 @@ if __name__ == "__main__":
     print(
         f"Latest market data at: {datetime.datetime.fromtimestamp(latest_market_time() / 1000)}"
     )
-    # tcks = ['AAPL', 'NVDA']
-    # Clear error logs
-
     main()

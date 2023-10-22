@@ -2,7 +2,7 @@ import logging
 import os
 import pandas as pd
 import time
-from useful_funcs import get_api_key, market_date_delta
+from useful_funcs import get_api_key, market_date_delta, filter_open_dates
 import datetime
 from icecream import ic
 
@@ -21,6 +21,7 @@ class BaseAPI:
         self.load_call_log()
 
     def api_call(self, symbol, start, end):
+        start, end = int(start), int(end)
         try:
             # split into multiple api calls due to api limits
             params = self.get_params(symbol, start, end)
@@ -30,7 +31,6 @@ class BaseAPI:
                 ic(param)
                 # determine if api needs to wait
                 wait = self.next_available_call_time() - time.time()
-                ic(wait)
                 if wait < 10:
                     time.sleep(max(wait, 0))
                 else:
@@ -67,7 +67,6 @@ class BaseAPI:
         ept = self.info["date_range"]["min"] - datetime.timedelta(days=1)
         ept = market_date_delta(ept, 1)
         ept = datetime.datetime.combine(ept, datetime.time(hour=self.info["hours"]["min"]))
-        ic(ept)
         return ept
 
     def latest_possible_time(self):
@@ -76,7 +75,6 @@ class BaseAPI:
         lpt = market_date_delta(lpt, -1)
         lpt = datetime.datetime.combine(lpt, datetime.time(hour=self.info["hours"]["max"]))
         lpt = min(lpt, datetime.datetime.now() - self.info["delay"])
-        ic(lpt)
         return lpt
 
     def create_error_logger(self):
@@ -93,69 +91,59 @@ class BaseAPI:
         self.error_logger.addHandler(handler)
 
     def load_call_log(self):
-        if os.path.exists(self.name + "/call_log.csv"):
-            self.call_log = pd.read_csv(self.name + "/call_log.csv", header=None).iloc[:, 0]
+        if os.path.exists(self.name + "/calls.log"):
+            self.call_log = pd.read_csv(self.name + "/calls.log", header=None).iloc[:, 0].tolist()
         else:
-            self.call_log = pd.Series()
+            self.call_log = []
 
     def log_call(self):
-        # Log the call
-        ic('logging call')
         t = time.time()
-        self.call_log.at[len(self.call_log)] = t
 
+        # Log the call
+        self.call_log.append(t)
         # Filter out old logged calls
-        longest_limit_type = max(self.info["limits"], key=self.info["limits"].get)  # Get key of the longest limit
-        self.call_log = self.call_log[
-            self.call_log >= t - durations[longest_limit_type]
-        ]
-
+        longest_limit_type = max(self.info["limits"], key=['per_second', 'per_minute', 'per_hour', 'per_day'].index)
+        filter_threshold = t - durations[longest_limit_type]
+        while self.call_log and self.call_log[0] <= filter_threshold:
+            self.call_log.pop(0)
         # Save the log
-        self.call_log.to_csv(self.name + "/call_log.csv", index=False, header=False)
+        pd.DataFrame(self.call_log).to_csv(self.name + "/calls.log", index=False, header=False)
 
     def next_available_call_time(self):
         # update next_available_call_time
-        latest = time.time()
+        nact = time.time() # next available call time
         for limit_type, limit_value in self.info["limits"].items():
-            recent_calls = self.call_log[
-                self.call_log > time.time() - durations[limit_type]
-            ]
-            if recent_calls.size >= limit_value:
-                latest = max(latest, recent_calls.min() + durations[limit_type])
-        return latest
-
-    def calculate_day_covered_hours(self, day, day_start_time, day_end_time):
-        if not (self.info["date_range"]["min"] < day < self.info["date_range"]["max"]):
-            return 0
-        api_start_time = datetime.datetime.combine(day, datetime.time(self.info['hours']['min']))
-        api_end_time = datetime.datetime.combine(day, datetime.time(self.info['hours']['max']))
-
-        overlap_start_time = max(day_start_time, api_start_time)
-        overlap_end_time = min(day_end_time, api_end_time)
-
-        return max(0, (overlap_end_time - overlap_start_time).seconds / 3600)  # convert to hours
+            i = 0
+            for i in range(len(self.call_log)):
+                if self.call_log[i] >= time.time() - durations[limit_type]:
+                    break
+            recent_calls = self.call_log[i:]
+            diff = len(recent_calls) - limit_value
+            if diff >= 0:
+                # must wait at least enough time for diff entries in log to expire
+                nact = max(nact, recent_calls[diff] + durations[limit_type])
+        return nact
 
     def covered_hours(self, start, end):
         if start > end:
             start, end = end, start
 
+        # Get all open dates between dates of start and end
         first_day = max(start.date(), self.info["date_range"]["min"])
         last_day = min(end.date(), self.info["date_range"]["max"])
-        if first_day > last_day:
-            return 0
-        days = (last_day - first_day).days + 1
-        hours = 0
 
-        # Adjust for first day
-        if first_day == start.date():
-            hours += self.calculate_day_covered_hours(first_day, start, datetime.datetime.combine(first_day, datetime.time(23, 59)))
-            days -= 1
-        # Adjust for last day
-        if last_day == end.date():
-            hours += self.calculate_day_covered_hours(last_day, datetime.datetime.combine(last_day, datetime.time(0, 0)), end)
-            days -= 1
+        # open dates should come from a cached function from
+        open_dates = filter_open_dates(first_day, last_day)
 
-        hours += days * (self.info['hours']['max'] - self.info['hours']['min'])
+        # Add days. Assuming all the same. Could be more accurate b/c the market sometimes has special hours
+        days = len(open_dates.index)
+        hours = days * (self.info['hours']['max'] - self.info['hours']['min'])
+
+        # adjust if start is after the min hours for that day
+        hours -= max(start.hour - self.info['hours']['min'], 0)
+
+        # adjust if end is before the max hours for that day
+        hours -= min(self.info['hours']['max'] - end.hour, 0)
 
         return hours
 
