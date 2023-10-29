@@ -27,7 +27,6 @@ class API(BaseAPI):
         self.latest_timestamps = {}
 
     def _api_call(self, params):
-        # TODO Convert (from start to end) into multiple calls
         print('API CALL ' + self.name)
         data = self.client.get_aggs(**params)
         data = convert_to_df(data)

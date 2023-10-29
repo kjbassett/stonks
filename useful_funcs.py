@@ -68,7 +68,6 @@ def get_open_dates(start, end):
 def latest_market_time():
     # lmt = latest market time
     # todo check all apis info for latest possible
-    # Todo convert milliseconds to seconds
     lmt1 = (datetime.datetime.now().timestamp() - 60 * 20)  # 20 minutes ago
 
     lmt2 = last_open_date()

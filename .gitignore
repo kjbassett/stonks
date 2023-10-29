@@ -1,8 +1,8 @@
 .idea/
 5/
 DailyRecs/
-Results/
-TrainingData/
+Archive/Results/
+Archive/TrainingData/
 keys.txt
 *.xlsx
 *.csv
