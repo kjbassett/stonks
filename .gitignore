@@ -1,12 +1,9 @@
 .idea/
 5/
 DailyRecs/
-Archive/Results/
-Archive/TrainingData/
 keys.txt
 *.xlsx
 *.csv
-/Archive/
 *.log
 *.txt
 *.parquet
