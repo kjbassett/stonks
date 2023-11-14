@@ -29,6 +29,7 @@ class API(BaseAPI):
     def _api_call(self, params):
         print('API CALL ' + self.name)
         data = self.client.get_aggs(**params)
+        print(data)
         data = convert_to_df(data)
         if not data.empty:
             self.latest_param_end = data['timestamp'].max() / 1000

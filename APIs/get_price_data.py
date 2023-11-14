@@ -170,7 +170,7 @@ def build_request(company: pd.Series, apis: list):
         return {'company': company, 'start': start, 'end': end, 'excluded_apis': []}
     else:
         gaps = find_gaps_in_data(df)
-        if gaps is None:
+        if gaps is None or gaps.empty:
             return
         ptg = db('SELECT * FROM TradingDataGaps WHERE company_id = ?',
                  params=(company['id'], ), return_type='DataFrame')  # ptg = previously tried gaps
@@ -180,8 +180,6 @@ def build_request(company: pd.Series, apis: list):
             if len(excluded_apis) < 3 and not all([api['api'].name in excluded_apis for api in apis]):
                 start, end = int(gap["previous"]), int(gap["timestamp"])
                 return {'company': company, 'start': start, 'end': end, 'excluded_apis': excluded_apis}
-
-
 
 
 def process_requests(api, input_queue, result_queue, stop_event):
@@ -254,12 +252,10 @@ def distribute_requests(components: dict, companies: pd.DataFrame):
             cpy = assign_queue.pop()
             # Evaluate data and api limitations to determine which one should be used and for what time period
             request = build_request(cpy, apis)
-            if request is None or request['start'] is None:  # No request covering new data possible
-                continue
-            api = choose_best_api(request, apis)  # No API available that covers requested time range and company
-            if api is None:
-                continue
-            api['input_queue'].put(request)
+            if request or request['start'] is not None:  # No request covering new data possible
+                api = choose_best_api(request, apis)
+                if api:
+                    api['input_queue'].put(request)
 
         # Try to get a result from the queue
         if result_queue.qsize() == 0:
@@ -353,11 +349,9 @@ def main():
 
 
 # TODO
-#  skip previously tried gaps
+#  Why so many gaps betweem 4pm and 930am? Shoud have extended hours!!!
 #  Clear Logs on start
-#  Fix stop button
 #  Move functions to appropriate files
-#  All timestamps should be seconds
 #  hit run and fix until it works
 #  Explore other API calls
 #   https://polygon.io/docs/stocks/get_v2_reference_news

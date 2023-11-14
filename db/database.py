@@ -45,9 +45,9 @@ class Database:
         The function can handle both single query executions and bulk insert operations based on the data type
         of `params`. When `params` is a list of tuples, it performs an `executemany` operation.
         """
+        print(query)
         with self._connect() as conn:
             cursor = conn.cursor()
-
             if return_type == 'DataFrame':
                 cursor.execute(query, params)
                 # Use Pandas to read the results into a DataFrame

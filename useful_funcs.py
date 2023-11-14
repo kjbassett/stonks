@@ -91,3 +91,6 @@ load_progress = lambda path: pd.read_csv(path) if os.path.exists(path) else pd.D
 if __name__ == "__main__":
     print(get_open_dates(datetime.date(2023, 8, 1), datetime.datetime.today()))
     print(latest_market_time())
+    cal = pandas_market_calendars.get_calendar("NYSE")
+    cal = cal.schedule(start_date=datetime.date(2021, 11, 22), end_date=datetime.date(2021, 11, 22))
+    print(cal)

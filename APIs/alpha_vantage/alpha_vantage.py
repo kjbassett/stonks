@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import datetime
 from dateutil.relativedelta import relativedelta
+from icecream import ic
 
 # https://www.alphavantage.co/documentation/#
 
@@ -12,7 +13,7 @@ DISABLED = True
 name = os.path.split(__file__)[1].split(".")[0]
 info = {
     "name": name,
-    "limits": {"per_minute": 5, "per_day": 100},
+    "limits": {"per_minute": 5, "per_day": 25},
     "date_range": {
         "min": datetime.date(2000, 1, 1),
         "max": datetime.date.today() - datetime.timedelta(days=1)
@@ -31,6 +32,9 @@ class API(BaseAPI):
         base_url = "https://www.alphavantage.co/query"
         response = requests.get(base_url, params=params)
         data = response.json()
+        if "Time Series (1min)" not in data.keys():
+            ic(data)
+            return
         data = convert_to_df(data)
         return data
 
