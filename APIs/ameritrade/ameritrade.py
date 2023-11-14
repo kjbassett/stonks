@@ -7,7 +7,7 @@ import datetime
 # https://developer.tdameritrade.com/price-history/apis/get/marketdata/%7Bsymbol%7D/pricehistory
 # Off by one minute?
 
-DISABLED = False
+DISABLED = True
 
 name = os.path.split(__file__)[1].split(".")[0]
 info = {

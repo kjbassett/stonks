@@ -7,7 +7,7 @@ from dateutil.relativedelta import relativedelta
 
 # https://www.alphavantage.co/documentation/#
 
-DISABLED = False
+DISABLED = True
 
 name = os.path.split(__file__)[1].split(".")[0]
 info = {
@@ -36,8 +36,8 @@ class API(BaseAPI):
 
     def get_params(self, symbol, start, end):
         params = []
-        start = datetime.datetime.fromtimestamp(start // 1000)
-        end = datetime.datetime.fromtimestamp(end // 1000)
+        start = datetime.datetime.fromtimestamp(start)
+        end = datetime.datetime.fromtimestamp(end)
         while start < end:
             param = {
                 "function": "TIME_SERIES_INTRADAY",

@@ -1,9 +1,9 @@
 from polygon import RESTClient
-from polygon.exceptions import NoResultsError
 from APIs.API import BaseAPI
 import os
 import pandas as pd
 import datetime
+from icecream import ic
 
 DISABLED = False
 
@@ -30,7 +30,8 @@ class API(BaseAPI):
         print('API CALL ' + self.name)
         data = self.client.get_aggs(**params)
         data = convert_to_df(data)
-        self.latest_param_end = data['timestamp'].max()
+        if not data.empty:
+            self.latest_param_end = data['timestamp'].max() / 1000
         return data
 
     def get_params(self, symbol, start, end):
@@ -38,14 +39,14 @@ class API(BaseAPI):
         while True:
             if start < self.latest_param_end:
                 start = self.latest_param_end + 1
-            if start >= min(end, self.latest_possible_time().timestamp() * 1000):
+            if start >= min(end, self.latest_possible_time().timestamp()):
                 return
             params = {
                 "ticker": symbol,
                 "multiplier": 1,
                 "timespan": "minute",
-                "from_": start,
-                "to": end,
+                "from_": int(start * 1000),
+                "to": int(end * 1000),
             }
             yield params
 

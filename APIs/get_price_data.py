@@ -11,6 +11,10 @@ from icecream import ic
 import tkinter as tk
 from tkinter import ttk
 from config import CONFIG
+from db.database import Database
+
+db = Database(CONFIG['db_folder'] + CONFIG['db_name'])
+min_market_date = market_date_delta(CONFIG['min_date'])
 
 
 def load_apis():
@@ -28,66 +32,56 @@ def load_apis():
     return apis
 
 
-def load_saved_data(symbol):
+def load_saved_data(company_id):
     """Load saved data for a symbol if it exists, otherwise return None."""
-    filepath = os.path.join("../Data", f"{symbol}.parquet")
-    if os.path.exists(filepath):
-        data = pd.read_parquet(filepath, engine="fastparquet")
-        # Filter out any data that is older than the min_date
-        min_ts = datetime.datetime.combine(CONFIG["min_date"], datetime.time.min).timestamp() * 1000  # TODO ms to s
-        data = data[data['timestamp'] >= min_ts]
-        return data
-    else:
-        return None
+    min_ts = datetime.datetime.combine(CONFIG["min_date"], datetime.time.min).timestamp()
+    query = f'SELECT * FROM TradingData WHERE company_id = ? AND timestamp > ? ORDER BY timestamp ASC'
+    data = db(query, (company_id, min_ts), return_type='DataFrame')
+    return data
 
 
-def save_new_data(symbol, df):
-    """Save a DataFrame to a Parquet file, appending if the file already exists."""
-    # TODO remove duplicates
-    if df.empty:
-        return
-    filepath = os.path.join("../Data", f"{symbol}.parquet")
-    if os.path.exists(filepath):
-        df.to_parquet(filepath, engine="fastparquet", append=True)
-    else:
-        df.to_parquet(filepath, engine="fastparquet")
+def save_new_data(company_id, df):
+    count_query = 'SELECT COUNT(company_id) FROM TradingData WHERE company_id = ?'
+    old_n = db(count_query, (company_id,), return_type='DataFrame')['COUNT(company_id)'][0]
+
+    df['company_id'] = company_id
+    db.insert('TradingData', df)
+
+    new_n = db(count_query, (company_id,), return_type='DataFrame')['COUNT(company_id)'][0]
+    return new_n - old_n
 
 
-def choose_best_api(start, end, threads):
+def choose_best_api(request, apis):
     # The below 2 lines may not work if run outside the US/Eastern time zone
-    start = datetime.datetime.fromtimestamp(start)
-    end = datetime.datetime.fromtimestamp(end)
+    start = datetime.datetime.fromtimestamp(request['start'])
+    end = datetime.datetime.fromtimestamp(request['end'])
 
-    # delete this. It's just here for testing
-    # for th in threads:
-    #     ic(th["api"].name,
-    #        th["api"].covered_hours(start, end),
-    #        th["input_queue"].qsize()
-    #        )
+    best_api = None
+    best_hours = 0
+    for api in apis:
+        if api['api'].name in request['excluded_apis']:
+            print(f'skipping {api["api"].name} because it is excluded')
+            continue
+        hours = api["api"].covered_hours(start, end)
+        if hours > best_hours:
+            best_hours = hours
+            best_api = api
+        elif hours == best_hours > 0:
+            if api['input_queue'].qsize() < best_api['input_queue'].qsize():
+                best_hours = hours
+                best_api = api
 
-    ts = sorted(
-        threads,
-        key=lambda t: (
-            -t["api"].covered_hours(
-                start, end
-            ),  # Sort first by covered hours, descending
-            t[
-                "input_queue"
-            ].qsize(),  # Then by queue size. TODO Would be better as queue time. Use Little's Law
-        ),
-    )
-    if ts[0]["api"].covered_hours(start, end) > 0:
-        return ts[0]
+    return best_api
 
 
-def find_gap_in_data(df):
-    df.timestamp = df.timestamp / 1000  # TODO convert milliseconds to seconds
-    # add in beginning and end of time range
+def find_gaps_in_data(df, gap_threshold=1800):
+    # add dummy timestamps and end of time range to get all gaps
     ends = [
-        datetime.datetime.combine(CONFIG['min_date'], datetime.time(4)).timestamp(),
+        int(datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp()),
         latest_market_time(),
     ]
 
+    # TODO is it faster to test if there are gaps on the ends before concat?
     df = pd.concat([df, pd.DataFrame({"timestamp": ends})])
     df = df.sort_values(by="timestamp")
 
@@ -100,6 +94,8 @@ def find_gap_in_data(df):
         .dt.tz_convert("US/Eastern")
         .dt.normalize()
     )
+
+    # these two columns are needed for the adjust gap function
     df["prev_date"] = (
         pd.to_datetime(df.previous, unit="s", utc=True)
         .dt.tz_convert("US/Eastern")
@@ -107,89 +103,110 @@ def find_gap_in_data(df):
     )
     df["days_apart"] = (df["date"] - df["prev_date"]).dt.days
 
-    df["gap"] = df["timestamp"] - df["previous"]
 
-    # if previous timestamp is a previous day, don't include closed hours in the gap
-    # 28800 is the time at the tail ends of the gap. 4 hrs after 8 pm and 4 hours before 4am is 8 hours * 3600
-    df = df.iloc[1:, :]
-    # these two columns are needed for the adjust gap function
+    df["gap"] = df["timestamp"] - df["previous"]
+    df = df.iloc[1:, ]
+
+    # Todo filter > gap threshold here as well to speed up apply?
     df["gap"] = df.apply(partial(adjust_gap), axis=1)
 
-    gaps = df[df["gap"] > 1800]  # gaps > 30 minutes are counted
+    # gaps ranges are EXCLUSIVE except for dummy timestamps
+    # This seems dangerous since we are saving timestamps and retrieving them later
+    df.reset_index(drop=True, inplace=True)
+    df.loc[1:, "previous"] += 60
+    df.loc[:len(df)-1, "timestamp"] -= 60
+
+    gaps = df[df["gap"] > gap_threshold]  # gaps > 30 minutes are counted
     # check if gap has been tried before for each api
     if len(gaps.index) == 0:
         return
-    return gaps.iloc[0]
+
+    return gaps
 
 
 def adjust_gap(row):
+    # if previous timestamp is a previous day, don't include closed hours in the gap
+
     # only adjust if the data is on two separate days
-    if row["days_apart"] > 0:
-        # Don't count the time outside the market hours
-        # Only count days the market is open. Gap could cover an open and a closed day.
-        d1 = row["prev_date"].date()
-        d2 = row["date"].date()
-        i1 = all_open_dates.searchsorted(d1)
-        i2 = all_open_dates.searchsorted(d2)
-        if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
-            raise ValueError(f"{d1} is not in {all_open_dates}")
-        if i2 == len(all_open_dates) or all_open_dates[i2] != d2:
-            raise ValueError(f"{d2} is not in {all_open_dates}")
-        open_days = i2 - i1
-        closed = row["days_apart"] - open_days
-        row["gap"] = row["gap"] - 28800 * open_days - 86400 * closed
+    if row["days_apart"] == 0:
+        return row["gap"]
+
+    # Don't count the time outside the market hours
+    # different by day depending on if the market was open or closed
+    d1 = row["prev_date"].date()
+    d2 = row["date"].date()
+    i1 = all_open_dates.searchsorted(d1)  # todo memoize
+    i2 = all_open_dates.searchsorted(d2)
+    if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
+        raise ValueError(f"{d1} is not in {all_open_dates}")
+    if i2 == len(all_open_dates) or all_open_dates[i2] != d2:
+        raise ValueError(f"{d2} is not in {all_open_dates}")
+    open_days = i2 - i1
+    closed = row["days_apart"] - open_days
+    # 28800 is the time between the end of one market day and the start of another.
+    # 4 hrs after 8 pm and 4 hours before 4am is 8 hours * 3600 = 28800
+    # 86400 is number of seconds in a day
+    row["gap"] = row["gap"] - 28800 * open_days - 86400 * closed
     return row["gap"]
 
 
-def build_request(symbol, threads):
+def build_request(company: pd.Series, apis: list):
     """
     Builds a request based on the data needed for a symbol and the api's ability to provide that data
-    :param symbol: ticker symbol for a company
-    :param threads: objects containing the api's and other relation objects
-    :param min_date: The earliest date that we care about
+    :param company: pd.Series of a company's information
+    :param apis: objects containing the api's and other relation objects
     :return: the chosen api's input queue, the start time of the request, and the end time of the request
     """
     # min date is the earliest day since min_date that is covered by api limits
-    min_date = max(CONFIG['min_date'], min([t["api"].info["date_range"]["min"] for t in threads]))
+    min_date = max(CONFIG['min_date'], min([t["api"].info["date_range"]["min"] for t in apis]))
     # the day also has to be open
     min_date = market_date_delta(min_date)
 
-    df = load_saved_data(symbol)
+    df = load_saved_data(company['id'])
     if df is None:
         start = datetime.datetime.combine(min_date, datetime.time(4)).timestamp()
         end = latest_market_time()
+        # Could cause error if start and end in TradingDataGaps table
+        return {'company': company, 'start': start, 'end': end, 'excluded_apis': []}
     else:
-        gap = find_gap_in_data(df)
-        if gap is None:
+        gaps = find_gaps_in_data(df)
+        if gaps is None:
             return
-        start, end = int(gap["previous"]), int(gap["timestamp"])
-    api = choose_best_api(start, end, threads)
-    if api is None:
-        return
+        ptg = db('SELECT * FROM TradingDataGaps WHERE company_id = ?',
+                 params=(company['id'], ), return_type='DataFrame')  # ptg = previously tried gaps
+        for _, gap in gaps.iterrows():
+            excluded_apis = list(ptg[(ptg['start'] == gap['previous']) & (ptg['end'] == gap['timestamp'])]['source'])
+            # if 3 have tried, we can assume the other apis can't either
+            if len(excluded_apis) < 3 and not all([api['api'].name in excluded_apis for api in apis]):
+                start, end = int(gap["previous"]), int(gap["timestamp"])
+                return {'company': company, 'start': start, 'end': end, 'excluded_apis': excluded_apis}
 
-    return api["input_queue"], start, end
 
 
-def process_symbols(api, input_queue, result_queue, stop_event):
+
+def process_requests(api, input_queue, result_queue, stop_event):
     # Load historical API call log if it exists, otherwise initialize an empty DataFrame
     # Remember this function is what is parallelized
 
     while not stop_event.is_set():
         # Wait for api rate limit
         sleep_duration = max(0, api.next_available_call_time() - time.time())
-        time.sleep(sleep_duration)
-
-        # Get next symbol to process
-        try:
-            symbol, start, end = input_queue.get_nowait()
-        except queue.Empty:
+        if sleep_duration or input_queue.empty():
             time.sleep(1)
             continue
 
+        request = input_queue.get_nowait()
+
         # get result from the API
-        result = api.api_call(symbol, start * 1000, end * 1000)
-        ic(symbol, api.name, len(result.index))
-        result_queue.put((symbol, result))
+        data = api.api_call(request['company']['symbol'], request['start'], request['end'])
+        n = len(data) if data is not None else None
+        ic(request['company']['symbol'], request['start'], request['end'], api.name, n)
+        if n is not None and n <= 2:
+            ic(data)
+
+        result_queue.put(
+            {**request, 'api_name': api.name, 'data': data}
+        )
 
 
 def create_components():
@@ -200,62 +217,68 @@ def create_components():
     # Create a shared queue for incoming results from other threads
     result_queue = queue.Queue()
 
-    threads = []
+    apis = []
     for api in load_apis():
         input_queue = queue.Queue()
         thread = threading.Thread(
-            target=process_symbols, args=(api, input_queue, result_queue, stop_event)
+            target=process_requests, args=(api, input_queue, result_queue, stop_event)
         )
 
-        threads.append({"thread": thread, "input_queue": input_queue, "api": api})
+        apis.append({"thread": thread, "input_queue": input_queue, "api": api})
 
     return {
         "assign_queue": assign_queue,
-        "threads": threads,
+        "apis": apis,
         "result_queue": result_queue,
         "stop_event": stop_event,
     }
 
 
-def distribute_requests(components, ticker_symbols):
+def distribute_requests(components: dict, companies: pd.DataFrame):
     # Add symbols to the queue for assignment to an api
     assign_queue = components["assign_queue"]
-    threads = components["threads"]
+    apis = components["apis"]
     result_queue = components["result_queue"]
     stop_event = components["stop_event"]
-    for symbol in ticker_symbols:
-        assign_queue.append(symbol)
-
-    for t in threads:
+    for _, cpy in companies.iterrows():
+        if cpy['symbol'] != 'KE':
+            continue
+        assign_queue.append(cpy)
+    for t in apis:
         t["thread"].start()
 
     # While threads are running
     while not stop_event.is_set():
         # Try to get a symbol from the queue
         if assign_queue:
-            symbol = assign_queue.pop()
+            cpy = assign_queue.pop()
             # Evaluate data and api limitations to determine which one should be used and for what time period
-            request = build_request(symbol, threads)
-            if request is None:  # No request covering new data possible
+            request = build_request(cpy, apis)
+            if request is None or request['start'] is None:  # No request covering new data possible
                 continue
-            input_queue, start, end = request
-            input_queue.put((symbol, start, end))
+            api = choose_best_api(request, apis)  # No API available that covers requested time range and company
+            if api is None:
+                continue
+            api['input_queue'].put(request)
 
         # Try to get a result from the queue
-        try:
-            symbol, result = result_queue.get_nowait()
-            save_new_data(symbol, result)
-            assign_queue.append(
-                symbol
-            )  # It will be checked for gaps again. If no gaps, it won't be assigned.
-        except queue.Empty:
-            pass
-    for t in threads:
-        t["thread"].join()
+        if result_queue.qsize() == 0:
+            continue
+        result = result_queue.get_nowait()
+        # If empty or no new data, don't try that combo of api, symbol, start, and end again
+        if result['data'] is None or result['data'].empty or not save_new_data(result['company']['id'], result['data']):
+            print('No new data')
+            query = f"INSERT INTO TradingDataGaps (source, company_id, start, end) VALUES (?, ?, ?, ?);"
+            db(query, (result['api_name'], result['company']['id'], result['start'], result['end']))
+        # Checked for gaps again. If no gaps, it won't be assigned again.
+        assign_queue.append(result['company'])
+
+    for api in apis:
+        api["thread"].join()
 
 
 def main():
-    ticker_symbols = pd.read_csv("../tickers.csv")["Ticker"].unique().tolist()
+    companies = db('SELECT * FROM Companies;', return_type='DataFrame')
 
     # Create Queues and Threads
     components = create_components()
@@ -263,7 +286,7 @@ def main():
         target=distribute_requests,
         args=(
             components,
-            ticker_symbols
+            companies
         ),
     )
 
@@ -273,7 +296,7 @@ def main():
 
     # Frame to hold the labels
     frame = ttk.Frame(root, padding="10")
-    frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    frame.grid(row=0, column=0)  #, sticky=(tk.W, tk.E, tk.N, tk.S))
 
     # Labels to display the queue lengths
     assign_queue_label = ttk.Label(frame, text="Assign Queue Length: 0")
@@ -297,10 +320,12 @@ def main():
             ] = f"Assign Queue Length: {len(components['assign_queue'])}"
             input_queues_label[
                 "text"
-            ] = f"Input Queues Lengths: {[t['input_queue'].qsize() for t in components['threads']]}"
+            ] = f"Input Queues Lengths: {[t['input_queue'].qsize() for t in components['apis']]}"
             next_call_times_label[
                 "text"
-            ] = f"Next Call Times: {[round(t['api'].next_available_call_time() - time.time(), 1) for t in components['threads']]}"
+            ] = f"""Next Call Times: {[
+                round(t['api'].next_available_call_time() - time.time(), 1) for t in components['apis']
+            ]}"""
             result_queue_label[
                 "text"
             ] = f"Result Queue Length: {components['result_queue'].qsize()}"
@@ -310,7 +335,7 @@ def main():
     def stop_threads():
         components['stop_event'].set()
         # Optionally, you can wait for threads to finish using join, if needed
-        for t in components['threads']:
+        for t in components['apis']:
             t['thread'].join()
         dist_thread.join()
         root.quit()
@@ -341,6 +366,6 @@ def main():
 
 if __name__ == "__main__":
     print(
-        f"Latest market data at: {datetime.datetime.fromtimestamp(latest_market_time() / 1000)}"
+        f"Latest market data at: {datetime.datetime.fromtimestamp(latest_market_time())}"
     )
     main()

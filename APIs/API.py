@@ -21,14 +21,12 @@ class BaseAPI:
         self.load_call_log()
 
     def api_call(self, symbol, start, end):
-        start, end = int(start), int(end)
         try:
             # split into multiple api calls due to api limits
             params = self.get_params(symbol, start, end)
             cols = ["open", "high", "low", "close", "volume", "timestamp"]
             all_data = pd.DataFrame(columns=cols)
             for param in params:
-                ic(param)
                 # determine if api needs to wait
                 wait = self.next_available_call_time() - time.time()
                 if wait < 10:
@@ -38,7 +36,13 @@ class BaseAPI:
 
                 try:
                     self.log_call()
-                    data = self._api_call(param)[cols]
+                    data = self._api_call(param)
+                    if data.empty:
+                        continue
+                    data = data[cols]
+                    if data["timestamp"].min() > 1000000000000:  # Some APIs return timestamps in ms
+                        data['timestamp'] = data['timestamp'] / 1000
+                        data['timestamp'] = data['timestamp'].astype(int)
                     all_data = pd.concat([all_data, data])
                 except Exception as e:
                     print(f"ERROR from {self.name} on _api_call")

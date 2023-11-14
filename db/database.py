@@ -1,6 +1,5 @@
 import os
 import sqlite3
-from config import CONFIG
 from typing import List, Tuple, Union, Dict, Any
 import pandas as pd
 
@@ -68,28 +67,28 @@ class Database:
 
         return result
 
-    def insert(self, table: str, data: Union[Dict[str, Any], pd.DataFrame]):
+    def insert(self, table: str, data: Union[Dict[str, Any], pd.DataFrame], skip_existing: bool = True):
         """Insert a record or records into the database."""
         if isinstance(data, dict):
-            self._insert_single_record(table, data)
+            self._insert_single_record(table, data, skip_existing)
         elif isinstance(data, pd.DataFrame):
-            self._insert_multiple_records(table, data)
+            self._insert_multiple_records(table, data, skip_existing)
         else:
             raise ValueError("Unsupported data type. Use a dictionary or a DataFrame.")
 
-    def _insert_single_record(self, table: str, data: Dict[str, Any]):
+    def _insert_single_record(self, table: str, data: Dict[str, Any], skip_existing: bool = True):
         """Insert a single record into the database."""
         columns = ', '.join(data.keys())
         placeholders = ', '.join(['?'] * len(data))
-        query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders});"
+        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} ({columns}) VALUES ({placeholders});"
         params = tuple(data.values())
         self.execute_query(query, params)
 
-    def _insert_multiple_records(self, table: str, data: pd.DataFrame):
+    def _insert_multiple_records(self, table: str, data: pd.DataFrame, skip_existing: bool = True):
         """Insert multiple records from a DataFrame into the database."""
         columns = ', '.join(data.columns)
         placeholders = ', '.join(['?'] * len(data.columns))
-        query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders});"
+        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} ({columns}) VALUES ({placeholders});"
         params = [tuple(row) for row in data.values]
         self.execute_query(query, params)
 
@@ -114,10 +113,51 @@ def create_database_if_not_exists(db_path: str, schema_path: str = 'create_db.sq
 
 if __name__ == '__main__':
     pass
+
     # Examples
-    # name = CONFIG['db_folder'] + CONFIG['db_name']
+    from config import CONFIG
+    name = CONFIG['db_folder'] + CONFIG['db_name']
     # create_database_if_not_exists(name)
-    # db = Database(name)
+    db = Database(name)
+    # db.insert('Companies', {'name': 'Test Company2', 'symbol': 'TEST2'})
     # db.insert('Companies', {'name': 'Test Company2', 'symbol': 'TEST2'})
     # db.insert('Companies', pd.DataFrame({'name': ['Test Company3', 'Test Company 4'], 'symbol': ['TEST3', 'TEST4']}))
-    # print(db('DELETE FROM Companies'))
+    # print(db('SELECT * FROM Companies', return_type='DataFrame'))
+    # db('DELETE FROM Companies')
+
+    # # tickers.csv import
+    # tickers = pd.read_csv('../tickers.csv')
+    # tickers.columns = ['name', 'symbol']
+    # db.insert('Companies', tickers)
+    # print(db('SELECT * FROM Companies', return_type='DataFrame'))
+
+    # # parquet file import script
+    # import os
+    # folder = r'C:\Users\Ken\Dropbox\Programming\Stonks\Data'
+    # for file in os.listdir(folder):
+    #     if file.endswith('.parquet'):
+    #         symbol = file.split('.')[0]
+    #         print(symbol)
+    #
+    #         path = os.path.join(folder, file)
+    #         df = pd.read_parquet(path)
+    #         company_id = db("SELECT id FROM Companies WHERE symbol = ?", (symbol,))
+    #         if not company_id:
+    #             db.insert('Companies', {'symbol': symbol})
+    #             company_id = db("SELECT id FROM Companies WHERE symbol = ?", (symbol,))
+    #         company_id = company_id[0][0]
+    #         df['company_id'] = company_id
+    #         df['timestamp'] = df['timestamp'] // 1000
+    #         db.insert('TradingData', df)
+    #         dbdf = db('SELECT * FROM TradingData WHERE company_id = ?', (company_id,), return_type='DataFrame')
+    #         print(len(df.index) - len(dbdf.index))
+
+    print(db('SELECT * FROM TradingDataGaps;'))
+    db('DELETE FROM TradingDataGaps;')
+    print(db('SELECT * FROM TradingDataGaps;'))
+    print(db('SELECT COUNT(timestamp) from TradingData WHERE timestamp > 1000000000000', return_type='DataFrame'))
+    db('DELETE FROM TradingData WHERE timestamp > 1000000000000')
+    print(db('SELECT COUNT(timestamp) from TradingData WHERE timestamp > 1000000000000', return_type='DataFrame'))
+
+    print(db('SELECT * FROM Companies WHERE symbol = \'KE\';', return_type='DataFrame'))
+    print(db('SELECT * FROM TradingData WHERE timestamp <= 1636986600 and company_id = (SELECT id FROM Companies WHERE symbol = \'KE\');', return_type='DataFrame'))

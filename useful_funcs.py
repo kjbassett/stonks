@@ -26,10 +26,10 @@ def get_api_key(api_name):
 
 
 @cache
-def market_date_delta(date, n=0):
+def market_date_delta(date: datetime.datetime, n: int = 0):
     """
     Calculates the date that is n days of the market being open after date.
-    If n is 0, return the next day that the market is open.
+    If n is 0, return the next day that the market is open, including date.
     """
     if n == 0:
         # If n is 0, then we get the next day that the market is open.
@@ -73,7 +73,7 @@ def latest_market_time():
     lmt2 = last_open_date()
     lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))  # todo check all apis info for latest open hours
     lmt2 = lmt2.timestamp()
-    return min(lmt1, lmt2)
+    return int(min(lmt1, lmt2))
 
 
 all_open_dates = get_open_dates(CONFIG['min_date'], datetime.datetime.today())
