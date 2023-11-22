@@ -37,7 +37,7 @@ class BaseAPI:
                 try:
                     self.log_call()
                     data = self._api_call(param)
-                    if data.empty:
+                    if data is None or data.empty:
                         continue
                     data = data[cols]
                     if data["timestamp"].min() > 1000000000000:  # Some APIs return timestamps in ms
@@ -115,7 +115,7 @@ class BaseAPI:
 
     def next_available_call_time(self):
         # update next_available_call_time
-        nact = time.time() # next available call time
+        nact = time.time()  # next available call time
         for limit_type, limit_value in self.info["limits"].items():
             i = 0
             for i in range(len(self.call_log)):

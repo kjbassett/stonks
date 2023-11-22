@@ -157,6 +157,7 @@ def build_request(company: pd.Series, apis: list):
     :param apis: objects containing the api's and other relation objects
     :return: the chosen api's input queue, the start time of the request, and the end time of the request
     """
+    t = time.time()
     # min date is the earliest day since min_date that is covered by api limits
     min_date = max(CONFIG['min_date'], min([t["api"].info["date_range"]["min"] for t in apis]))
     # the day also has to be open
@@ -179,7 +180,9 @@ def build_request(company: pd.Series, apis: list):
             # if 3 have tried, we can assume the other apis can't either
             if len(excluded_apis) < 3 and not all([api['api'].name in excluded_apis for api in apis]):
                 start, end = int(gap["previous"]), int(gap["timestamp"])
+                print(f'Build request in {time.time() - t} seconds')
                 return {'company': company, 'start': start, 'end': end, 'excluded_apis': excluded_apis}
+    print(f'Build request in {time.time() - t} seconds')
 
 
 def process_requests(api, input_queue, result_queue, stop_event):
@@ -239,8 +242,6 @@ def distribute_requests(components: dict, companies: pd.DataFrame):
     result_queue = components["result_queue"]
     stop_event = components["stop_event"]
     for _, cpy in companies.iterrows():
-        if cpy['symbol'] != 'KE':
-            continue
         assign_queue.append(cpy)
     for t in apis:
         t["thread"].start()
@@ -260,12 +261,14 @@ def distribute_requests(components: dict, companies: pd.DataFrame):
         # Try to get a result from the queue
         if result_queue.qsize() == 0:
             continue
+        t = time.time()
         result = result_queue.get_nowait()
         # If empty or no new data, don't try that combo of api, symbol, start, and end again
         if result['data'] is None or result['data'].empty or not save_new_data(result['company']['id'], result['data']):
             print('No new data')
             query = f"INSERT INTO TradingDataGaps (source, company_id, start, end) VALUES (?, ?, ?, ?);"
             db(query, (result['api_name'], result['company']['id'], result['start'], result['end']))
+        print(f'handled result in {time.time() - t} seconds')
         # Checked for gaps again. If no gaps, it won't be assigned again.
         assign_queue.append(result['company'])
 
@@ -349,7 +352,6 @@ def main():
 
 
 # TODO
-#  Why so many gaps betweem 4pm and 930am? Shoud have extended hours!!!
 #  Clear Logs on start
 #  Move functions to appropriate files
 #  hit run and fix until it works

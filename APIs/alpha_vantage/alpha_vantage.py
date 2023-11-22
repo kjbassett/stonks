@@ -8,7 +8,7 @@ from icecream import ic
 
 # https://www.alphavantage.co/documentation/#
 
-DISABLED = True
+DISABLED = False
 
 name = os.path.split(__file__)[1].split(".")[0]
 info = {
@@ -19,7 +19,7 @@ info = {
         "max": datetime.date.today() - datetime.timedelta(days=1)
     },
     "hours": {"min": 4, "max": 20},
-    'delay': datetime.timedelta()
+    'delay': 0
 }
 
 
@@ -29,6 +29,7 @@ class API(BaseAPI):
 
     def _api_call(self, params):
         print('API CALL ' + self.name)
+        print(params)
         base_url = "https://www.alphavantage.co/query"
         response = requests.get(base_url, params=params)
         data = response.json()
@@ -64,20 +65,18 @@ class API(BaseAPI):
 
 
 def convert_to_df(data):
-    # TODO Test this
     price_data = data["Time Series (1min)"]
     df = pd.DataFrame.from_dict(price_data, orient="index")
 
-    df = df.apply(pd.to_numeric)
-    df.index = pd.to_datetime(df.index)
+    df = df.apply(pd.to_numeric, errors='ignore')
+    df.index = pd.to_datetime(df.index)  # df.index is a string before this
 
     # Convert the datetime index to Unix timestamp in milliseconds
     df.index = df.index.tz_localize(
         "US/Eastern"
     )  # replace 'US/Eastern' with the actual timezone if it's different
-    df.index = df.index.tz_convert("UTC")
     df["timestamp"] = (df.index - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta(
-        "1ms"
+        "1s"
     )
 
     df.reset_index(drop=True, inplace=True)
