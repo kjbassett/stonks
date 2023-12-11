@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Control Panel</title>
+    <style>
+        .grid-container {
+            display: grid;
+            grid-template-columns: auto auto;
+            padding: 10px;
+        }
+        .grid-item {
+            padding: 20px;
+            text-align: center;
+            border: 1px solid black;
+            margin: 10px;
+        }
+        .status-light {
+            height: 15px;
+            width: 15px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .red {
+            background-color: red;
+        }
+        .blue {
+            background-color: blue;
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-container">
+        <div class="grid-item">
+            <span id="statusLight" class="status-light red"></span> <!-- Change class to 'blue' for running status -->
+            <h3>WebSocket</h3>
+            <button onclick="start('stream_price_data')">Start</button>
+            <button onclick="start('stream_price_data')">Stop</button>
+        </div>
+        <!-- Additional boxes can be added here -->
+    </div>
+
+    <script>
+    function start(action) {
+        fetch(`/start/${action}`, { method: 'GET' })
+            .then(response => response.json())
+            .then(data => {
+                console.log(`${action} status:`, data);
+                checkStatusAndUpdateLight(action);
+            })
+            .catch(error => console.error('Error:', error));
+    }
+
+    function stop(action) {
+        fetch(`/stop/${action}`, { method: 'GET' })
+            .then(response => response.json())
+            .then(data => {
+                console.log(`${action} status:`, data);
+                checkStatusAndUpdateLight(action);
+            })
+            .catch(error => console.error('Error:', error));
+    }
+
+    function checkStatusAndUpdateLight(action) {
+        fetch(`/status/${action}`, { method: 'GET' })
+            .then(response => response.json())
+            .then(status => {
+                const statusLight = document.getElementById('statusLight');
+                if (status.authenticated) {
+                    statusLight.classList.remove('red');
+                    statusLight.classList.add('blue');
+                } else {
+                    statusLight.classList.remove('blue');
+                    statusLight.classList.add('red');
+                }
+            })
+            .catch(error => console.error('Error:', error));
+    }
+</script>
+</body>
+</html>

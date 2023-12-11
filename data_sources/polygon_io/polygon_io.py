@@ -1,5 +1,5 @@
 from polygon import RESTClient
-from APIs.API import BaseAPI
+from data_sources.API import BaseAPI
 import os
 import pandas as pd
 import datetime

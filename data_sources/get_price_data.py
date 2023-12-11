@@ -126,7 +126,6 @@ def find_gaps_in_data(df, gap_threshold=1800):
 
 def adjust_gap(row):
     # if previous timestamp is a previous day, don't include closed hours in the gap
-
     # only adjust if the data is on two separate days
     if row["days_apart"] == 0:
         return row["gap"]
@@ -289,72 +288,12 @@ def main():
         ),
     )
 
-    # Create main window
-    root = tk.Tk()
-    root.title("Queue Monitor")
-
-    # Frame to hold the labels
-    frame = ttk.Frame(root, padding="10")
-    frame.grid(row=0, column=0)  #, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-    # Labels to display the queue lengths
-    assign_queue_label = ttk.Label(frame, text="Assign Queue Length: 0")
-    assign_queue_label.grid(row=0, column=0, sticky=tk.W, pady=5)
-
-    input_queues_label = ttk.Label(frame, text="Input Queues Lengths: []")
-    input_queues_label.grid(row=1, column=0, sticky=tk.W, pady=5)
-
-    next_call_times_label = ttk.Label(frame, text="Next Call Times: []")
-    next_call_times_label.grid(row=2, column=0, sticky=tk.W, pady=5)
-
-    result_queue_label = ttk.Label(frame, text="Result Queue Length: 0")
-    result_queue_label.grid(row=3, column=0, sticky=tk.W, pady=5)
-
-    # Function to update the UI
-    def update_ui():
-        while not components['stop_event'].is_set():
-            # Update the labels with queue lengths (use actual values here)
-            assign_queue_label[
-                "text"
-            ] = f"Assign Queue Length: {len(components['assign_queue'])}"
-            input_queues_label[
-                "text"
-            ] = f"Input Queues Lengths: {[t['input_queue'].qsize() for t in components['apis']]}"
-            next_call_times_label[
-                "text"
-            ] = f"""Next Call Times: {[
-                round(t['api'].next_available_call_time() - time.time(), 1) for t in components['apis']
-            ]}"""
-            result_queue_label[
-                "text"
-            ] = f"Result Queue Length: {components['result_queue'].qsize()}"
-            # Refresh every second (or another suitable interval)
-            time.sleep(1)
-
-    def stop_threads():
-        components['stop_event'].set()
-        # Optionally, you can wait for threads to finish using join, if needed
-        for t in components['apis']:
-            t['thread'].join()
-        dist_thread.join()
-        root.quit()
-
-    # Button to stop the threads
-    stop_button = ttk.Button(frame, text="Stop", command=stop_threads)
-    stop_button.grid(row=4, column=0, pady=20)
-
     dist_thread.start()
     threading.Thread(target=update_ui).start()
 
-    # Run the main loop
-    root.mainloop()
-    components['stop_event'].set()
 
 
 # TODO
-#  Clear Logs on start
-#  Move functions to appropriate files
-#  hit run and fix until it works
 #  Explore other API calls
 #   https://polygon.io/docs/stocks/get_v2_reference_news
 # Keep in mind that this will be run every day

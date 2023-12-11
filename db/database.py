@@ -1,8 +1,9 @@
+import asyncio
 import os
 import sqlite3
 from typing import List, Tuple, Union, Dict, Any
 import pandas as pd
-
+from config import CONFIG
 
 class Database:
     def __init__(self, db_path: str):
@@ -93,6 +94,73 @@ class Database:
         self.execute_query(query, params)
 
 
+class AsyncDatabase:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+
+    async def __call__(self, query: str, params: Tuple = (), return_type: str = 'list') -> Union[pd.DataFrame, List[Tuple]]:
+        return await self.execute_query(query, params, return_type)
+
+    def _connect(self):
+        return sqlite3.connect(self.db_path)
+
+    async def execute_query(self, query: str, params: Union[Tuple, List] = (), return_type: str = 'list') -> Union[pd.DataFrame, List[Tuple]]:
+        loop = asyncio.get_event_loop()
+        # The executor is None by default, which uses the default ThreadPoolExecutor
+        return await loop.run_in_executor(None, self._execute_query, query, params, return_type)
+
+    def _execute_query(self, query: str, params: Union[Tuple, List] = (), return_type: str = 'list') -> Union[pd.DataFrame, List[Tuple]]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            if return_type == 'DataFrame':
+                cursor.execute(query, params)
+                # Use Pandas to read the results into a DataFrame
+                result = pd.read_sql_query(query, conn, params=params)
+            elif return_type == 'list':
+                # Check if params is a list of tuples for executemany
+                if isinstance(params, list) and all(isinstance(p, tuple) for p in params):
+                    cursor.executemany(query, params)
+                    result = None  # No direct result for executemany
+                else:
+                    cursor.execute(query, params)
+                    result = cursor.fetchall()
+            else:
+                raise ValueError("Invalid return_type. Use 'DataFrame' or 'List'.")
+
+            conn.commit()
+
+        return result
+
+    async def insert(self, table: str, data: Union[Dict[str, Any], pd.DataFrame], skip_existing: bool = True):
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._insert, table, data, skip_existing)
+
+    def _insert(self, table: str, data: Union[Dict[str, Any], pd.DataFrame], skip_existing: bool = True):
+        """Insert a record or records into the database."""
+        if isinstance(data, dict):
+            self._insert_single_record(table, data, skip_existing)
+        elif isinstance(data, pd.DataFrame):
+            self._insert_multiple_records(table, data, skip_existing)
+        else:
+            raise ValueError("Unsupported data type. Use a dictionary or a DataFrame.")
+
+    def _insert_single_record(self, table: str, data: Dict[str, Any], skip_existing: bool = True):
+        """Insert a single record into the database."""
+        columns = ', '.join(data.keys())
+        placeholders = ', '.join(['?'] * len(data))
+        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} ({columns}) VALUES ({placeholders});"
+        params = tuple(data.values())
+        self.execute_query(query, params)
+
+    def _insert_multiple_records(self, table: str, data: pd.DataFrame, skip_existing: bool = True):
+        """Insert multiple records from a DataFrame into the database."""
+        columns = ', '.join(data.columns)
+        placeholders = ', '.join(['?'] * len(data.columns))
+        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} ({columns}) VALUES ({placeholders});"
+        params = [tuple(row) for row in data.values]
+        self.execute_query(query, params)
+
+
 def create_database_if_not_exists(db_path: str, schema_path: str = 'create_db.sql'):
     # Check if the database already exists
     db_exists = os.path.exists(db_path)
@@ -111,14 +179,12 @@ def create_database_if_not_exists(db_path: str, schema_path: str = 'create_db.sq
         print(f"Database already exists at {db_path}")
 
 
-if __name__ == '__main__':
-    pass
 
-    # Examples
-    from config import CONFIG
+
+if __name__ == '__main__':
     name = CONFIG['db_folder'] + CONFIG['db_name']
-    # create_database_if_not_exists(name)
     db = Database(name)
+
     # db.insert('Companies', {'name': 'Test Company2', 'symbol': 'TEST2'})
     # db.insert('Companies', {'name': 'Test Company2', 'symbol': 'TEST2'})
     # db.insert('Companies', pd.DataFrame({'name': ['Test Company3', 'Test Company 4'], 'symbol': ['TEST3', 'TEST4']}))
