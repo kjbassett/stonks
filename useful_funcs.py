@@ -16,13 +16,13 @@ def is_open(date):
     return True
 
 
-def get_api_key(api_name):
-    with open("../keys.txt", "r") as f:
+def get_key(key_name):
+    with open(CONFIG['root_path'] + "/keys.txt", "r") as f:
         for line in f:
             name, key = line.strip().split("=")
-            if name == api_name:
+            if name == key_name:
                 return key
-    raise ValueError(f"No key found for API: {api_name}")
+    raise ValueError(f"No key found for key named: {key_name}")
 
 
 @cache

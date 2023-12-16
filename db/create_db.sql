@@ -100,10 +100,9 @@ CREATE TABLE Calendar (
 
 -- Trading Data Gaps
 CREATE TABLE TradingDataGaps (
-  source TEXT,
   company_id INTEGER,
   start INTEGER,
   end INTEGER,
   FOREIGN KEY(company_id) REFERENCES Companies(id),
-  UNIQUE (source, company_id, start, end)
+  UNIQUE (company_id, start, end)
 );

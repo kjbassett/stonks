@@ -218,12 +218,4 @@ if __name__ == '__main__':
     #         dbdf = db('SELECT * FROM TradingData WHERE company_id = ?', (company_id,), return_type='DataFrame')
     #         print(len(df.index) - len(dbdf.index))
 
-    print(db('SELECT * FROM TradingDataGaps;'))
-    db('DELETE FROM TradingDataGaps;')
-    print(db('SELECT * FROM TradingDataGaps;'))
-    print(db('SELECT COUNT(timestamp) from TradingData WHERE timestamp > 1000000000000', return_type='DataFrame'))
-    db('DELETE FROM TradingData WHERE timestamp > 1000000000000')
-    print(db('SELECT COUNT(timestamp) from TradingData WHERE timestamp > 1000000000000', return_type='DataFrame'))
-
-    print(db('SELECT * FROM Companies WHERE symbol = \'KE\';', return_type='DataFrame'))
-    print(db('SELECT * FROM TradingData WHERE timestamp <= 1636986600 and company_id = (SELECT id FROM Companies WHERE symbol = \'KE\');', return_type='DataFrame'))
+    print(db("SELECT * FROM TradingDataGaps;", return_type='DataFrame'))

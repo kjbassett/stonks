@@ -1,7 +1,7 @@
 import json
 import asyncio
 import websockets
-from useful_funcs import get_api_key
+from useful_funcs import get_key
 
 
 # Function to map short keys to full words
@@ -32,9 +32,12 @@ async def process_and_store_data(data, db):
 
 
 # Async function for WebSocket client
-async def websocket_client(db, stop_event, app):
+async def main(db, companies=None):
+    if not companies:
+        companies = '*'
+
     uri = "wss://delayed.polygon.io/stocks"
-    api_key = get_api_key(['polygon_io'])
+    api_key = get_key(['polygon_io'])
     async with websockets.connect(uri) as ws:
         # Send authentication message
         auth_data = {"action": "auth", "params": api_key}
@@ -44,18 +47,12 @@ async def websocket_client(db, stop_event, app):
         response = await ws.recv()
         response_data = json.loads(response)
         if response_data[0]["status"] != "auth_success":
-            error_message = response_data[0].get("message", "Authentication failed")
-            app.ctx.status_manager.update_status('polygon_websocket', {"authenticated": False})
-            app.ctx.status_manager.update_status('polygon_websocket', {"message": error_message})
             return
 
-        # Authentication successful
-        app.ctx.status_manager.update_status('stream_price_data', {"authenticated": True, "error": ''})
-
         # Subscribe to stream with data aggregated by minute
-        subscribe_message = {"action": "subscribe", "params": "AM.*"}
+        # TODO this won't work if companies provided
+        subscribe_message = {"action": "subscribe", "params": f"AM.{companies}"}
         await ws.send(json.dumps(subscribe_message))
-        app.ctx.status_manager.update_status('stream_price_data', {"running": True})
         # Process incoming messages
         while True:
             try:
@@ -66,4 +63,3 @@ async def websocket_client(db, stop_event, app):
             except asyncio.CancelledError:
                 # Check for stop event periodically
                 continue
-        app.ctx.status_manager.update_status('stream_price_data', {"authenticated": False, "running": False})

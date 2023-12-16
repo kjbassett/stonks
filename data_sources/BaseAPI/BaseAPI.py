@@ -2,10 +2,11 @@ import logging
 import os
 import pandas as pd
 import time
-from useful_funcs import get_api_key, market_date_delta, filter_open_dates
+from useful_funcs import get_key, market_date_delta, filter_open_dates
 import datetime
 from icecream import ic
-
+from config import CONFIG
+import asyncio
 
 durations = {"per_second": 1, "per_minute": 60, "per_hour": 3600, "per_day": 86400}
 
@@ -14,36 +15,29 @@ class BaseAPI:
     def __init__(self, name, info):
         self.name = name
         self.info = info
-        self.api_key = get_api_key(name)
+        self.api_key = get_key(name)
         self.error_logger = None
         self.call_log = None
         self.create_error_logger()
         self.load_call_log()
 
-    def api_call(self, symbol, start, end):
+    async def api_call(self, symbol, start, end):
         try:
             # split into multiple api calls due to api limits
             params = self.get_params(symbol, start, end)
-            cols = ["open", "high", "low", "close", "volume", "timestamp"]
-            all_data = pd.DataFrame(columns=cols)
+            all_data = []
             for param in params:
-                # determine if api needs to wait
-                wait = self.next_available_call_time() - time.time()
-                if wait < 10:
-                    time.sleep(max(wait, 0))
-                else:
-                    break  # return data if waiting too long
 
+                wait = self.next_available_call_time() - time.time()
+                ic(wait)
+                await asyncio.sleep(max(wait, 0))
+
+                self.log_call()
                 try:
-                    self.log_call()
-                    data = self._api_call(param)
-                    if data is None or data.empty:
+                    data = await self._api_call(param)
+                    if not data:
                         continue
-                    data = data[cols]
-                    if data["timestamp"].min() > 1000000000000:  # Some APIs return timestamps in ms
-                        data['timestamp'] = data['timestamp'] / 1000
-                        data['timestamp'] = data['timestamp'].astype(int)
-                    all_data = pd.concat([all_data, data])
+                    all_data += data
                 except Exception as e:
                     print(f"ERROR from {self.name} on _api_call")
                     ic(e)
@@ -52,11 +46,6 @@ class BaseAPI:
                         exc_info=True,
                     )
                     break
-
-            all_data = all_data.drop_duplicates()
-            all_data = all_data[
-                (all_data["timestamp"] >= start) & (all_data["timestamp"] <= end)
-            ]
             return all_data
         except Exception as e:
             print(f"ERROR from {self.name} on api_call")
@@ -87,7 +76,7 @@ class BaseAPI:
         self.error_logger.setLevel(logging.INFO)
 
         # Create handler and formatter for logger
-        handler = logging.FileHandler(self.name + "/errors.log")
+        handler = logging.FileHandler(f"{CONFIG['root_path']}/logs/{self.name}_errors.log")
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
@@ -95,8 +84,9 @@ class BaseAPI:
         self.error_logger.addHandler(handler)
 
     def load_call_log(self):
-        if os.path.exists(self.name + "/calls.log"):
-            self.call_log = pd.read_csv(self.name + "/calls.log", header=None).iloc[:, 0].tolist()
+        path = f"{CONFIG['root_path']}/logs/{self.name}_calls.log"
+        if os.path.exists(path):
+            self.call_log = pd.read_csv(path, header=None).iloc[:, 0].tolist()
         else:
             self.call_log = []
 
@@ -111,7 +101,7 @@ class BaseAPI:
         while self.call_log and self.call_log[0] <= filter_threshold:
             self.call_log.pop(0)
         # Save the log
-        pd.DataFrame(self.call_log).to_csv(self.name + "/calls.log", index=False, header=False)
+        pd.DataFrame(self.call_log).to_csv(f"{CONFIG['root_path']}/logs/{self.name}_calls.log", index=False, header=False)
 
     def next_available_call_time(self):
         # update next_available_call_time
@@ -151,10 +141,10 @@ class BaseAPI:
 
         return hours
 
-    def _api_call(self, params):
+    async def _api_call(self, params):
         raise NotImplementedError("API._api_call not defined")
 
     @staticmethod
-    def get_params(symbol, start, end):
+    async def get_params(symbol, start, end):
         # splits the job into multiple jobs as a list of dicts of parameters for request
         raise NotImplementedError("API.split_job not defined")
