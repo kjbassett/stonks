@@ -217,5 +217,9 @@ if __name__ == '__main__':
     #         db.insert('TradingData', df)
     #         dbdf = db('SELECT * FROM TradingData WHERE company_id = ?', (company_id,), return_type='DataFrame')
     #         print(len(df.index) - len(dbdf.index))
-
-    print(db("SELECT * FROM TradingDataGaps;", return_type='DataFrame'))
+    print(db(
+        """
+        SELECT *
+        FROM Reddit;
+        """
+    ))

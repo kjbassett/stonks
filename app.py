@@ -29,10 +29,13 @@ def create_app(db_instance):
         if action not in actions:
             return response.json({"error": f"{action} not found"})
         action = actions[action]
-        if not action['task'] or action['task'].done():
-            action['task'] = asyncio.create_task(
-                action['function'](db_instance))
-        return response.json({"running": True})
+        if action['task']:
+            if action['task'].done():
+                await action['task']
+            else:
+                return response.json({"status": f"{action} is already running"})
+        action['task'] = asyncio.create_task(action['function'](db_instance))
+        return response.json({"status": f"{action['task']} started"})
 
     @app.route("/stop/<action>")
     async def stop(request, action):

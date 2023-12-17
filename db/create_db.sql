@@ -21,14 +21,13 @@ CREATE TABLE TradingData (
 
 -- Reddit Table
 CREATE TABLE Reddit (
-  id INTEGER PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   subreddit TEXT,
-  parent_id INTEGER,
+  parent_id TEXT,
   title TEXT,
   body TEXT,  -- Content of the post
-  author_id INTEGER,
-  upvotes INTEGER,
-  downvotes INTEGER
+  author_id TEXT,
+  score INTEGER
 );
 
 -- RedditCompaniesLink Table
