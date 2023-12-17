@@ -41,7 +41,7 @@ CREATE TABLE RedditCompaniesLink (
 
 -- News Table
 CREATE TABLE News (
-  id INTEGER PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   source TEXT,
   timestamp INTEGER,
   title TEXT,
@@ -52,7 +52,7 @@ CREATE TABLE News (
 -- NewsCompaniesLink Table
 CREATE TABLE NewsCompaniesLink (
   company_id INTEGER,
-  news_id INTEGER,
+  news_id TEXT,
   FOREIGN KEY(company_id) REFERENCES Companies(id),
   FOREIGN KEY(news_id) REFERENCES News(id),
   UNIQUE (company_id, news_id)

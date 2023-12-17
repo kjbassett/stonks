@@ -49,7 +49,6 @@ def create_app(db_instance):
             print(actions[action]['task'].done())
             return response.json({"status": f"{action} stopped"})
 
-
     @app.route("/status/<action>")
     async def status(request, action):
         nonlocal actions
