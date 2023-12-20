@@ -18,6 +18,7 @@ async def fetch_posts_and_comments(db, subreddits):
         i += 1
         print(i)
         data = [submission]
+
         comments = await submission.comments()  # get first layer of comments
         await comments.replace_more(limit=None)  # get next layer of comments
         for top_level_comment in submission.comments:
