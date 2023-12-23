@@ -118,7 +118,7 @@ async def fill_gap(db, table, get_data_func, cpy: pd.Series, gap: pd.Series):
     data = await get_data_func(cpy['symbol'], int(start), int(end))
     # save_new_data returns the number of rows inserted, so if it's 0,...
     # we don't want to try the gap again. We save the record of our attempt here
-    if not data or not await save_new_data(db, table, cpy['id'], data):
+    if not data or not await save_new_data(db, table, data):
         print('No new data')
         query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
         await db(query, (cpy['id'], start, end))
