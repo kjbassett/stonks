@@ -1,75 +1,78 @@
 from functools import partial
 import datetime
 import pandas as pd
+import asyncio
+
 from useful_funcs import latest_market_time, market_date_delta, all_open_dates
 from config import CONFIG
-import time
 min_market_date = market_date_delta(CONFIG['min_date'])
 
 
 async def load_saved_data(db, table, company_id, min_timestamp=0):
     """Load saved data for a symbol if it exists, otherwise return None."""
-    query = f'SELECT * FROM {table} WHERE company_id = ? AND timestamp > ? ORDER BY timestamp ASC'
+    if table == 'TradingData':
+        query = f'SELECT timestamp FROM TradingData WHERE company_id = ? AND timestamp > ? ORDER BY timestamp ASC;'
+    elif table == 'News':
+        query = f"""
+        SELECT timestamp
+        FROM News INNER JOIN NewsCompaniesLink
+        ON News.id = NewsCompaniesLink.news_id
+        WHERE NewsCompaniesLink.company_id =? AND News.timestamp >?;
+        """
+    else:
+        raise NotImplementedError(f'missindata.load_saved_data can not yet handle table {table}')
     data = await db(query, (company_id, min_timestamp), return_type='DataFrame')
     return data
 
 
-async def save_new_data(db, table, company_id, df):
-    count_query = f'SELECT COUNT(company_id) FROM {table} WHERE company_id = ?'
-    old_n = await db(count_query, (company_id,), return_type='DataFrame')['COUNT(company_id)'][0]
+async def save_new_data(db, table, data):
+    n = await db.insert(table, data)
+    # TODO need to save data to NewsCompaniesLink table too
 
-    df['company_id'] = company_id
-    await db.insert(table, df)
-
-    new_n = await db(count_query, (company_id,), return_type='DataFrame')['COUNT(company_id)'][0]
-    return new_n - old_n
+    return n
 
 
-async def find_gaps(db, table, company, min_gap_size):
+async def find_gaps(current_data, min_gap_size):
     min_ts = int(datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp())
-    df = await load_saved_data(db, table, company['id'], min_timestamp=min_ts)
     # add dummy timestamps and end of time range to get all gaps
     ends = [min_ts, latest_market_time()]
 
     # TODO is it faster to test if there are gaps on the ends before concat?
-    df = pd.concat([df, pd.DataFrame({"timestamp": ends})])
-    df = df.sort_values(by="timestamp")
+    current_data = pd.concat([current_data, pd.DataFrame({"timestamp": ends})])
+    current_data = current_data.sort_values(by="timestamp")
 
     # Previous timestamp
-    df["previous"] = df["timestamp"].shift(1)
+    current_data["previous"] = current_data["timestamp"].shift(1)
 
     # Convert timestamp and previous to datetime columns
-    df["date"] = (
-        pd.to_datetime(df.timestamp, unit="s", utc=True)
+    current_data["date"] = (
+        pd.to_datetime(current_data.timestamp, unit="s", utc=True)
         .dt.tz_convert("US/Eastern")
         .dt.normalize()
     )
 
     # these two columns are needed for the adjust gap function
-    df["prev_date"] = (
-        pd.to_datetime(df.previous, unit="s", utc=True)
+    current_data["prev_date"] = (
+        pd.to_datetime(current_data.previous, unit="s", utc=True)
         .dt.tz_convert("US/Eastern")
         .dt.normalize()
     )
-    df["days_apart"] = (df["date"] - df["prev_date"]).dt.days
+    current_data["days_apart"] = (current_data["date"] - current_data["prev_date"]).dt.days
 
-    df["gap"] = df["timestamp"] - df["previous"]
-    df = df.iloc[1:, ]
+    current_data["gap"] = current_data["timestamp"] - current_data["previous"]
+    current_data = current_data.iloc[1:, ]
 
     # Todo filter > gap threshold here as well to speed up apply?
-    df["gap"] = df.apply(partial(adjust_gap), axis=1)
+    current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
 
     # gaps ranges are EXCLUSIVE except for dummy timestamps
     # This seems dangerous since we are saving timestamps and retrieving them later
-    df.reset_index(drop=True, inplace=True)
-    df.loc[1:, "previous"] += 60
-    df.loc[:len(df)-1, "timestamp"] -= 60
+    current_data.reset_index(drop=True, inplace=True)
+    current_data.loc[1:, "previous"] += 60
+    current_data.loc[:len(current_data)-1, "timestamp"] -= 60
 
-    gaps = df[df["gap"] > min_gap_size]  # gaps > 30 minutes are counted
+    gaps = current_data[current_data["gap"] > min_gap_size]  # gaps > 30 minutes are counted
     gaps = gaps[["previous", "timestamp"]].rename(columns={"previous": "start", "timestamp": "end"})
-    # check if gap has been tried before for each api
-    gaps = await filter_out_past_attempts(db, table, gaps, company['id'])
-
     return gaps
 
 
@@ -110,15 +113,26 @@ async def filter_out_past_attempts(db, table, gaps, company_id):
     return gaps
 
 
-async def fill_gaps(db, table, data_func, companies: pd.DataFrame, min_gap_size=1800):
+async def fill_gap(db, table, get_data_func, cpy: pd.Series, gap: pd.Series):
+    start, end = gap['start'], gap['end']
+    data = await get_data_func(cpy['symbol'], int(start), int(end))
+    # save_new_data returns the number of rows inserted, so if it's 0,...
+    # we don't want to try the gap again. We save the record of our attempt here
+    if not data or not await save_new_data(db, table, cpy['id'], data):
+        print('No new data')
+        query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
+        await db(query, (cpy['id'], start, end))
+
+
+async def fill_gaps(db, table: str, get_data_func: callable, companies: pd.DataFrame, min_gap_size=1800):
+    tasks = []
     for _, cpy in companies.iterrows():
-        gaps = await find_gaps(db, table, cpy, min_gap_size)
+        current_data = await load_saved_data(db, table, cpy['id'])
+        gaps = await find_gaps(current_data, min_gap_size)
+        gaps = await filter_out_past_attempts(db, table, gaps, cpy['id'])
         for _, gap in gaps.iterrows():
-            t = time.time()
-            start, end = gap['start'], gap['end']
-            data = data_func(cpy['symbol'])
-            if not data or not await save_new_data(db, table, cpy['id'], data):
-                print('No new data')
-                query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
-                await db(query, (cpy['id'], start, end))
-            print(f'handled result in {time.time() - t} seconds')
+            # Create a task for each gap handling
+            task = asyncio.create_task(fill_gap(db, table, get_data_func, cpy, gap))
+            tasks.append(task)
+    # Wait for all tasks to complete
+    await asyncio.gather(*tasks)

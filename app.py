@@ -7,6 +7,11 @@ import os
 
 def create_app(db_instance):
     app = Sanic(__name__)
+
+    @app.listener('before_server_stop')
+    async def close_db(app, loop):
+        await db_instance.close()
+
     jinja = SanicJinja2(app)
 
     # import main from all py files in data_sources
@@ -28,33 +33,38 @@ def create_app(db_instance):
         nonlocal actions
         if action not in actions:
             return response.json({"error": f"{action} not found"})
-        action = actions[action]
-        if action['task']:
-            if action['task'].done():
-                await action['task']
+        act = actions[action]
+        if act['task']:
+            if act['task'].done():
+                await act['task']
             else:
                 return response.json({"status": f"{action} is already running"})
-        action['task'] = asyncio.create_task(action['function'](db_instance))
-        return response.json({"status": f"{action['task']} started"})
+        act['task'] = asyncio.create_task(act['function'](db_instance))
+        return response.json({"status": f"{action} started"})
 
     @app.route("/stop/<action>")
     async def stop(request, action):
         nonlocal actions
         if action not in actions:
             return response.json({"error": f"{action} not found"})
-        if actions[action]['task'].done():
-            return response.json({"status": f"{action} is not running"})
-        else:
-            actions[action]['task'].cancel()
-            print(actions[action]['task'].done())
-            return response.json({"status": f"{action} stopped"})
+        act = actions[action]
+        if not act['task']:
+            return response.json({"status": f"{action} has not started"})
+        if act['task'].done():
+            return response.json({"status": f"{action} is already finished"})
+        act['task'].cancel()
+        return response.json({"status": f"{action} stopped"})
 
     @app.route("/status/<action>")
     async def status(request, action):
         nonlocal actions
         if action not in actions:
             return response.json({"error": f"{action} not found"})
-        if not actions[action]['task'] or actions[action]['task'].done():
+        act = actions[action]
+        if not act['task']:
             return response.json({"running": False})
-        return response.json({"running": True})
+        if act['task'].done():
+            return response.json({"running": False, "result": act['task'].result()})
+        else:
+            return response.json({"running": True})
     return app

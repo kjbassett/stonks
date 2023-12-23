@@ -58,6 +58,14 @@ CREATE TABLE NewsCompaniesLink (
   UNIQUE (company_id, news_id)
 );
 
+CREATE TABLE NewsGaps (
+  company_id INTEGER,
+  start INTEGER,
+  end INTEGER,
+  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  UNIQUE (company_id, start, end)
+);
+
 -- DailyCompanyData Table
 CREATE TABLE DailyCompanyData (
   date TEXT,

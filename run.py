@@ -1,4 +1,4 @@
-from db.database import AsyncDatabase
+from db.async_database import AsyncDatabase
 from config import CONFIG
 from app import create_app
 
