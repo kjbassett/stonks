@@ -20,9 +20,12 @@ class AsyncDatabase:
     async def __call__(self, query: str, params: Tuple = (), return_type: str = 'list') -> Union[pd.DataFrame, List[Tuple]]:
         return await self.execute_query(query, params, return_type)
 
-    async def execute_query(self, query: str, params: Union[Tuple, List] = (), return_type: str = 'list') -> Union[int, pd.DataFrame, List[Tuple]]:
+    async def execute_query(self, query: str, params: Union[Tuple, List] = (), return_type: str = 'list', many=False) -> Union[int, pd.DataFrame, List[Tuple]]:
         await self.connect()
-        cursor = await self.conn.execute(query, params)
+        if many:
+            cursor = await self.conn.executemany(query, params)
+        else:
+            cursor = await self.conn.execute(query, params)
 
         if query.strip().upper().startswith("SELECT"):
             result = await cursor.fetchall()
@@ -41,7 +44,7 @@ class AsyncDatabase:
     async def insert(self, table: str, data: Union[Dict[str, Any], pd.DataFrame], skip_existing: bool = True):
         if isinstance(data, dict):
             return await self._insert_single_record(table, data, skip_existing)
-        elif isinstance(data, pd.DataFrame):
+        elif isinstance(data, (pd.DataFrame, list)):
             return await self._insert_multiple_records(table, data, skip_existing)
         else:
             raise ValueError("Unsupported data type. Use a dictionary, list or DataFrame.")
@@ -61,11 +64,11 @@ class AsyncDatabase:
         else:
             if isinstance(data[0], dict):
                 columns = '(' + ', '.join([key for key in data[0].keys()]) + ') '
-                params = [tuple(row.values()) for row in data[0]]
+                params = [tuple(row.values()) for row in data]
             else:  # data is list of tuples
                 columns = ''
                 params = data
             placeholders = ', '.join(['?'] * len(data[0]))
 
         query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns} VALUES ({placeholders});"
-        return await self.execute_query(query, params)
+        return await self.execute_query(query, params, many=True)

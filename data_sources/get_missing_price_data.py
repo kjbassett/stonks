@@ -3,7 +3,6 @@ import asyncio
 from polygon import StocksClient
 from .helpers.missing_data import fill_gaps
 import datetime
-from icecream import ic
 
 
 async def main(db, companies=None):
@@ -18,18 +17,20 @@ async def main(db, companies=None):
                 aggs = await api.get_aggregate_bars(symbol, start, end,
                                                     timespan='minute',
                                                     full_range=True)
-                ic(aggs)
-                ic(aggs[0])
+
+                if not aggs:
+                    return
+
                 # This might need to run in the executor if there are a lot of aggs
                 cid = companies[companies['symbol'] == symbol]['id'][0]
                 return [{
                     "company_id": cid,
-                    "open": agg.open,
-                    "high": agg.high,
-                    "low": agg.low,
-                    "close": agg.close,
-                    "volume": agg.volume,
-                    "timestamp": agg.timestamp // 1000
+                    "open": agg['o'],
+                    "high": agg['h'],
+                    "low": agg['l'],
+                    "close": agg['c'],
+                    "volume": agg['v'],
+                    "timestamp": agg['t'] // 1000
                 } for agg in aggs]
 
             await fill_gaps(db, 'TradingData', get_data, companies, min_gap_size=1800)

@@ -18,18 +18,18 @@ async def main(db, companies=None):
                                                        published_utc_lte=end * 1000,
                                                        merge_all_pages=True)
 
-                ic(news_items.keys())
                 ic(news_items['status'])
                 if news_items['status'] == 'OK':
                     ic(news_items['results'][0]['published_utc'])
-                if 'results' in news_items:
-                    return [{
-                        "id": item['id'],
-                        "source": item['publisher'],
-                        "timestamp": int(datetime.fromisoformat(item['published_utc'].rstrip("Z")).timestamp()),
-                        "title": item['title'],
-                        "body": item['description'],
-                    } for item in news_items['results']]
+                if 'results' not in news_items:
+                    return
+
+                results = [{"id": item['id'],
+                            "source": item['publisher']['name'],
+                            "timestamp": int(datetime.fromisoformat(item['published_utc'].rstrip("Z")).timestamp()),
+                            "title": item['title'],
+                            'body': item.get('description', '')} for item in news_items['results']]
+                return results
 
             await fill_gaps(db, 'News', get_data, companies, min_gap_size=3600)
     except asyncio.CancelledError:

@@ -149,5 +149,13 @@ if __name__ == '__main__':
     #         db.insert('TradingData', df)
     #         dbdf = db('SELECT * FROM TradingData WHERE company_id = ?', (company_id,), return_type='DataFrame')
     #         print(len(df.index) - len(dbdf.index))
+    result = db('SELECT * FROM TradingData;')
+    db('DELETE FROM TradingDataGaps;')
+    print(result)
 
-    print(db('SELECT * FROM News;'))
+    print(db('SELECT * FROM TradingDataGaps;'))
+
+    result = db('SELECT * FROM News;', return_type='DataFrame')
+    for c in result.columns:
+        print(c)
+        print(result[c][0])

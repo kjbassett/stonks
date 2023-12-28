@@ -5,7 +5,9 @@ import asyncio
 
 from useful_funcs import latest_market_time, market_date_delta, all_open_dates
 from config import CONFIG
+from icecream import ic
 min_market_date = market_date_delta(CONFIG['min_date'])
+min_market_ts = int(datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp())
 
 
 async def load_saved_data(db, table, company_id, min_timestamp=0):
@@ -27,16 +29,15 @@ async def load_saved_data(db, table, company_id, min_timestamp=0):
 
 async def save_new_data(db, table, data):
     n = await db.insert(table, data)
+    ic(n)
     # TODO need to save data to NewsCompaniesLink table too
 
     return n
 
 
 async def find_gaps(current_data, min_gap_size):
-    min_ts = int(datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp())
     # add dummy timestamps and end of time range to get all gaps
-    ends = [min_ts, latest_market_time()]
-
+    ends = [min_market_ts, latest_market_time()]
     # TODO is it faster to test if there are gaps on the ends before concat?
     current_data = pd.concat([current_data, pd.DataFrame({"timestamp": ends})])
     current_data = current_data.sort_values(by="timestamp")
@@ -119,7 +120,6 @@ async def fill_gap(db, table, get_data_func, cpy: pd.Series, gap: pd.Series):
     # save_new_data returns the number of rows inserted, so if it's 0,...
     # we don't want to try the gap again. We save the record of our attempt here
     if not data or not await save_new_data(db, table, data):
-        print('No new data')
         query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
         await db(query, (cpy['id'], start, end))
 
@@ -127,12 +127,14 @@ async def fill_gap(db, table, get_data_func, cpy: pd.Series, gap: pd.Series):
 async def fill_gaps(db, table: str, get_data_func: callable, companies: pd.DataFrame, min_gap_size=1800):
     tasks = []
     for _, cpy in companies.iterrows():
-        current_data = await load_saved_data(db, table, cpy['id'])
+
+        current_data = await load_saved_data(db, table, cpy['id'], min_timestamp=min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size)
         gaps = await filter_out_past_attempts(db, table, gaps, cpy['id'])
         for _, gap in gaps.iterrows():
             # Create a task for each gap handling
             task = asyncio.create_task(fill_gap(db, table, get_data_func, cpy, gap))
             tasks.append(task)
+        break
     # Wait for all tasks to complete
     await asyncio.gather(*tasks)
