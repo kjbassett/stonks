@@ -10,10 +10,7 @@ class Database:
         self.db_path = db_path
 
     def __call__(
-            self,
-            query: str,
-            params: Tuple = (),
-            return_type: str = 'list'
+        self, query: str, params: Tuple = (), return_type: str = "list"
     ) -> Union[pd.DataFrame, List[Tuple]]:
         """Make the Database object callable to execute queries."""
         return self.execute_query(query, params, return_type)
@@ -23,10 +20,7 @@ class Database:
         return sqlite3.connect(self.db_path)
 
     def execute_query(
-            self,
-            query: str,
-            params: Union[Tuple, List] = (),
-            return_type: str = 'list'
+        self, query: str, params: Union[Tuple, List] = (), return_type: str = "list"
     ) -> Union[pd.DataFrame, List[Tuple]]:
         """
         Execute a SQL query with the specified return type.
@@ -49,13 +43,15 @@ class Database:
         print(query)
         with self._connect() as conn:
             cursor = conn.cursor()
-            if return_type == 'DataFrame':
+            if return_type == "DataFrame":
                 cursor.execute(query, params)
                 # Use Pandas to read the results into a DataFrame
                 result = pd.read_sql_query(query, conn, params=params)
-            elif return_type == 'list':
+            elif return_type == "list":
                 # Check if params is a list of tuples for executemany
-                if isinstance(params, list) and all(isinstance(p, tuple) for p in params):
+                if isinstance(params, list) and all(
+                    isinstance(p, tuple) for p in params
+                ):
                     cursor.executemany(query, params)
                     result = None  # No direct result for executemany
                 else:
@@ -68,7 +64,12 @@ class Database:
 
         return result
 
-    def insert(self, table: str, data: Union[Dict[str, Any], pd.DataFrame], skip_existing: bool = True):
+    def insert(
+        self,
+        table: str,
+        data: Union[Dict[str, Any], pd.DataFrame],
+        skip_existing: bool = True,
+    ):
         """Insert a record or records into the database."""
         if isinstance(data, dict):
             self._insert_single_record(table, data, skip_existing)
@@ -77,24 +78,28 @@ class Database:
         else:
             raise ValueError("Unsupported data type. Use a dictionary or a DataFrame.")
 
-    def _insert_single_record(self, table: str, data: Dict[str, Any], skip_existing: bool = True):
+    def _insert_single_record(
+        self, table: str, data: Dict[str, Any], skip_existing: bool = True
+    ):
         """Insert a single record into the database."""
-        columns = ', '.join(data.keys())
-        placeholders = ', '.join(['?'] * len(data))
+        columns = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
         query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} ({columns}) VALUES ({placeholders});"
         params = tuple(data.values())
         self.execute_query(query, params)
 
-    def _insert_multiple_records(self, table: str, data: pd.DataFrame, skip_existing: bool = True):
+    def _insert_multiple_records(
+        self, table: str, data: pd.DataFrame, skip_existing: bool = True
+    ):
         """Insert multiple records from a DataFrame into the database."""
-        columns = ', '.join(data.columns)
-        placeholders = ', '.join(['?'] * len(data.columns))
+        columns = ", ".join(data.columns)
+        placeholders = ", ".join(["?"] * len(data.columns))
         query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} ({columns}) VALUES ({placeholders});"
         params = [tuple(row) for row in data.values]
         self.execute_query(query, params)
 
 
-def create_database_if_not_exists(db_path: str, schema_path: str = 'create_db.sql'):
+def create_database_if_not_exists(db_path: str, schema_path: str = "create_db.sql"):
     # Check if the database already exists
     db_exists = os.path.exists(db_path)
 
@@ -102,7 +107,7 @@ def create_database_if_not_exists(db_path: str, schema_path: str = 'create_db.sq
         # Establish a new database connection
         with sqlite3.connect(db_path) as conn:
             # Open the schema file to read the SQL commands
-            with open(schema_path, 'r') as f:
+            with open(schema_path, "r") as f:
                 sql_script = f.read()
 
             # Execute the SQL script
@@ -110,4 +115,3 @@ def create_database_if_not_exists(db_path: str, schema_path: str = 'create_db.sq
             print(f"Database created and initialized at {db_path}")
     else:
         print(f"Database already exists at {db_path}")
-
