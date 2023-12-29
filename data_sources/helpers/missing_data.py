@@ -1,20 +1,24 @@
-from functools import partial
-import datetime
-import pandas as pd
 import asyncio
+import datetime
+from functools import partial
 
-from useful_funcs import latest_market_time, market_date_delta, all_open_dates
-from config import CONFIG
+import pandas as pd
 from icecream import ic
-min_market_date = market_date_delta(CONFIG['min_date'])
-min_market_ts = int(datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp())
+
+from config import CONFIG
+from project_utilities import latest_market_time, market_date_delta, all_open_dates
+
+min_market_date = market_date_delta(CONFIG["min_date"])
+min_market_ts = int(
+    datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp()
+)
 
 
 async def load_saved_data(db, table, company_id, min_timestamp=0):
     """Load saved data for a symbol if it exists, otherwise return None."""
-    if table == 'TradingData':
-        query = f'SELECT timestamp FROM TradingData WHERE company_id = ? AND timestamp > ? ORDER BY timestamp ASC;'
-    elif table == 'News':
+    if table == "TradingData":
+        query = f"SELECT timestamp FROM TradingData WHERE company_id = ? AND timestamp > ? ORDER BY timestamp ASC;"
+    elif table == "News":
         query = f"""
         SELECT timestamp
         FROM News INNER JOIN NewsCompaniesLink
@@ -22,8 +26,10 @@ async def load_saved_data(db, table, company_id, min_timestamp=0):
         WHERE NewsCompaniesLink.company_id =? AND News.timestamp >?;
         """
     else:
-        raise NotImplementedError(f'missindata.load_saved_data can not yet handle table {table}')
-    data = await db(query, (company_id, min_timestamp), return_type='DataFrame')
+        raise NotImplementedError(
+            f"missindata.load_saved_data can not yet handle table {table}"
+        )
+    data = await db(query, (company_id, min_timestamp), return_type="DataFrame")
     return data
 
 
@@ -58,10 +64,12 @@ async def find_gaps(current_data, min_gap_size):
         .dt.tz_convert("US/Eastern")
         .dt.normalize()
     )
-    current_data["days_apart"] = (current_data["date"] - current_data["prev_date"]).dt.days
+    current_data["days_apart"] = (
+        current_data["date"] - current_data["prev_date"]
+    ).dt.days
 
     current_data["gap"] = current_data["timestamp"] - current_data["previous"]
-    current_data = current_data.iloc[1:, ]
+    current_data = current_data.iloc[1:,]
 
     # Todo filter > gap threshold here as well to speed up apply?
     current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
@@ -70,10 +78,14 @@ async def find_gaps(current_data, min_gap_size):
     # This seems dangerous since we are saving timestamps and retrieving them later
     current_data.reset_index(drop=True, inplace=True)
     current_data.loc[1:, "previous"] += 60
-    current_data.loc[:len(current_data)-1, "timestamp"] -= 60
+    current_data.loc[: len(current_data) - 1, "timestamp"] -= 60
 
-    gaps = current_data[current_data["gap"] > min_gap_size]  # gaps > 30 minutes are counted
-    gaps = gaps[["previous", "timestamp"]].rename(columns={"previous": "start", "timestamp": "end"})
+    gaps = current_data[
+        current_data["gap"] > min_gap_size
+    ]  # gaps > 30 minutes are counted
+    gaps = gaps[["previous", "timestamp"]].rename(
+        columns={"previous": "start", "timestamp": "end"}
+    )
     return gaps
 
 
@@ -103,34 +115,39 @@ def adjust_gap(row):
 
 
 async def filter_out_past_attempts(db, table, gaps, company_id):
-    table += 'Gaps'
+    table += "Gaps"
     # Check if gap already in corresponding gaps table
-    ptg = await db(f'SELECT * FROM {table} WHERE company_id =?',
-                   params=(company_id,),
-                   return_type='DataFrame')
+    ptg = await db(
+        f"SELECT * FROM {table} WHERE company_id =?",
+        params=(company_id,),
+        return_type="DataFrame",
+    )
     # left anti join gaps and ptg
-    gaps = pd.merge(gaps, ptg, on=['start', 'end'], how='outer', indicator=True)
-    gaps = gaps[gaps['_merge'] == 'left_only'].drop('_merge', axis=1)
+    gaps = pd.merge(gaps, ptg, on=["start", "end"], how="outer", indicator=True)
+    gaps = gaps[gaps["_merge"] == "left_only"].drop("_merge", axis=1)
     return gaps
 
 
 async def fill_gap(db, table, get_data_func, cpy: pd.Series, gap: pd.Series):
-    start, end = gap['start'], gap['end']
-    data = await get_data_func(cpy['symbol'], int(start), int(end))
+    start, end = gap["start"], gap["end"]
+    data = await get_data_func(cpy["symbol"], int(start), int(end))
     # save_new_data returns the number of rows inserted, so if it's 0,...
     # we don't want to try the gap again. We save the record of our attempt here
     if not data or not await save_new_data(db, table, data):
         query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
-        await db(query, (cpy['id'], start, end))
+        await db(query, (cpy["id"], start, end))
 
 
-async def fill_gaps(db, table: str, get_data_func: callable, companies: pd.DataFrame, min_gap_size=1800):
+async def fill_gaps(
+    db, table: str, get_data_func: callable, companies: pd.DataFrame, min_gap_size=1800
+):
     tasks = []
     for _, cpy in companies.iterrows():
-
-        current_data = await load_saved_data(db, table, cpy['id'], min_timestamp=min_market_ts)
+        current_data = await load_saved_data(
+            db, table, cpy["id"], min_timestamp=min_market_ts
+        )
         gaps = await find_gaps(current_data, min_gap_size)
-        gaps = await filter_out_past_attempts(db, table, gaps, cpy['id'])
+        gaps = await filter_out_past_attempts(db, table, gaps, cpy["id"])
         for _, gap in gaps.iterrows():
             # Create a task for each gap handling
             task = asyncio.create_task(fill_gap(db, table, get_data_func, cpy, gap))

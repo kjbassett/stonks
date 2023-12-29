@@ -14,6 +14,7 @@ CREATE TABLE TradingData (
   high REAL,
   low REAL,
   close REAL,
+  vw_average REAL,
   volume INTEGER,
   UNIQUE (company_id, timestamp),
   FOREIGN KEY(company_id) REFERENCES Companies(id)

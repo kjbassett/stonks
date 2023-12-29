@@ -1,65 +1,39 @@
-import json
 import asyncio
-import websockets
-from useful_funcs import get_key
 
+import polygon
 
-# Function to map short keys to full words
-def map_keys(data):
-    key_mapping = {
-        "ev": "event_type",
-        "sym": "symbol",
-        "v": "volume",
-        "av": "accumulated_volume",
-        "op": "official_opening_price",
-        "vw": "volume_weighted_average_price",
-        "o": "opening_price",
-        "c": "closing_price",
-        "h": "highest_price",
-        "l": "lowest_price",
-        "a": "average_price",
-        "z": "average_trade_size",
-        "s": "start_timestamp",
-        "e": "end_timestamp"
-    }
-    return {key_mapping.get(k, k): v for k, v in data.items()}
-
-
-# Function to process and store data
-async def process_and_store_data(data, db):
-    mapped_data = map_keys(data)
-    await db.insert("your_table_name", mapped_data)  # Replace 'your_table_name' with your actual table name
+from database_utilities import get_or_create_company
+from project_utilities import get_key
 
 
 # Async function for WebSocket client
-async def main(db, companies=None):
-    if not companies:
-        companies = '*'
+async def main(db, companies: list | None = None):
+    # incoming data handler
+    async def process_and_store_data(data):
+        cid = get_or_create_company(db, data["sym"])["cid"]
+        data = [
+            {
+                "company_id": cid,
+                "open": d["o"],
+                "high": d["h"],
+                "low": d["l"],
+                "close": d["c"],
+                "vw_average": d["vw"],
+                "volume": d["v"],
+                "timestamp": d["s"] // 1000,
+            }
+            for d in data
+        ]
+        await db.insert("TradingData", data)
 
-    uri = "wss://delayed.polygon.io/stocks"
-    api_key = get_key(['polygon_io'])
-    async with websockets.connect(uri) as ws:
-        # Send authentication message
-        auth_data = {"action": "auth", "params": api_key}
-        await ws.send(json.dumps(auth_data))
+    api_key = get_key("polygon_io")
+    stream_client = polygon.AsyncStreamClient(api_key, "stocks")
 
-        # Check authentication response
-        response = await ws.recv()
-        response_data = json.loads(response)
-        if response_data[0]["status"] != "auth_success":
-            return
-
-        # Subscribe to stream with data aggregated by minute
-        # TODO this won't work if companies provided
-        subscribe_message = {"action": "subscribe", "params": f"AM.{companies}"}
-        await ws.send(json.dumps(subscribe_message))
-        # Process incoming messages
-        while True:
-            try:
-                message = await ws.recv()
-                data = json.loads(message)
-                print(data)
-                await process_and_store_data(data, db)
-            except asyncio.CancelledError:
-                # Check for stop event periodically
-                continue
+    try:
+        await stream_client.subscribe_stock_minute_aggregates(
+            companies, handler_function=process_and_store_data
+        )
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await stream_client.close_stream()

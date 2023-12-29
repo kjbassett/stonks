@@ -1,6 +1,6 @@
 import asyncpraw
-from useful_funcs import get_key
-from icecream import ic
+
+from project_utilities import get_key
 
 
 async def fetch_posts_and_comments(db, subreddits):
@@ -12,7 +12,7 @@ async def fetch_posts_and_comments(db, subreddits):
         username=get_key("reddit_username"),
     )
 
-    subreddits = await reddit.subreddit('+'.join(subreddits))
+    subreddits = await reddit.subreddit("+".join(subreddits))
     i = 0
     async for submission in subreddits.top(time_filter="hour"):
         i += 1
@@ -26,7 +26,7 @@ async def fetch_posts_and_comments(db, subreddits):
             for second_level_comment in top_level_comment.replies:
                 data.append(second_level_comment)
 
-    # Save submission data to the database
+        # Save submission data to the database
         await save_data(db, data)
     await reddit.close()
 
@@ -46,7 +46,13 @@ async def save_data(db, data):
     sub = data[0].subreddit.display_name
     for i, d in enumerate(data):
         if i == 0:
-            d.body = d.selftext if d.selftext else (d.url if d.url.endswith(('.jpg', '.jpeg', '.png', '.gif')) else '')
+            d.body = (
+                d.selftext
+                if d.selftext
+                else (
+                    d.url if d.url.endswith((".jpg", ".jpeg", ".png", ".gif")) else ""
+                )
+            )
             d.parent_id = None
         if d.author:
             await d.author.load()
@@ -55,7 +61,7 @@ async def save_data(db, data):
             author_id = None
         params.append((d.id, sub, d.parent_id, None, d.body, author_id, d.score))
 
-    await db(query, params)
+    await db.execute_query(query, params, many=True)
     return
 
 
@@ -63,6 +69,7 @@ async def main(db, companies=None):
     # companies not used but keeps standard format for data sources
     subs = ["wallstreetbets", "stocks", "StockMarket", "investing"]
     await fetch_posts_and_comments(db, subs)
+
 
 """
 re.findall(r"(?<=\$)\w+|[A-Z]{3,6}", text):  # magic
