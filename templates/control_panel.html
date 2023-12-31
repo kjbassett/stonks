@@ -80,9 +80,6 @@
         <div class="grid-item">
             <span id="{{ action }}_statusLight" class="status-light red"></span>
             <h3>{{ action }}</h3>
-            <div class="row-count" id="{{ action }}_rowCount">
-                <span>Row Count: </span>
-            </div>
             <div class="last-run-timestamp" id="{{ action }}_lastRunTimestamp">
                 <span>Last Run Time: </span>
             </div>
@@ -131,10 +128,13 @@
                 }
 
                 const lastRunTimestamp = document.getElementById(`${action}_lastRunTimestamp`);
-                rowCount.textContent = `Row Count: ${res.rowCount}`;
                 lastRunTimestamp.textContent = `Last Run Time: ${res.lastRunTimestamp}`;
             })
-            .catch(error => console.error('Error:', error));
+            .catch(error => {
+                console.error('Error:', error);
+                statusLight.classList.remove('blue');
+                statusLight.classList.add('red');
+            });
     }
     {% for action in actions %}
     setInterval(() => checkStatusAndUpdateLight('{{ action }}'), 5000);

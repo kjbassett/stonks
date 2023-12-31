@@ -25,11 +25,8 @@ async def get_data(client, symbol, start, end):
     ic(aggs[0])
     return aggs
 
-    # This might need to run in the executor if there are a lot of aggs
-
 
 async def save_data(db, data):
-    print("SAVING DATA")
     data = [
         {
             "company_id": (await get_or_create_company(db, d["ticker"]))[0],
