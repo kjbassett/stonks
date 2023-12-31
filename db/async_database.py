@@ -74,8 +74,10 @@ class AsyncDatabase:
         elif isinstance(data, dict):
             columns = "(" + ", ".join(data.keys()) + ") "
             params = tuple(data.values())
+        else:
+            raise ValueError("Unsupported data type. Use a dictionary or tuple.")
         placeholders = ", ".join(["?"] * len(data))
-        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns} VALUES ({placeholders});"
+        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns}VALUES ({placeholders});"
         return await self.execute_query(query, params)
 
     async def _insert_multiple_records(

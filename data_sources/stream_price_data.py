@@ -10,7 +10,8 @@ from project_utilities import get_key
 async def main(db, companies: list | None = None):
     # incoming data handler
     async def process_and_store_data(data):
-        cid = get_or_create_company(db, data["sym"])["cid"]
+        cpy = await get_or_create_company(db, data["sym"])
+        cid = cpy[0]
         data = [
             {
                 "company_id": cid,

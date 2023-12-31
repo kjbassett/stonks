@@ -1,7 +1,7 @@
-from functools import cache
+from async_lru import alru_cache
 
 
-@cache
+@alru_cache(maxsize=500)
 async def get_or_create_company(
     db, symbol: str = None, name: str = None, sector: str = None, industry: str = None
 ):
@@ -9,15 +9,28 @@ async def get_or_create_company(
         raise ValueError("Please provide either a symbol or a name.")
     company = None
     if symbol:
-        company = await db("SELECT * FROM Companies WHERE symbol =?", symbol)
+        company = await db("SELECT * FROM Companies WHERE symbol =?", (symbol,))
     elif name:
-        company = await db("SELECT * FROM Companies WHERE name =?", name)
-    if not company and symbol:
-        await db.insert("Companies", (symbol, name, sector, industry))
-        company = await db("SELECT * FROM Companies WHERE symbol =?", symbol)
-    else:
-        raise ValueError(
-            "No company found, and no symbol provided to create new company."
-        )
+        company = await db("SELECT * FROM Companies WHERE name =?", (name,))
+
+    # if not found, create a new company if symbol is provided
+    if not company:
+        if symbol:
+            await db.insert(
+                "Companies", {"symbol": symbol, "name": name, "industry": industry}
+            )
+            company = await db("SELECT * FROM Companies WHERE symbol =?", (symbol,))
+        else:
+            raise ValueError(
+                "No company found, and no symbol provided to create new company."
+            )
 
     return company[0]
+
+
+@alru_cache
+async def table_exists(db, table: str):
+    result = await db(
+        f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{table}';"
+    )
+    return bool(result)

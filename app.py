@@ -1,26 +1,28 @@
 import asyncio
-from sanic import Sanic, response
-from sanic_jinja2 import SanicJinja2
 import importlib
 import os
 
+from sanic import Sanic, response
+from sanic_jinja2 import SanicJinja2
 
-def create_app(db_instance):
+
+def create_app(db):
     app = Sanic(__name__)
 
-    @app.listener('before_server_stop')
+    @app.listener("before_server_stop")
     async def close_db(app, loop):
-        await db_instance.close()
+        await db.close()
 
     jinja = SanicJinja2(app)
 
     # import main from all py files in data_sources
     actions = {
         filename[:-3]: {
-            'task': None,
-            'function': importlib.import_module(f"data_sources.{filename[:-3]}").main
+            "task": None,
+            "function": importlib.import_module(f"data_sources.{filename[:-3]}").main,
         }
-        for filename in os.listdir("data_sources") if filename.endswith(".py")
+        for filename in os.listdir("data_sources")
+        if filename.endswith(".py")
     }
 
     @app.route("/")
@@ -34,12 +36,12 @@ def create_app(db_instance):
         if action not in actions:
             return response.json({"error": f"{action} not found"})
         act = actions[action]
-        if act['task']:
-            if act['task'].done():
-                await act['task']
+        if act["task"]:
+            if act["task"].done():
+                await act["task"]
             else:
                 return response.json({"status": f"{action} is already running"})
-        act['task'] = asyncio.create_task(act['function'](db_instance))
+        act["task"] = asyncio.create_task(act["function"](db))
         return response.json({"status": f"{action} started"})
 
     @app.route("/stop/<action>")
@@ -48,11 +50,11 @@ def create_app(db_instance):
         if action not in actions:
             return response.json({"error": f"{action} not found"})
         act = actions[action]
-        if not act['task']:
+        if not act["task"]:
             return response.json({"status": f"{action} has not started"})
-        if act['task'].done():
+        if act["task"].done():
             return response.json({"status": f"{action} is already finished"})
-        act['task'].cancel()
+        act["task"].cancel()
         return response.json({"status": f"{action} stopped"})
 
     @app.route("/status/<action>")
@@ -61,10 +63,11 @@ def create_app(db_instance):
         if action not in actions:
             return response.json({"error": f"{action} not found"})
         act = actions[action]
-        if not act['task']:
+        if not act["task"]:
             return response.json({"running": False})
-        if act['task'].done():
-            return response.json({"running": False, "result": act['task'].result()})
+        if act["task"].done():
+            return response.json({"running": False, "result": act["task"].result()})
         else:
             return response.json({"running": True})
+
     return app

@@ -3,7 +3,6 @@ import datetime
 from functools import partial
 
 import pandas as pd
-from icecream import ic
 
 from config import CONFIG
 from project_utilities import latest_market_time, market_date_delta, all_open_dates
@@ -12,33 +11,6 @@ min_market_date = market_date_delta(CONFIG["min_date"])
 min_market_ts = int(
     datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp()
 )
-
-
-async def load_saved_data(db, table, company_id, min_timestamp=0):
-    """Load saved data for a symbol if it exists, otherwise return None."""
-    if table == "TradingData":
-        query = f"SELECT timestamp FROM TradingData WHERE company_id = ? AND timestamp > ? ORDER BY timestamp ASC;"
-    elif table == "News":
-        query = f"""
-        SELECT timestamp
-        FROM News INNER JOIN NewsCompaniesLink
-        ON News.id = NewsCompaniesLink.news_id
-        WHERE NewsCompaniesLink.company_id =? AND News.timestamp >?;
-        """
-    else:
-        raise NotImplementedError(
-            f"missindata.load_saved_data can not yet handle table {table}"
-        )
-    data = await db(query, (company_id, min_timestamp), return_type="DataFrame")
-    return data
-
-
-async def save_new_data(db, table, data):
-    n = await db.insert(table, data)
-    ic(n)
-    # TODO need to save data to NewsCompaniesLink table too
-
-    return n
 
 
 async def find_gaps(current_data, min_gap_size):
@@ -128,30 +100,52 @@ async def filter_out_past_attempts(db, table, gaps, company_id):
     return gaps
 
 
-async def fill_gap(db, table, get_data_func, cpy: pd.Series, gap: pd.Series):
+async def fill_gap(
+    client,
+    db,
+    table,
+    get_data_func,
+    save_data_func: callable,
+    cpy: pd.Series,
+    gap: pd.Series,
+):
     start, end = gap["start"], gap["end"]
-    data = await get_data_func(cpy["symbol"], int(start), int(end))
+    print("STARTING API CALL")
+    data = await get_data_func(client, cpy["symbol"], int(start), int(end))
+
     # save_new_data returns the number of rows inserted, so if it's 0,...
     # we don't want to try the gap again. We save the record of our attempt here
-    if not data or not await save_new_data(db, table, data):
+    if not data or not await save_data_func(db, data):
         query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
         await db(query, (cpy["id"], start, end))
 
 
 async def fill_gaps(
-    db, table: str, get_data_func: callable, companies: pd.DataFrame, min_gap_size=1800
+    client,
+    db,
+    table: str,
+    load_data_func: callable,
+    get_data_func: callable,
+    save_data_func: callable,
+    companies: pd.DataFrame,
+    min_gap_size=1800,
 ):
+    if not companies:
+        companies = await db("SELECT * FROM Companies;", return_type="DataFrame")
     tasks = []
     for _, cpy in companies.iterrows():
-        current_data = await load_saved_data(
-            db, table, cpy["id"], min_timestamp=min_market_ts
-        )
+        current_data = await load_data_func(db, cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size)
         gaps = await filter_out_past_attempts(db, table, gaps, cpy["id"])
         for _, gap in gaps.iterrows():
             # Create a task for each gap handling
-            task = asyncio.create_task(fill_gap(db, table, get_data_func, cpy, gap))
+            task = asyncio.create_task(
+                fill_gap(client, db, table, get_data_func, save_data_func, cpy, gap)
+            )
             tasks.append(task)
-        break
+            print("TASK CREATED FOR GAP")
+            print(gap)
     # Wait for all tasks to complete
+    print("WAITING FOR TASKS")
     await asyncio.gather(*tasks)
+    print("TASKS COMPLETE")

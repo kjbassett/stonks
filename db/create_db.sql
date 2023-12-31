@@ -1,6 +1,6 @@
 -- Companies Table
 CREATE TABLE Companies (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT,
   symbol TEXT UNIQUE NOT NULL,
   industry TEXT

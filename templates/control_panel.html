@@ -4,7 +4,7 @@
     <title>Control Panel</title>
     <style>
         body {
-            background: url('https://static.vecteezy.com/system/resources/previews/007/153/280/original/abstract-diagonal-stripes-background-stripe-pattern-design-modern-background-free-vector.jpg'); /* Replace with your background image */
+            background: url('https://static.vecteezy.com/system/resources/previews/007/153/280/original/abstract-diagonal-stripes-background-stripe-pattern-design-modern-background-free-vector.jpg');
             background-size: cover;
             margin: 0;
             padding: 0;
@@ -31,6 +31,7 @@
             text-align: center;
             color: white;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            position: relative;
         }
 
         .status-light {
@@ -46,6 +47,15 @@
 
         .blue {
             background-color: blue;
+        }
+
+        .row-count {
+            margin-top: 10px;
+            color: #ffffff;
+        }
+
+        .last-run-timestamp {
+            color: #ffffff;
         }
 
         button {
@@ -68,8 +78,15 @@
     <div class="grid-container">
     {% for action in actions %}
         <div class="grid-item">
-            <span id="{{ action }}_statusLight" class="status-light red"></span> <!-- Change class to 'blue' for running status -->
+            <span id="{{ action }}_statusLight" class="status-light red"></span>
             <h3>{{ action }}</h3>
+            <div class="row-count" id="{{ action }}_rowCount">
+                <span>Row Count: </span>
+            </div>
+            <div class="last-run-timestamp" id="{{ action }}_lastRunTimestamp">
+                <span>Last Run Time: </span>
+            </div>
+            <button onclick="updateStatus('{{ action }}')">Update Status</button>
             <button onclick="start('{{ action }}')">Start</button>
             <button onclick="stop('{{ action }}')">Stop</button>
         </div>
@@ -78,6 +95,7 @@
 
     <script>
     function start(action) {
+        console.log('aqui');
         fetch(`/start/${action}`, { method: 'GET' })
             .then(response => response.json())
             .then(response => {
@@ -102,6 +120,7 @@
             .then(res => res.json())
             .then(res => {
                 console.log(res);
+
                 const statusLight = document.getElementById(action + '_statusLight');
                 if (res.running) {
                     statusLight.classList.remove('red');
@@ -110,6 +129,10 @@
                     statusLight.classList.remove('blue');
                     statusLight.classList.add('red');
                 }
+
+                const lastRunTimestamp = document.getElementById(`${action}_lastRunTimestamp`);
+                rowCount.textContent = `Row Count: ${res.rowCount}`;
+                lastRunTimestamp.textContent = `Last Run Time: ${res.lastRunTimestamp}`;
             })
             .catch(error => console.error('Error:', error));
     }
