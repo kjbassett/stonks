@@ -3,8 +3,8 @@ from datetime import datetime
 
 from polygon import ReferenceClient
 
-from database_utilities import get_or_create_company
-from project_utilities import get_key
+from models.company import get_or_create_company
+from utils.project_utilities import get_key
 from .helpers.missing_data import fill_gaps
 
 

@@ -2,7 +2,7 @@ test.py
 .idea/
 5/
 DailyRecs/
-keys.txt
+utils/keys.txt
 *.xlsx
 *.csv
 *.log

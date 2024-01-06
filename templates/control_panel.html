@@ -76,49 +76,49 @@
 </head>
 <body>
     <div class="grid-container">
-    {% for action in actions %}
+    {% for plugin in plugins %}
         <div class="grid-item">
-            <span id="{{ action }}_statusLight" class="status-light red"></span>
-            <h3>{{ action }}</h3>
-            <div class="last-run-timestamp" id="{{ action }}_lastRunTimestamp">
+            <span id="{{ plugin }}_statusLight" class="status-light red"></span>
+            <h3>{{ plugin }}</h3>
+            <div class="last-run-timestamp" id="{{ plugin }}_lastRunTimestamp">
                 <span>Last Run Time: </span>
             </div>
-            <button onclick="updateStatus('{{ action }}')">Update Status</button>
-            <button onclick="start('{{ action }}')">Start</button>
-            <button onclick="stop('{{ action }}')">Stop</button>
+            <button onclick="updateStatus('{{ plugin }}')">Update Status</button>
+            <button onclick="start('{{ plugin }}')">Start</button>
+            <button onclick="stop('{{ plugin }}')">Stop</button>
         </div>
     {% endfor %}
     </div>
 
     <script>
-    function start(action) {
+    function start(plugin) {
         console.log('aqui');
-        fetch(`/start/${action}`, { method: 'GET' })
+        fetch(`/start/${plugin}`, { method: 'GET' })
             .then(response => response.json())
             .then(response => {
                 console.log(response);
-                checkStatusAndUpdateLight(action);
+                checkStatusAndUpdateLight(plugin);
                 })
             .catch(error => console.error('Error:', error));
     }
 
-    function stop(action) {
-        fetch(`/stop/${action}`, { method: 'GET' })
+    function stop(plugin) {
+        fetch(`/stop/${plugin}`, { method: 'GET' })
             .then(response => response.json())
             .then(response => {
                 console.log(response);
-                checkStatusAndUpdateLight(action);
+                checkStatusAndUpdateLight(plugin);
                 })
             .catch(error => console.error('Error:', error));
     }
 
-    function checkStatusAndUpdateLight(action) {
-        fetch(`/status/${action}`, { method: 'GET' })
+    function checkStatusAndUpdateLight(plugin) {
+        fetch(`/status/${plugin}`, { method: 'GET' })
             .then(res => res.json())
             .then(res => {
                 console.log(res);
 
-                const statusLight = document.getElementById(action + '_statusLight');
+                const statusLight = document.getElementById(plugin + '_statusLight');
                 if (res.running) {
                     statusLight.classList.remove('red');
                     statusLight.classList.add('blue');
@@ -127,7 +127,7 @@
                     statusLight.classList.add('red');
                 }
 
-                const lastRunTimestamp = document.getElementById(`${action}_lastRunTimestamp`);
+                const lastRunTimestamp = document.getElementById(`${plugin}_lastRunTimestamp`);
                 lastRunTimestamp.textContent = `Last Run Time: ${res.lastRunTimestamp}`;
             })
             .catch(error => {
@@ -136,8 +136,8 @@
                 statusLight.classList.add('red');
             });
     }
-    {% for action in actions %}
-    setInterval(() => checkStatusAndUpdateLight('{{ action }}'), 5000);
+    {% for plugin in plugins %}
+    setInterval(() => checkStatusAndUpdateLight('{{ plugin }}'), 5000);
     {% endfor %}
 
 </script>

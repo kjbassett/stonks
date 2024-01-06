@@ -2,6 +2,7 @@ from typing import Tuple, Union, List, Dict, Any
 
 import aiosqlite
 import pandas as pd
+from async_lru import alru_cache
 
 
 class AsyncDatabase:
@@ -98,3 +99,10 @@ class AsyncDatabase:
 
         query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns} VALUES ({placeholders});"
         return await self.execute_query(query, params, many=True)
+
+    @alru_cache
+    async def table_exists(self, table: str):
+        result = await self.execute_query(
+            f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{table}';"
+        )
+        return bool(result)

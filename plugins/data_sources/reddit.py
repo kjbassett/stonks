@@ -1,6 +1,6 @@
 import asyncpraw
 
-from project_utilities import get_key
+from utils.project_utilities import get_key
 
 
 async def fetch_posts_and_comments(db, subreddits):
