@@ -1,10 +1,11 @@
 from app import create_app
-from config import CONFIG
-from models.db.async_database import AsyncDatabase
 
-# Initialize the database instance
-db_instance = AsyncDatabase(CONFIG["db_folder"] + CONFIG["db_name"])
-app = create_app(db_instance)
+
+app = create_app()
+print("hello")
+# Maybe define routes here and load plugins after __name__ == __main__?
+# app = setup_routes(app)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    # Initialize the database instance
+    app.run(host="0.0.0.0", port=80, workers=4)

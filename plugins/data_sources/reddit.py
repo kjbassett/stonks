@@ -1,6 +1,7 @@
 import asyncpraw
 
 from utils.project_utilities import get_key
+from ..decorator import plugin
 
 
 async def fetch_posts_and_comments(db, subreddits):
@@ -65,7 +66,11 @@ async def save_data(db, data):
     return
 
 
+@plugin(companies={"ui_element": "textbox", "default": "all"})
 async def main(db, companies=None):
+    """
+    test docstring
+    """
     # companies not used but keeps standard format for data sources
     subs = ["wallstreetbets", "stocks", "StockMarket", "investing"]
     await fetch_posts_and_comments(db, subs)

@@ -1,14 +1,18 @@
 import asyncio
-import importlib
-import inspect
-import os
 
-from sanic import Sanic, response
+from sanic import response, Sanic
 from sanic_jinja2 import SanicJinja2
 
+from config import CONFIG
+from models.db.async_database import AsyncDatabase
+from plugins.load_plugins import load_plugins
 
-def create_app(db):
-    app = Sanic(__name__)
+
+def create_app():
+    app = Sanic("Stonks")
+    db = AsyncDatabase(CONFIG["db_folder"] + CONFIG["db_name"])
+
+    print("CREATING APP")
 
     @app.listener("before_server_stop")
     async def close_db(app, loop):
@@ -17,12 +21,12 @@ def create_app(db):
     jinja = SanicJinja2(app)
 
     # import main from all py files in data_sources
-    plugins = load_plugins("plugins")
+    metadata, plugins = load_plugins()
 
     @app.route("/")
     async def index(request):
         nonlocal plugins
-        return jinja.render("control_panel.html", request, plugins=plugins)
+        return jinja.render("control_panel.html", request, metadata=metadata)
 
     @app.route("/start/<plugin>")
     async def start(request, plugin):
@@ -65,15 +69,3 @@ def create_app(db):
             return response.json({"running": True})
 
     return app
-
-
-def load_plugins(folder):
-    plugins = {}
-    for root, dirs, files in os.walk(folder):
-        for file in files:
-            if file.endswith(".py") and file != "__init__.py":
-                module = importlib.import_module(f".{file[:-3]}", package=folder)
-                for name, func in inspect.getmembers(module, inspect.isfunction):
-                    if getattr(func, "is_plugin", False):
-                        plugins[name] = func
-    return plugins

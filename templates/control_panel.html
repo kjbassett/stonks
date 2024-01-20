@@ -15,14 +15,14 @@
             font-family: Arial, sans-serif;
         }
 
-        .grid-container {
+        .plugins {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 20px;
             padding: 20px;
         }
 
-        .grid-item {
+        .plugin {
             background: rgba(255, 255, 255, 0.2);
             backdrop-filter: blur(10px);
             border-radius: 10px;
@@ -75,19 +75,54 @@
     </style>
 </head>
 <body>
-    <div class="grid-container">
-    {% for plugin in plugins %}
-        <div class="grid-item">
-            <span id="{{ plugin }}_statusLight" class="status-light red"></span>
-            <h3>{{ plugin }}</h3>
-            <div class="last-run-timestamp" id="{{ plugin }}_lastRunTimestamp">
-                <span>Last Run Time: </span>
+
+    {% macro render_plugin(plugin_name, plugin) %}
+        <div class="plugin">
+            <h4>{{ plugin_name }}</h4>
+            <form id="plugin-form-{{ plugin_name }}" method="post">
+                {% for arg in plugin.arguments %}
+                    <label for="{{ plugin_name + '.' + arg.name }}">{{ arg.name }}:</label>
+                    {% if arg['ui_element'] == 'textbox' %}
+                        <input type="text" id="{{ plugin_name + '.' + arg.name }}" name="{{ arg.name }}"
+                               value="{{ arg.default }}"
+                               min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %} DO IT LIKE DIS
+                               max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
+                               required="{{ 'required' if arg.required else 'optional' }}">
+                    {% elif arg['ui_element'] == 'slider' %}
+                        <input type="range" id="{{ plugin_name + '.' + arg.name }}" name="{{ arg.name }}"
+                               min="{{ arg.get('min', None) }}"
+                               max="{{ arg.get('max', None) }}"
+                               value="{{ arg.default }}">
+                    {% elif arg['ui_element'] == 'checkbox' %}
+                        <input type="checkbox" id="{{ plugin_name + '.' + arg['name']}}" name="{{ arg.name }}"
+                               {% if arg['default'] %}checked{% endif %}>
+                    <!-- Add other UI elements as needed -->
+                    {% endif %}
+                {% endfor %}
+                <button type="button" onclick="startPlugin('{{ plugin_name }}')">Start</button>
+                <button type="button" onclick="stopPlugin('{{ plugin_name }}')">Stop</button>
+            </form>
+            <div class="tooltip">
+                <span class="tooltiptext">{{ plugin.doc }}</span>
             </div>
-            <button onclick="updateStatus('{{ plugin }}')">Update Status</button>
-            <button onclick="start('{{ plugin }}')">Start</button>
-            <button onclick="stop('{{ plugin }}')">Stop</button>
         </div>
-    {% endfor %}
+    {% endmacro %}
+
+    {% macro render_plugins(metadata) %}
+        {% for key, value in metadata.items() %}
+            {% if "is_plugin" in value %}
+                {{ render_plugin(key, value) }}
+            {% else %}
+                <div class="category">
+                    <h3>{{ key }}</h3>
+                    {{ render_plugins(value) }}
+                </div>
+            {% endif %}
+        {% endfor %}
+    {% endmacro %}
+
+    <div class="plugins">
+        {{ render_plugins(metadata) }}
     </div>
 
     <script>

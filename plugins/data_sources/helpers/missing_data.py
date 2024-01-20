@@ -5,7 +5,7 @@ from functools import partial
 import pandas as pd
 
 from config import CONFIG
-from utils.project_utilities import (
+from utils.market_calendar import (
     latest_market_time,
     market_date_delta,
     all_open_dates,
