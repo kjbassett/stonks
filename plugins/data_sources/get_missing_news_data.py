@@ -6,6 +6,7 @@ from polygon import ReferenceClient
 from models.company import get_or_create_company
 from utils.project_utilities import get_key
 from .helpers.missing_data import fill_gaps
+from ..decorator import plugin
 
 
 async def load_data(db, company_id, min_timestamp=0):
@@ -64,6 +65,7 @@ async def save_data(db, data):
     return n
 
 
+@plugin()
 async def main(db, companies=None):
     try:
         async with ReferenceClient(get_key("polygon_io"), True) as client:

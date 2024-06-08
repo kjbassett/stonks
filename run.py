@@ -8,4 +8,4 @@ print("hello")
 
 if __name__ == "__main__":
     # Initialize the database instance
-    app.run(host="0.0.0.0", port=80, workers=4)
+    app.run(host="0.0.0.0", port=80, single_process=True)

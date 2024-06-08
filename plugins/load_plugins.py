@@ -72,7 +72,8 @@ def load_plugins(folder="plugins"):
                         plugins[name] = func
 
                         # add plugin metadata to folder-structured metadata
-                        parts = relative_path.split(os.sep)
+                        parts = import_path.strip(".").split(".")
+                        print(parts)
                         current_level = metadata
                         # Recursively enter/create folder structure to put metadata in correct spot
                         for part in parts:
