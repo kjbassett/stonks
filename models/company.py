@@ -1,5 +1,6 @@
 from async_lru import alru_cache
-from base_model import BaseModel
+
+from .base_model import BaseModel
 
 
 class Company(BaseModel):

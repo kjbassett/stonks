@@ -32,7 +32,7 @@ class AsyncDatabase:
         many=False,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
         await self.connect()
-        if many:
+        if many:  # TODO detect this automatically somehow
             cursor = await self.conn.executemany(query, params)
         else:
             cursor = await self.conn.execute(query, params)
