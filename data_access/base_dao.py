@@ -6,13 +6,18 @@ from async_lru import alru_cache
 from .db.async_database import AsyncDatabase
 
 
-class BaseModel:
+# Base Data Access Object (DAO) class.
+class BaseDAO:
     def __init__(self, db: AsyncDatabase, table_name: str):
         self.db = db
         self.table_name = table_name
 
-    async def insert(self, data: Union[Dict[str, Any], pd.DataFrame, tuple]):
-        return await self.db.insert(self.table_name, data)
+    async def insert(
+        self,
+        data: Union[Dict[str, Any], pd.DataFrame, tuple],
+        skip_existing: bool = True,
+    ):
+        return await self.db.insert(self.table_name, data, skip_existing=skip_existing)
 
     async def update(self, identifier: Any, data: Dict[str, Any]):
         set_clause = ", ".join([f"{key} = ?" for key in data.keys()])

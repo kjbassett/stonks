@@ -1,8 +1,10 @@
-from async_database import AsyncDatabase
-from base_model import BaseModel
+import pandas as pd
+
+from .base_dao import BaseDAO
+from .db.async_database import AsyncDatabase
 
 
-class TradingData(BaseModel):
+class TradingData(BaseDAO):
     def __init__(self, db: AsyncDatabase):
         super().__init__(db, "TradingData")
 
@@ -13,7 +15,6 @@ class TradingData(BaseModel):
         start_timestamp: int = None,
         end_timestamp: int = None,
     ) -> pd.DataFrame:
-        # TODO upgrade the get method in base model
         query = f"SELECT * FROM {self.table_name}"
 
         where_clause = []
@@ -33,6 +34,15 @@ class TradingData(BaseModel):
 
         if len(where_clause) > 0:
             query += " WHERE " + " AND ".join(where_clause)
+        query += " ORDER BY timestamp ASC;"
         return await self.db.execute_query(
             query, (start_timestamp, end_timestamp), return_type="DataFrame"
+        )
+
+    async def get_timestamps_by_company(
+        self, company_id: int, min_timstamp: int = 0
+    ) -> pd.DataFrame:
+        query = f"SELECT timestamp FROM {self.table_name} WHERE company_id =? AND timestamp >=? ORDER BY timestamp ASC;"
+        return await self.db.execute_query(
+            query, (company_id, min_timstamp), return_type="DataFrame"
         )

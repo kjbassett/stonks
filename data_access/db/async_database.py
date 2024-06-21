@@ -100,6 +100,12 @@ class AsyncDatabase:
         query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns} VALUES ({placeholders});"
         return await self.execute_query(query, params, many=True)
 
+    async def get_all_tables(self):
+        result = await self.execute_query(
+            "SELECT name FROM sqlite_master WHERE type = 'table';"
+        )
+        return [row[0] for row in result]
+
     @alru_cache
     async def table_exists(self, table: str):
         result = await self.execute_query(

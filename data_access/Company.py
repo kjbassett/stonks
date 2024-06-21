@@ -1,9 +1,9 @@
 from async_lru import alru_cache
 
-from .base_model import BaseModel
+from .base_dao import BaseDAO
 
 
-class Company(BaseModel):
+class Company(BaseDAO):
     def __init__(self, db):
         super().__init__(db, "Companies")
 
