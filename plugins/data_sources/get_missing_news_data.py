@@ -1,26 +1,16 @@
 import asyncio
 from datetime import datetime
 
+from data_access.dao_manager import dao_manager
 from polygon import ReferenceClient
-
-from models.company import get_or_create_company
 from utils.project_utilities import get_key
+
 from .helpers.missing_data import fill_gaps
 from ..decorator import plugin
 
-
-async def load_data(db, company_id, min_timestamp=0):
-    """Load saved data for a symbol if it exists, otherwise return an empty dataframe."""
-
-    query = f"""
-    SELECT timestamp
-    FROM News INNER JOIN NewsCompaniesLink
-    ON News.id = NewsCompaniesLink.news_id
-    WHERE NewsCompaniesLink.company_id =? AND News.timestamp >?;
-    """
-
-    data = await db(query, (company_id, min_timestamp), return_type="DataFrame")
-    return data
+cmp = dao_manager.get_dao("Company")
+news = dao_manager.get_dao("News")
+nc_link = dao_manager.get_dao("NewsCompanyLink")
 
 
 async def get_data(client, symbol, start, end):
@@ -35,12 +25,12 @@ async def get_data(client, symbol, start, end):
         return news_items["results"]
 
 
-async def save_data(db, data):
+async def save_data(data):
     # transform data to match db table
-    news = []
-    links = []
+    news_data = []
+    n_c_link_data = []
     for d in data:
-        news.append(
+        news_data.append(
             {
                 "id": d["id"],
                 "source": d["publisher"]["name"],
@@ -52,28 +42,27 @@ async def save_data(db, data):
             }
         )
         for symbol in d["tickers"]:
-            links.append(
+            n_c_link_data.append(
                 {
-                    "company_id": (await get_or_create_company(db, symbol))[0],
+                    "company_id": (await cmp.get_or_create_company(symbol))[0],
                     "news_id": d["id"],
                 }
             )
     # insert data and return new rows in News table
-    n = await db.insert("News", news)
-    await db.insert("NewsCompaniesLink", links)
+    n = await news.insert(news_data)
+    await nc_link.insert(n_c_link_data)
 
     return n
 
 
-@plugin()
-async def main(db, companies=None):
+@plugin(companies={"ui_element": "textbox", "default": "all"})
+async def main(companies=None):
     try:
         async with ReferenceClient(get_key("polygon_io"), True) as client:
             await fill_gaps(
                 client,
-                db,
                 "News",
-                load_data,
+                news.get_timestamps_by_company,
                 get_data,
                 save_data,
                 companies,

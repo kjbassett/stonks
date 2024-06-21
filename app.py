@@ -1,22 +1,21 @@
 import asyncio
 
-from sanic import response, Sanic
+from data_access.dao_manager import dao_manager
+from plugins.load_plugins import load_plugins
+from sanic import Sanic, response
 from sanic_jinja2 import SanicJinja2
 
-from config import CONFIG
-from models.db.async_database import AsyncDatabase
-from plugins.load_plugins import load_plugins
 
-
-def create_app():
+async def create_app():
     app = Sanic("Stonks")
-    db = AsyncDatabase(CONFIG["db_folder"] + CONFIG["db_name"])
+    await dao_manager.initialize()
 
     print("CREATING APP")
 
     @app.listener("before_server_stop")
     async def close_db(app, loop):
-        await db.close()
+        print("Closing database connection")
+        await dao_manager.db.close()
 
     jinja = SanicJinja2(app)
 
@@ -28,18 +27,21 @@ def create_app():
         nonlocal plugins
         return jinja.render("control_panel.html", request, metadata=metadata)
 
-    @app.route("/start/<plugin>")
+    @app.route("/start/<plugin>", methods=["POST"])
     async def start(request, plugin):
+        print(f"Received request to start {plugin}")
         nonlocal plugins
         if plugin not in plugins:
             return response.json({"error": f"{plugin} not found"})
+        print("Found plugin")
         act = plugins[plugin]
         if act["task"]:
             if act["task"].done():
                 await act["task"]
             else:
                 return response.json({"status": f"{plugin} is already running"})
-        act["task"] = asyncio.create_task(act["function"](db))
+        act["task"] = asyncio.create_task(act["function"]())
+        print(f"Started {plugin}")
         return response.json({"status": f"{plugin} started"})
 
     @app.route("/stop/<plugin>")

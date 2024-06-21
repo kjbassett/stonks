@@ -1,16 +1,18 @@
 import asyncio
 
 import polygon
-
-from models.company import get_or_create_company
+from data_access.Company import Company
 from utils.project_utilities import get_key
+
+from ..decorator import plugin
 
 
 # Async function for WebSocket client
+@plugin(companies={"ui_element": "textbox", "default": "all"})
 async def main(db, companies: list | None = None):
     # incoming data handler
     async def process_and_store_data(data):
-        cpy = await get_or_create_company(db, data["sym"])
+        cpy = await Company(db).get_or_create_company(data["sym"])
         cid = cpy[0]
         data = [
             {

@@ -6,12 +6,9 @@
         body {
             background: url('https://static.vecteezy.com/system/resources/previews/007/153/280/original/abstract-diagonal-stripes-background-stripe-pattern-design-modern-background-free-vector.jpg');
             background-size: cover;
-            margin: 0;
-            padding: 0;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
             font-family: Arial, sans-serif;
         }
 
@@ -27,8 +24,8 @@
             background: rgba(255, 255, 255, 0.05);
             backdrop-filter: blur(5px);
             border-radius: 10px;
-            padding: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 3%;
+            margin-bottom: 20px;
             text-align: center;
             color: white;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 1);
@@ -80,28 +77,28 @@
     {% macro render_plugin(plugin_name, plugin) %}
         <div class="plugin">
             <h4>{{ plugin_name }}</h4>
-            <form id="plugin-form-{{ plugin_name }}" method="post">
+            <form id="plugin-form-{{ plugin.id }}" action="/start/{{plugin.id}}" method="post">
                 {% for arg in plugin.arguments %}
-                    <label for="{{ plugin_name + '.' + arg.name }}">{{ arg.name }}:</label>
+                    <label for="{{ plugin.id + '.' + arg.name }}">{{ arg.name }}:</label>
                     {% if arg['ui_element'] == 'textbox' %}
-                        <input type="text" id="{{ plugin_name + '.' + arg.name }}" name="{{ arg.name }}"
+                        <input type="text" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
                                value="{{ arg.default }}"
                                min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %} DO IT LIKE DIS
                                max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
                                required="{{ 'required' if arg.required else 'optional' }}">
                     {% elif arg['ui_element'] == 'slider' %}
-                        <input type="range" id="{{ plugin_name + '.' + arg.name }}" name="{{ arg.name }}"
+                        <input type="range" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
                                min="{{ arg.get('min', None) }}"
                                max="{{ arg.get('max', None) }}"
                                value="{{ arg.default }}">
                     {% elif arg['ui_element'] == 'checkbox' %}
-                        <input type="checkbox" id="{{ plugin_name + '.' + arg['name']}}" name="{{ arg.name }}"
+                        <input type="checkbox" id="{{ plugin.id + '.' + arg['name']}}" name="{{ arg.name }}"
                                {% if arg['default'] %}checked{% endif %}>
                     <!-- Add other UI elements as needed -->
                     {% endif %}
                 {% endfor %}
-                <button type="button" onclick="startPlugin('{{ plugin_name }}')">Start</button>
-                <button type="button" onclick="stopPlugin('{{ plugin_name }}')">Stop</button>
+                <button type="submit">Start</button>
+                <button type="button" onclick="stop('{{ plugin.id }}')">Stop</button>
             </form>
             <div class="tooltip">
                 <span class="tooltiptext">{{ plugin.doc }}</span>
@@ -127,16 +124,6 @@
     </div>
 
     <script>
-    function start(plugin) {
-        console.log('aqui');
-        fetch(`/start/${plugin}`, { method: 'GET' })
-            .then(response => response.json())
-            .then(response => {
-                console.log(response);
-                checkStatusAndUpdateLight(plugin);
-                })
-            .catch(error => console.error('Error:', error));
-    }
 
     function stop(plugin) {
         fetch(`/stop/${plugin}`, { method: 'GET' })

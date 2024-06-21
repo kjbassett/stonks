@@ -49,7 +49,9 @@ def load_plugin_metadata(func):
 
 
 def load_plugins(folder="plugins"):
-    metadata = {}  # Category structure to match folder structure of plugins
+    metadata = (
+        {}
+    )  # Matches folder structure of plugin folder and holds metadata for each plugin. Used for webpage
     plugins = {}  # dict of plugin functions
 
     for root, dirs, files in os.walk(folder):
@@ -66,19 +68,25 @@ def load_plugins(folder="plugins"):
 
                 # ic(import_path)
                 module = importlib.import_module(import_path, package=folder)
+                print(import_path)
+
                 for name, func in inspect.getmembers(module, inspect.isfunction):
                     if getattr(func, "is_plugin", False):
                         # add plugin function to plugins
-                        plugins[name] = func
+                        import_path = import_path.strip(".")
+                        func_path = f"{import_path}.{name}"
+                        plugins[func_path] = {"function": func, "task": None}
 
                         # add plugin metadata to folder-structured metadata
-                        parts = import_path.strip(".").split(".")
+                        parts = import_path.split(".")
                         print(parts)
                         current_level = metadata
                         # Recursively enter/create folder structure to put metadata in correct spot
                         for part in parts:
                             current_level = current_level.setdefault(part, {})
                         current_level[name] = load_plugin_metadata(func)
+                        current_level[name]["id"] = func_path
+
     ic(metadata)
     ic(plugins)
     return metadata, plugins

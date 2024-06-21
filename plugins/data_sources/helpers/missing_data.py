@@ -3,8 +3,8 @@ import datetime
 from functools import partial
 
 import pandas as pd
-
 from config import CONFIG
+from data_access.dao_manager import dao_manager
 from utils.market_calendar import (
     latest_market_time,
     market_date_delta,
@@ -15,6 +15,7 @@ min_market_date = market_date_delta(CONFIG["min_date"])
 min_market_ts = int(
     datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp()
 )
+cmp = dao_manager.get_dao("Company")
 
 
 async def find_gaps(current_data, min_gap_size):
@@ -66,15 +67,14 @@ async def find_gaps(current_data, min_gap_size):
 
 
 def adjust_gap(row):
-    # if previous timestamp is a previous day, don't include closed hours in the gap
-    # only adjust if the data is on two separate days
     if row["days_apart"] == 0:
         return row["gap"]
 
-    # Don't count the time outside the market hours
+    # if previous timestamp is a previous day, don't count the time outside the market hours
     # different by day depending on if the market was open or closed
     d1 = row["prev_date"].date()
     d2 = row["date"].date()
+    # Get index of previous and current day from array of all open dates
     i1 = all_open_dates.searchsorted(d1)  # todo memoize
     i2 = all_open_dates.searchsorted(d2)
     if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
@@ -90,15 +90,12 @@ def adjust_gap(row):
     return row["gap"]
 
 
-async def filter_out_past_attempts(db, table, gaps, company_id):
-    table += "Gaps"
-    # Check if gap already in corresponding gaps table
-    ptg = await db(
-        f"SELECT * FROM {table} WHERE company_id =?",
-        params=(company_id,),
-        return_type="DataFrame",
-    )
-    # left anti join gaps and ptg
+async def filter_out_past_attempts(table, gaps, company_id):
+    gap_table = table + "Gap"
+    # Check if gap already in corresponding gap table
+    # ptg = previously tried gaps
+    ptg = await dao_manager.get_dao(gap_table).get(company_id=company_id)
+    # left anti join gap and ptg
     gaps = pd.merge(gaps, ptg, on=["start", "end"], how="outer", indicator=True)
     gaps = gaps[gaps["_merge"] == "left_only"].drop("_merge", axis=1)
     return gaps
@@ -106,7 +103,6 @@ async def filter_out_past_attempts(db, table, gaps, company_id):
 
 async def fill_gap(
     client,
-    db,
     table,
     get_data_func,
     save_data_func: callable,
@@ -117,16 +113,15 @@ async def fill_gap(
     print("STARTING API CALL")
     data = await get_data_func(client, cpy["symbol"], int(start), int(end))
 
-    # save_new_data returns the number of rows inserted, so if it's 0,...
-    # we don't want to try the gap again. We save the record of our attempt here
-    if not data or not await save_data_func(db, data):
-        query = f"INSERT INTO {table}Gaps (company_id, start, end) VALUES (?, ?, ?);"
-        await db(query, (cpy["id"], start, end))
+    # save_new_data returns the number of rows inserted, so if it's 0,
+    #   we don't want to try this gap again. We save the record of our attempt here
+    if not data or not await save_data_func(data):
+        gap_table = f"{table}Gap"
+        await dao_manager.get_dao(gap_table).insert((cpy["id"], start, end))
 
 
 async def fill_gaps(
     client,
-    db,
     table: str,
     load_data_func: callable,
     get_data_func: callable,
@@ -135,16 +130,16 @@ async def fill_gaps(
     min_gap_size=1800,
 ):
     if not companies:
-        companies = await db("SELECT * FROM Companies;", return_type="DataFrame")
+        companies = await cmp.get_all()
     tasks = []
     for _, cpy in companies.iterrows():
-        current_data = await load_data_func(db, cpy["id"], min_market_ts)
+        current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size)
-        gaps = await filter_out_past_attempts(db, table, gaps, cpy["id"])
+        gaps = await filter_out_past_attempts(table, gaps, cpy["id"])
         for _, gap in gaps.iterrows():
             # Create a task for each gap handling
             task = asyncio.create_task(
-                fill_gap(client, db, table, get_data_func, save_data_func, cpy, gap)
+                fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
             )
             tasks.append(task)
             print("TASK CREATED FOR GAP")
