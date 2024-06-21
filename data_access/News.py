@@ -13,9 +13,9 @@ class News(BaseDAO):
     ) -> pd.DataFrame:
         query = f"""
         SELECT timestamp
-        FROM News INNER JOIN NewsCompaniesLink
-        ON News.id = NewsCompaniesLink.news_id
-        WHERE NewsCompaniesLink.company_id =? AND News.timestamp >?;
+        FROM News INNER JOIN NewsCompanyLink
+        ON News.id = NewsCompanyLink.news_id
+        WHERE NewsCompanyLink.company_id =? AND News.timestamp >?;
         """
 
         data = await self.db(

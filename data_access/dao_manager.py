@@ -1,6 +1,7 @@
 # daos_singleton.py
 import os
 from importlib import import_module
+from icecream import ic
 
 from config import CONFIG
 
@@ -34,6 +35,8 @@ class DAOManager:
             else:
                 dao_class = getattr(import_module(f"data_access.{table}"), table)
                 self.daos[table] = dao_class(self.db)
+
+        ic(self.daos)
 
     def get_dao(self, dao_name):
         return self.daos.get(dao_name)

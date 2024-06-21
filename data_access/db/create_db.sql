@@ -1,5 +1,5 @@
--- Companies Table
-CREATE TABLE Companies (
+-- Company Table
+CREATE TABLE Company (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT,
   symbol TEXT UNIQUE NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE TradingData (
   vw_average REAL,
   volume INTEGER,
   UNIQUE (company_id, timestamp),
-  FOREIGN KEY(company_id) REFERENCES Companies(id)
+  FOREIGN KEY(company_id) REFERENCES Company(id)
 );
 
 -- Reddit Table
@@ -31,11 +31,11 @@ CREATE TABLE Reddit (
   score INTEGER
 );
 
--- RedditCompaniesLink Table
-CREATE TABLE RedditCompaniesLink (
+-- RedditCompanyLink Table
+CREATE TABLE RedditCompanyLink (
   company_id INTEGER,
   reddit_id INTEGER,
-  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  FOREIGN KEY(company_id) REFERENCES Company(id),
   FOREIGN KEY(reddit_id) REFERENCES Reddit(id),
   UNIQUE (company_id, reddit_id)
 );
@@ -50,20 +50,20 @@ CREATE TABLE News (
   UNIQUE (source, title, timestamp)
 );
 
--- NewsCompaniesLink Table
-CREATE TABLE NewsCompaniesLink (
+-- NewsCompanyLink Table
+CREATE TABLE NewsCompanyLink (
   company_id INTEGER,
   news_id TEXT,
-  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  FOREIGN KEY(company_id) REFERENCES Company(id),
   FOREIGN KEY(news_id) REFERENCES News(id),
   UNIQUE (company_id, news_id)
 );
 
-CREATE TABLE NewsGaps (
+CREATE TABLE NewsGap (
   company_id INTEGER,
   start INTEGER,
   end INTEGER,
-  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  FOREIGN KEY(company_id) REFERENCES Company(id),
   UNIQUE (company_id, start, end)
 );
 
@@ -75,12 +75,12 @@ CREATE TABLE DailyCompanyData (
   value TEXT,
   type TEXT,
   FOREIGN KEY(date) REFERENCES Calendar(date),
-  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  FOREIGN KEY(company_id) REFERENCES Company(id),
   UNIQUE(date, source, company_id)
 );
 
 -- Models Table
-CREATE TABLE Models (
+CREATE TABLE Model (
   id INTEGER PRIMARY KEY,
   name TEXT,
   performance REAL,
@@ -88,14 +88,14 @@ CREATE TABLE Models (
   configuration TEXT  -- JSON stored as text
 );
 
--- Predictions Table
-CREATE TABLE Predictions (
+-- Prediction Table
+CREATE TABLE Prediction (
   model_id INTEGER,
   company_id INTEGER,
   prediction REAL,
   timestamp INTEGER,
-  FOREIGN KEY(model_id) REFERENCES Models(id),
-  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  FOREIGN KEY(model_id) REFERENCES Model(id),
+  FOREIGN KEY(company_id) REFERENCES Company(id),
   UNIQUE (model_id, company_id)
 );
 
@@ -106,11 +106,11 @@ CREATE TABLE Calendar (
   close INTEGER
 );
 
--- Trading Data Gaps
-CREATE TABLE TradingDataGaps (
+-- Trading Data Gap
+CREATE TABLE TradingDataGap (
   company_id INTEGER,
   start INTEGER,
   end INTEGER,
-  FOREIGN KEY(company_id) REFERENCES Companies(id),
+  FOREIGN KEY(company_id) REFERENCES Company(id),
   UNIQUE (company_id, start, end)
 );

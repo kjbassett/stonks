@@ -29,8 +29,21 @@ class BaseDAO:
         query = f"DELETE FROM {self.table_name} WHERE id = ?;"
         return await self.db.execute_query(query, (identifier,))
 
-    async def get(self, identifier: Any) -> Union[pd.DataFrame, List[Tuple]]:
-        query = f"SELECT * FROM {self.table_name} WHERE id = ?;"
+    async def get(
+        self, identifier: Any = None, **kwargs
+    ) -> Union[pd.DataFrame, List[Tuple]]:
+        query = f"SELECT * FROM {self.table_name}"
+        where_clause = []
+        params = []
+        if identifier is not None:
+            where_clause.append("id =?")
+            params.append(identifier)
+        for key, value in kwargs.items():
+            where_clause.append(f"{key} =?")
+            params.append(value)
+
+        query += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""
+
         return await self.db.execute_query(
             query, (identifier,), return_type="DataFrame"
         )
