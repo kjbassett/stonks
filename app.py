@@ -30,6 +30,7 @@ async def create_app():
     @app.route("/start/<plugin>", methods=["POST"])
     async def start(request, plugin):
         print(f"Received request to start {plugin}")
+        print(request.form)
         nonlocal plugins
         if plugin not in plugins:
             return response.json({"error": f"{plugin} not found"})

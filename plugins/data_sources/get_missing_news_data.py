@@ -25,7 +25,7 @@ async def get_data(client, symbol, start, end):
         return news_items["results"]
 
 
-async def save_data(data):
+async def save_data(company_id, data):
     # transform data to match db table
     news_data = []
     n_c_link_data = []

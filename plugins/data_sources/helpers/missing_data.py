@@ -97,7 +97,8 @@ async def filter_out_past_attempts(table, gaps, company_id):
     ptg = await dao_manager.get_dao(gap_table).get(company_id=company_id)
     # left anti join gap and ptg
     gaps = pd.merge(gaps, ptg, on=["start", "end"], how="outer", indicator=True)
-    gaps = gaps[gaps["_merge"] == "left_only"].drop("_merge", axis=1)
+    gaps = gaps[gaps["_merge"] == "left_only"]
+    gaps = gaps[["start", "end"]]
     return gaps
 
 
@@ -115,7 +116,7 @@ async def fill_gap(
 
     # save_new_data returns the number of rows inserted, so if it's 0,
     #   we don't want to try this gap again. We save the record of our attempt here
-    if not data or not await save_data_func(data):
+    if not data or not await save_data_func(cpy["id"], data):
         gap_table = f"{table}Gap"
         await dao_manager.get_dao(gap_table).insert((cpy["id"], start, end))
 
@@ -143,7 +144,6 @@ async def fill_gaps(
             )
             tasks.append(task)
             print("TASK CREATED FOR GAP")
-            print(gap)
     # Wait for all tasks to complete
     print("WAITING FOR TASKS")
     await asyncio.gather(*tasks)

@@ -8,8 +8,8 @@ CREATE TABLE Company (
 
 -- TradingData Table
 CREATE TABLE TradingData (
-  company_id INTEGER,
-  timestamp INTEGER,
+  company_id INTEGER NOT NULL,
+  timestamp INTEGER NOT NULL,
   open REAL,
   high REAL,
   low REAL,

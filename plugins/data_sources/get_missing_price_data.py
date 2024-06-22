@@ -21,10 +21,10 @@ async def get_data(client, symbol, start, end):
     return aggs
 
 
-async def save_data(data):
+async def save_data(company_id, data):
     data = [
         {
-            "company_id": (await cp.get_or_create_company(d["ticker"]))[0],
+            "company_id": company_id,
             "open": d["o"],
             "high": d["h"],
             "low": d["l"],
