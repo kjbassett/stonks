@@ -29,8 +29,10 @@ def create_text_encoder(text_model_name, max_seq_length=512):
 
 # Combine both encoders and define the final model
 def create_combined_model(
-    text_encoder, structured_input_dim, combined_hidden_dim, output_dim
+    text_model_name, structured_input_dim, combined_hidden_dim, output_dim
 ):
+    text_encoder = create_text_encoder(text_model_name)
+
     structured_input = tf.keras.layers.Input(
         shape=(structured_input_dim,), name="structured_input"
     )
@@ -67,15 +69,16 @@ if __name__ == "__main__":
         "The price will increase.",
         "The price will decrease.",
     ] * 300
-    encoded_texts = tokenizer(
+    tokenized_texts = tokenizer(
         texts,
         padding="max_length",
         truncation=True,
         max_length=512,
+        return_attention_mask=True,
         return_tensors="tf",
     )
-    input_ids = encoded_texts["input_ids"]
-    attention_mask = encoded_texts["attention_mask"]
+    input_ids = tokenized_texts["input_ids"]
+    attention_mask = tokenized_texts["attention_mask"]
 
     # Example structured data
     structured_data = np.zeros((len(texts), 10))
@@ -84,12 +87,12 @@ if __name__ == "__main__":
     # Example labels
     labels = np.array([1, 0] * int(len(texts) / 2))
 
-    # Create the text encoder
-    text_encoder = create_text_encoder("bert-base-uncased", max_seq_length=512)
-
     # Create the combined model
     combined_model = create_combined_model(
-        text_encoder, structured_input_dim=10, combined_hidden_dim=128, output_dim=1
+        "bert-base-uncased",
+        structured_input_dim=10,
+        combined_hidden_dim=128,
+        output_dim=1,
     )
 
     # Train the model with the sampled training dataset and validate with the sampled validation dataset
