@@ -15,12 +15,12 @@ def create_text_encoder(text_model_name, max_seq_length=512):
     text_model = TFBertModel.from_pretrained(text_model_name)
     # text_model.trainable = True
     text_outputs = text_model(text_input_ids, attention_mask=text_attention_mask)
-    # (batch_size, sequence_length, hidden_size)[:, 0, :], Gets CLS token which represents the entire sequence
-    text_embeddings = text_outputs[0][:, 0, :]
+    output = tf.keras.layers.Flatten()(text_outputs.last_hidden_state)
+
     # Create a Keras model
     text_encoder = tf.keras.Model(
         inputs=[text_input_ids, text_attention_mask],
-        outputs=text_embeddings,
+        outputs=output,
         name="text_encoder",
     )
 
