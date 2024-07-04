@@ -30,6 +30,7 @@ class AsyncDatabase:
         params: Union[Tuple, List] = (),
         return_type: str = "list",
         many=False,
+        query_type=None,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
         await self.connect()
         if many:  # TODO detect this automatically somehow
@@ -37,7 +38,7 @@ class AsyncDatabase:
         else:
             cursor = await self.conn.execute(query, params)
 
-        if query.strip().upper().startswith("SELECT"):
+        if query.strip().upper().startswith("SELECT") or query_type.upper() == "SELECT":
             result = await cursor.fetchall()
             if return_type == "DataFrame":
                 # get columns from cursor
