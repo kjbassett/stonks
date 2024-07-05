@@ -23,8 +23,23 @@ class DataAggregator(BaseDAO):
         if windows is None:
             windows = [4, 19, 59, 389]
 
-        CTEs = []
+        query = await self.construct_query(company_id, min_timestamp, max_timestamp, avg_close, avg_volume, std_dev,
+                                           windows, news_relative_age_threshold, n_news)
+        print(query)
+        data = await self.db.execute_query(
+            query, query_type="SELECT", return_type="DataFrame"
+        )
 
+        if min_timestamp:
+            data = data[data["timestamp"] >= min_timestamp]
+        if max_timestamp:
+            data = data[data["timestamp"] <= max_timestamp]
+
+        return data
+
+    async def construct_query(self, company_id, min_timestamp, max_timestamp, avg_close, avg_volume, std_dev, windows,
+                              news_relative_age_threshold, n_news):
+        CTEs = []
         columns = [
             "t.company_id",
             "t.timestamp",
@@ -37,7 +52,6 @@ class DataAggregator(BaseDAO):
             "c.symbol",
             "c.industry",
         ]
-
         # Get various statistics over each window
         for window in windows:
             if avg_close:
@@ -54,7 +68,6 @@ class DataAggregator(BaseDAO):
                         (AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {window} PRECEDING AND CURRENT ROW) * 
                         AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {window} PRECEDING AND CURRENT ROW))) AS volatility_{window}"""
                 )
-
         # get n_news columns of the last n news articles before TradingData.timestamp
         ranked_news_joins = []
         for idx in range(1, n_news + 1):
@@ -89,7 +102,6 @@ class DataAggregator(BaseDAO):
                         n.timestamp >= t.timestamp - {news_relative_age_threshold}
                 )"""
             )
-
         # Apply filters if necessary
         where_clause = []
         if company_id:
@@ -102,12 +114,10 @@ class DataAggregator(BaseDAO):
             where_clause.append(f"t.timestamp >= {adjusted_min_timestamp}")
         if max_timestamp:
             where_clause.append(f"t.timestamp <= {max_timestamp}")
-
         CTEs = "WITH " + "\n".join(CTEs) + "\n" if CTEs else ""
         columns = ",\n".join(columns)
         ranked_news_joins = "\n".join(ranked_news_joins) if ranked_news_joins else ""
         where_clause = "WHERE " + " AND ".join(where_clause) if where_clause else ""
-
         query = f"""
         {CTEs}
         SELECT 
@@ -123,17 +133,6 @@ class DataAggregator(BaseDAO):
         ORDER BY 
             t.company_id, t.timestamp;
         """
-        print(query)
-        data = await self.db.execute_query(
-            query, query_type="SELECT", return_type="DataFrame"
-        )
-
-        if min_timestamp:
-            data = data[data["timestamp"] >= min_timestamp]
-        if max_timestamp:
-            data = data[data["timestamp"] <= max_timestamp]
-
-        return data
-
+        return query
 
 # TODO abstract argument None handling, break up into smaller functions
