@@ -1,9 +1,9 @@
 # daos_singleton.py
 import os
 from importlib import import_module
-from icecream import ic
 
 from config import CONFIG
+from icecream import ic
 
 from .base_dao import BaseDAO
 from .db.async_database import AsyncDatabase
@@ -25,16 +25,17 @@ class DAOManager:
         non_base_daos = [
             os.path.splitext(f)[0]
             for f in os.listdir("data_access")
-            if f.endswith(".py")
+            if f.endswith(".py") and f not in ["base_dao.py", "dao_manager.py"]
         ]
 
         all_tables = await self.db.get_all_tables()
+        # Create base data access objects for all tables
         for table in all_tables:
-            if table not in non_base_daos:
-                self.daos[table] = BaseDAO(self.db, table)
-            else:
-                dao_class = getattr(import_module(f"data_access.{table}"), table)
-                self.daos[table] = dao_class(self.db)
+            self.daos[table] = BaseDAO(self.db, table)
+        # Read in any custom data access objects, potentially overwriting the base ones
+        for dao in non_base_daos:
+            dao_class = getattr(import_module(f"data_access.{dao}"), dao)
+            self.daos[dao] = dao_class(self.db)
 
         ic(self.daos)
 
