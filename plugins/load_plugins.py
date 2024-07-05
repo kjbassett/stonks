@@ -90,6 +90,3 @@ def load_plugins(folder="plugins"):
     ic(metadata)
     ic(plugins)
     return metadata, plugins
-
-
-# TODO decide if we want to use the folder structure as the category structure or put in metadata or ?

@@ -3,7 +3,6 @@ from functools import cache
 
 import pandas as pd
 import pandas_market_calendars
-
 from config import CONFIG
 
 
@@ -58,15 +57,13 @@ def get_open_dates(start, end):
 
 
 def latest_market_time(delay=900):
-    # lmt = latest market time
-    # todo check all apis info for latest possible
     # data delayed by 15 minutes, extra 5 minutes buffer
     lmt1 = datetime.datetime.now().timestamp() - delay - 300
 
     lmt2 = last_open_date()
     lmt2 = datetime.datetime.combine(
         lmt2, datetime.time(hour=20)
-    )  # todo check all apis info for latest open hours
+    )
     lmt2 = lmt2.timestamp()
     return int(min(lmt1, lmt2))
 

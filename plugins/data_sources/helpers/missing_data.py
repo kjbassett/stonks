@@ -48,7 +48,7 @@ async def find_gaps(current_data, min_gap_size):
     current_data["gap"] = current_data["timestamp"] - current_data["previous"]
     current_data = current_data.iloc[1:,]
 
-    # Todo filter > gap threshold here as well to speed up apply?
+    # Todo filter < gap threshold here as well to speed up apply? because adjusting gap can only make it smaller
     current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
 
     # gaps ranges are EXCLUSIVE except for dummy timestamps

@@ -46,6 +46,7 @@ class DataAggregator(BaseDAO):
 
         return data
 
+
 def construct_query(
     company_id,
     min_timestamp,
@@ -157,3 +158,4 @@ def construct_query(
 # TODO
 #  Industry one-hot encoding
 #  Reddit data
+#  How to tokenize company in text?
