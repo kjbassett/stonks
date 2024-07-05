@@ -3,7 +3,13 @@ CREATE TABLE Company (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT,
   symbol TEXT UNIQUE NOT NULL,
-  industry TEXT
+  industry_id INTEGER,
+  FOREIGN KEY(industry_id) REFERENCES Industry(id)
+);
+
+CREATE TABLE Industry (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL
 );
 
 -- TradingData Table
