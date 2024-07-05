@@ -61,9 +61,7 @@ def latest_market_time(delay=900):
     lmt1 = datetime.datetime.now().timestamp() - delay - 300
 
     lmt2 = last_open_date()
-    lmt2 = datetime.datetime.combine(
-        lmt2, datetime.time(hour=20)
-    )
+    lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))
     lmt2 = lmt2.timestamp()
     return int(min(lmt1, lmt2))
 

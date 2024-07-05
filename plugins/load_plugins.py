@@ -38,9 +38,9 @@ def load_plugin_metadata(func):
         arg_info = {
             "name": name,
             "type": str(param.annotation),
-            "default": param.default
-            if param.default is not inspect.Parameter.empty
-            else None,
+            "default": (
+                param.default if param.default is not inspect.Parameter.empty else None
+            ),
         }
         arg_info.update(func.decorator_metadata.get(name, {}))
         metadata["arguments"].append(arg_info)

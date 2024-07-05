@@ -58,6 +58,7 @@ def construct_query(
     news_relative_age_threshold,
     n_news,
 ):
+    # Common table expressions
     CTEs = []
     columns = [
         "t.company_id",
@@ -87,6 +88,7 @@ def construct_query(
                     (AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {window} PRECEDING AND CURRENT ROW) * 
                     AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {window} PRECEDING AND CURRENT ROW))) AS volatility_{window}"""
             )
+
     # get n_news columns of the last n news articles before TradingData.timestamp
     ranked_news_joins = []
     for idx in range(1, n_news + 1):
@@ -126,7 +128,10 @@ def construct_query(
     if company_id:
         where_clause.append(f"t.company_id = {company_id}")
     if min_timestamp:
+        # Adjust the minimum timestamp to allow aggregate functions to work correctly.
+        # Filter with original min_timestamp at the end
         max_window = max(windows) if windows else 0
+        # 28800 is time the market is closed
         adjusted_min_timestamp = (
             min_timestamp - (max_window * 60 + 28800) if min_timestamp else None
         )
