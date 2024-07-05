@@ -46,4 +46,3 @@ class TradingData(BaseDAO):
         return await self.db.execute_query(
             query, (company_id, min_timstamp), return_type="DataFrame"
         )
-

@@ -59,15 +59,17 @@ class DataAggregator(BaseDAO):
         ranked_news_joins = []
         for idx in range(1, n_news + 1):
             columns.append(f"n{idx}.news_id AS news{idx}_id")
+            columns.append(f"n{idx}.timestamp AS news{idx}_timestamp")
             ranked_news_joins.append(
                 f"LEFT JOIN RankedNews n{idx} ON t.company_id = n{idx}.company_id AND t.timestamp = n{idx}.trading_timestamp AND n{idx}.rn = {idx}"
             )
         if ranked_news_joins:
             CTEs.append(
-                """
+                f"""
                 RankedNews AS (
                     SELECT
                         n.id AS news_id,
+                        n.timestamp,
                         t.company_id,
                         t.timestamp AS trading_timestamp,
                         ROW_NUMBER() OVER (PARTITION BY t.company_id, t.timestamp ORDER BY n.timestamp DESC) AS rn
@@ -82,7 +84,9 @@ class DataAggregator(BaseDAO):
                     ON
                         ncl.news_id = n.id
                     AND
-                        n.timestamp < t.timestamp
+                        n.timestamp <= t.timestamp
+                    AND 
+                        n.timestamp >= t.timestamp - {news_relative_age_threshold}
                 )"""
             )
 
