@@ -44,9 +44,7 @@ class BaseDAO:
 
         query += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""
 
-        return await self.db.execute_query(
-            query, (identifier,), return_type="DataFrame"
-        )
+        return await self.db.execute_query(query, params, return_type="DataFrame")
 
     async def get_all(self) -> Union[pd.DataFrame, List[Tuple]]:
         query = f"SELECT * FROM {self.table_name};"
