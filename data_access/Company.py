@@ -8,7 +8,7 @@ class Company(BaseDAO):
         super().__init__(db, "Company")
 
     @alru_cache(maxsize=500)
-    async def get_or_create_company(
+    async def get_or_create_company_id(
         self, symbol: str = None, name: str = None, industry: str = None
     ):
         if not symbol and not name:
@@ -20,13 +20,15 @@ class Company(BaseDAO):
             company = await self.get(name=name)
 
         # if not found, create a new company if symbol is provided
-        if not company:
+        if company.empty:
             if symbol:
-                await self.insert({"symbol": symbol, "name": name, "industry": industry})
+                await self.insert(
+                    {"symbol": symbol, "name": name, "industry": industry}
+                )
                 company = await self.get(symbol=symbol)
             else:
                 raise ValueError(
                     "No company found, and no symbol provided to create new company."
                 )
 
-        return company[0]
+        return company.loc[0, "id"]

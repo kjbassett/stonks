@@ -44,7 +44,7 @@ async def save_data(company_id, data):
         for symbol in d["tickers"]:
             n_c_link_data.append(
                 {
-                    "company_id": (await cmp.get_or_create_company(symbol))[0],
+                    "company_id": await cmp.get_or_create_company(symbol),
                     "news_id": d["id"],
                 }
             )

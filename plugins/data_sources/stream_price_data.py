@@ -12,8 +12,7 @@ from ..decorator import plugin
 async def main(db, companies: list | None = None):
     # incoming data handler
     async def process_and_store_data(data):
-        cpy = await Company(db).get_or_create_company(data["sym"])
-        cid = cpy[0]
+        cid = await Company(db).get_or_create_company(data["sym"])
         data = [
             {
                 "company_id": cid,
