@@ -171,5 +171,7 @@ class DataAggregator(BaseDAO):
 
 # TODO
 #  Industry one-hot encoding
+#   Update query. DONE
+#   Function to fetch company data. Fetch and save during get_or_create_company
 #  Reddit data
 #  How to tokenize company in text?
