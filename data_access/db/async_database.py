@@ -30,7 +30,7 @@ class AsyncDatabase:
         params: Union[Tuple, List] = (),
         return_type: str = "list",
         many=False,
-        query_type=None,
+        query_type="",
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
         await self.connect()
         if many:  # TODO detect this automatically somehow
