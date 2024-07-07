@@ -9,8 +9,15 @@ CREATE TABLE Company (
 
 CREATE TABLE Industry (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT UNIQUE NOT NULL
+  name TEXT UNIQUE NOT NULL,
+  office_id INTEGER NOT NULL,
+  FOREIGN KEY(office_id) REFERENCES IndustryOffice(id)
 );
+
+CREATE TABLE IndustryOffice (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+)
 
 -- TradingData Table
 CREATE TABLE TradingData (
