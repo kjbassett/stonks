@@ -73,12 +73,12 @@ class DataAggregator(BaseDAO):
         ]
 
         # one hot encode each industry
-        industries = await self.db.execute_query(
-            "SELECT * FROM Industry;", return_type="DataFrame"
+        industry_groups = await self.db.execute_query(
+            "SELECT * FROM IndustryOffice;", return_type="DataFrame"
         )
-        for i, row in industries.iterrows():
+        for i, row in industry_groups.iterrows():
             columns.append(
-                f"CASE WHEN (t.industry_id = {row.id}) THEN 1 ELSE 0 END AS industry_{row.name}"
+                f"CASE WHEN (io.id = {row.id}) THEN 1 ELSE 0 END AS industry_{row.name}"
             )
 
         # Get various statistics over each window
@@ -161,6 +161,14 @@ class DataAggregator(BaseDAO):
             Company c
         ON 
             t.company_id = c.id
+        LEFT JOIN 
+            Industry i
+        ON
+            c.industry_id = i.id
+        LEFT JOIN
+            IndustryOffice io
+        ON
+            i.office_id = io.id
         {ranked_news_joins}
         {where_clause}
         ORDER BY 
