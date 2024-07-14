@@ -14,10 +14,12 @@ class BaseDAO:
 
     async def insert(
         self,
-        data: Union[Dict[str, Any], pd.DataFrame, tuple],
+        table: str,
+        data: Union[Dict[str, Any], pd.DataFrame, tuple, list],
         on_conflict: str = "IGNORE",
     ):
-        return await self.db.insert(self.table_name, data, on_conflict=on_conflict)
+        query, params, many = construct_insert_query(table, data, on_conflict)
+        return await self.execute_query(query, params, many=many)
 
     async def update(self, identifier: Any, data: Dict[str, Any]):
         set_clause = ", ".join([f"{key} = ?" for key in data.keys()])
@@ -56,3 +58,78 @@ class BaseDAO:
             f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{self.table_name}';"
         )
         return bool(result)
+
+
+def construct_insert_query(table, data, on_conflict, update_cols: list = None):
+    if isinstance(data, pd.DataFrame):  # data is a DataFrame
+        if data.empty:
+            raise ValueError("Cannot insert an empty DataFrame")
+        columns = " (" + ", ".join(data.columns) + ")"
+        params = [tuple(row) for row in data.values]
+        placeholders = ", ".join(["?"] * len(data.columns))
+        if len(data.index) == 1:
+            params = params[0]
+            many = False
+        else:
+            many = True
+
+    elif isinstance(data, (list, tuple)):
+        if not data:
+            raise ValueError("Cannot insert an empty list or tuple")
+        if isinstance(data[0], (list, tuple)):  # data is list/tuple of lists/tuples
+            columns = ""
+            placeholders = ", ".join(["?"] * len(data[0]))
+            params = data
+            many = True
+        elif isinstance(data[0], dict):  # data is a list/tuple of dicts
+            columns = " (" + ", ".join([key for key in data[0].keys()]) + ")"
+            placeholders = ", ".join(["?"] * len(data[0]))
+            params = [tuple(row.values()) for row in data]
+            many = True
+        else:  # Data is single record in a list or tuple
+            columns = ""
+            placeholders = ", ".join(["?"] * len(data))
+            params = data
+            many = False
+
+    elif isinstance(data, dict):
+        if not data:
+            raise ValueError("Cannot insert an empty dictionary")
+        k = list(data.keys())[0]
+        if isinstance(data[k], (list, tuple)):  # data is a dict of lists or tuple
+            columns = " (" + ", ".join(data.keys()) + ")"
+            placeholders = ", ".join(["?"] * len(data.keys()))
+            params = [
+                tuple(data[k][i] for k in data.keys()) for i in range(len(data[k]))
+            ]
+            if len(data[k]) == 1:
+                params = params[0]
+                many = False
+            else:
+                many = True
+        else:  # data is a dict of a single record
+            columns = " (" + ", ".join(data.keys()) + ")"
+            placeholders = ", ".join(["?"] * len(data.keys()))
+            params = tuple(data.values())
+            many = False
+    else:
+        raise ValueError("Unsupported data type")
+
+    # Handle ON CONFLICT clause
+    if on_conflict == "UPDATE":
+        if update_cols is None:
+            raise ValueError(
+                "update_cols must be provided when on_conflict is 'UPDATE'"
+            )
+        on_conflict_clause = " ON CONFLICT DO UPDATE SET "
+        update_parts = [f"{col} = excluded.{col}" for col in update_cols]
+        on_conflict_clause += ", ".join(update_parts)
+    elif on_conflict == "IGNORE":
+        on_conflict_clause = " ON CONFLICT IGNORE"
+    elif on_conflict is None:
+        on_conflict_clause = ""
+    else:
+        raise NotImplementedError(f"Unsupported on_conflict value: {on_conflict}")
+
+    query = f"INSERT INTO {table}{columns} VALUES ({placeholders}){on_conflict_clause};"
+    return query, params, many
