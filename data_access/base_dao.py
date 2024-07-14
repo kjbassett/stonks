@@ -62,59 +62,21 @@ class BaseDAO:
 
 def construct_insert_query(table, data, on_conflict, update_cols: list = None):
     if isinstance(data, pd.DataFrame):  # data is a DataFrame
-        if data.empty:
-            raise ValueError("Cannot insert an empty DataFrame")
-        columns = " (" + ", ".join(data.columns) + ")"
-        params = [tuple(row) for row in data.values]
-        placeholders = ", ".join(["?"] * len(data.columns))
-        if len(data.index) == 1:
-            params = params[0]
-            many = False
-        else:
-            many = True
-
+        columns, placeholders, params, many = _construct_insert_query_dataframe(data)
     elif isinstance(data, (list, tuple)):
-        if not data:
-            raise ValueError("Cannot insert an empty list or tuple")
-        if isinstance(data[0], (list, tuple)):  # data is list/tuple of lists/tuples
-            columns = ""
-            placeholders = ", ".join(["?"] * len(data[0]))
-            params = data
-            many = True
-        elif isinstance(data[0], dict):  # data is a list/tuple of dicts
-            columns = " (" + ", ".join([key for key in data[0].keys()]) + ")"
-            placeholders = ", ".join(["?"] * len(data[0]))
-            params = [tuple(row.values()) for row in data]
-            many = True
-        else:  # Data is single record in a list or tuple
-            columns = ""
-            placeholders = ", ".join(["?"] * len(data))
-            params = data
-            many = False
-
+        columns, placeholders, params, many = _construct_insert_query_list(data)
     elif isinstance(data, dict):
-        if not data:
-            raise ValueError("Cannot insert an empty dictionary")
-        k = list(data.keys())[0]
-        if isinstance(data[k], (list, tuple)):  # data is a dict of lists or tuple
-            columns = " (" + ", ".join(data.keys()) + ")"
-            placeholders = ", ".join(["?"] * len(data.keys()))
-            params = [
-                tuple(data[k][i] for k in data.keys()) for i in range(len(data[k]))
-            ]
-            if len(data[k]) == 1:
-                params = params[0]
-                many = False
-            else:
-                many = True
-        else:  # data is a dict of a single record
-            columns = " (" + ", ".join(data.keys()) + ")"
-            placeholders = ", ".join(["?"] * len(data.keys()))
-            params = tuple(data.values())
-            many = False
+        columns, placeholders, params, many = _construct_insert_query_dict(data)
     else:
         raise ValueError("Unsupported data type")
 
+    on_conflict_clause = _construct_on_conflict_clause(on_conflict, update_cols)
+
+    query = f"INSERT INTO {table}{columns} VALUES ({placeholders}){on_conflict_clause};"
+    return query, params, many
+
+
+def _construct_on_conflict_clause(on_conflict, update_cols):
     # Handle ON CONFLICT clause
     if on_conflict == "UPDATE":
         if update_cols is None:
@@ -130,6 +92,61 @@ def construct_insert_query(table, data, on_conflict, update_cols: list = None):
         on_conflict_clause = ""
     else:
         raise NotImplementedError(f"Unsupported on_conflict value: {on_conflict}")
+    return on_conflict_clause
 
-    query = f"INSERT INTO {table}{columns} VALUES ({placeholders}){on_conflict_clause};"
-    return query, params, many
+
+def _construct_insert_query_dict(data):
+    if not data:
+        raise ValueError("Cannot insert an empty dictionary")
+    k = list(data.keys())[0]
+    if isinstance(data[k], (list, tuple)):  # data is a dict of lists or tuple
+        columns = " (" + ", ".join(data.keys()) + ")"
+        placeholders = ", ".join(["?"] * len(data.keys()))
+        params = [tuple(data[k][i] for k in data.keys()) for i in range(len(data[k]))]
+        if len(data[k]) == 1:
+            params = params[0]
+            many = False
+        else:
+            many = True
+    else:  # data is a dict of a single record
+        columns = " (" + ", ".join(data.keys()) + ")"
+        placeholders = ", ".join(["?"] * len(data.keys()))
+        params = tuple(data.values())
+        many = False
+    return columns, placeholders, params, many
+
+
+def _construct_insert_query_list(data):
+    if not data:
+        raise ValueError("Cannot insert an empty list or tuple")
+    if isinstance(data[0], (list, tuple)):  # data is list/tuple of lists/tuples
+        columns = ""
+        placeholders = ", ".join(["?"] * len(data[0]))
+        params = data
+        many = True
+    elif isinstance(data[0], dict):  # data is a list/tuple of dicts
+        columns = " (" + ", ".join([key for key in data[0].keys()]) + ")"
+        placeholders = ", ".join(["?"] * len(data[0]))
+        params = [tuple(row.values()) for row in data]
+        many = True
+    else:  # Data is single record in a list or tuple
+        columns = ""
+        placeholders = ", ".join(["?"] * len(data))
+        params = data
+        many = False
+    return columns, placeholders, params, many
+
+
+def _construct_insert_query_dataframe(data):
+    if data.empty:
+        raise ValueError("Cannot insert an empty DataFrame")
+    columns = " (" + ", ".join(data.columns) + ")"
+    placeholders = ", ".join(["?"] * len(data.columns))
+    params = [tuple(row) for row in data.values]
+
+    if len(data.index) == 1:
+        params = params[0]
+        many = False
+    else:
+        many = True
+    return columns, placeholders, params, many
