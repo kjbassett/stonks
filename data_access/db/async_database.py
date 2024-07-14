@@ -55,51 +55,11 @@ class AsyncDatabase:
     async def insert(
         self,
         table: str,
-        data: Union[Dict[str, Any], pd.DataFrame, tuple],
-        skip_existing: bool = True,
+        data: Union[Dict[str, Any], pd.DataFrame, tuple, list],
+        on_conflict: str = None,
     ):
-        if isinstance(data, (dict, tuple)):
-            return await self._insert_single_record(table, data, skip_existing)
-        elif isinstance(data, (pd.DataFrame, list)):
-            return await self._insert_multiple_records(table, data, skip_existing)
-        else:
-            raise ValueError(
-                "Unsupported data type. Use a dictionary, list or DataFrame."
-            )
-
-    async def _insert_single_record(
-        self, table: str, data: Dict[str, Any], skip_existing: bool = True
-    ):
-        if isinstance(data, tuple):
-            columns = ""
-            params = data
-        elif isinstance(data, dict):
-            columns = "(" + ", ".join(data.keys()) + ") "
-            params = tuple(data.values())
-        else:
-            raise ValueError("Unsupported data type. Use a dictionary or tuple.")
-        placeholders = ", ".join(["?"] * len(data))
-        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns}VALUES ({placeholders});"
-        return await self.execute_query(query, params)
-
-    async def _insert_multiple_records(
-        self, table: str, data: Union[pd.DataFrame, list], skip_existing: bool = True
-    ):
-        if isinstance(data, pd.DataFrame):
-            columns = "(" + ", ".join(data.columns) + ") "
-            params = [tuple(row) for row in data.values]
-            placeholders = ", ".join(["?"] * len(data.columns))
-        else:
-            if isinstance(data[0], dict):
-                columns = "(" + ", ".join([key for key in data[0].keys()]) + ") "
-                params = [tuple(row.values()) for row in data]
-            else:  # data is list of tuples
-                columns = ""
-                params = data
-            placeholders = ", ".join(["?"] * len(data[0]))
-
-        query = f"INSERT {'OR IGNORE ' if skip_existing else ''}INTO {table} {columns} VALUES ({placeholders});"
-        return await self.execute_query(query, params, many=True)
+        query, params, many = construct_insert_query(table, data, on_conflict)
+        return await self.execute_query(query, params, many=many)
 
     async def get_all_tables(self):
         result = await self.execute_query(
@@ -113,3 +73,78 @@ class AsyncDatabase:
             f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{table}';"
         )
         return bool(result)
+
+
+def construct_insert_query(table, data, on_conflict, update_cols: list = None):
+    if isinstance(data, pd.DataFrame):  # data is a DataFrame
+        if data.empty:
+            raise ValueError("Cannot insert an empty DataFrame")
+        columns = " (" + ", ".join(data.columns) + ")"
+        params = [tuple(row) for row in data.values]
+        placeholders = ", ".join(["?"] * len(data.columns))
+        if len(data.index) == 1:
+            params = params[0]
+            many = False
+        else:
+            many = True
+
+    elif isinstance(data, (list, tuple)):
+        if not data:
+            raise ValueError("Cannot insert an empty list or tuple")
+        if isinstance(data[0], (list, tuple)):  # data is list/tuple of lists/tuples
+            columns = ""
+            placeholders = ", ".join(["?"] * len(data[0]))
+            params = data
+            many = True
+        elif isinstance(data[0], dict):  # data is a list/tuple of dicts
+            columns = " (" + ", ".join([key for key in data[0].keys()]) + ")"
+            placeholders = ", ".join(["?"] * len(data[0]))
+            params = [tuple(row.values()) for row in data]
+            many = True
+        else:  # Data is single record in a list or tuple
+            columns = ""
+            placeholders = ", ".join(["?"] * len(data))
+            params = data
+            many = False
+
+    elif isinstance(data, dict):
+        if not data:
+            raise ValueError("Cannot insert an empty dictionary")
+        k = list(data.keys())[0]
+        if isinstance(data[k], (list, tuple)):  # data is a dict of lists or tuple
+            columns = " (" + ", ".join(data.keys()) + ")"
+            placeholders = ", ".join(["?"] * len(data.keys()))
+            params = [
+                tuple(data[k][i] for k in data.keys()) for i in range(len(data[k]))
+            ]
+            if len(data[k]) == 1:
+                params = params[0]
+                many = False
+            else:
+                many = True
+        else:  # data is a dict of a single record
+            columns = " (" + ", ".join(data.keys()) + ")"
+            placeholders = ", ".join(["?"] * len(data.keys()))
+            params = tuple(data.values())
+            many = False
+    else:
+        raise ValueError("Unsupported data type")
+
+    # Handle ON CONFLICT clause
+    if on_conflict == "UPDATE":
+        if update_cols is None:
+            raise ValueError(
+                "update_cols must be provided when on_conflict is 'UPDATE'"
+            )
+        on_conflict_clause = " ON CONFLICT DO UPDATE SET "
+        update_parts = [f"{col} = excluded.{col}" for col in update_cols]
+        on_conflict_clause += ", ".join(update_parts)
+    elif on_conflict == "IGNORE":
+        on_conflict_clause = " ON CONFLICT IGNORE"
+    elif on_conflict is None:
+        on_conflict_clause = ""
+    else:
+        raise NotImplementedError(f"Unsupported on_conflict value: {on_conflict}")
+
+    query = f"INSERT INTO {table}{columns} VALUES ({placeholders}){on_conflict_clause};"
+    return query, params, many

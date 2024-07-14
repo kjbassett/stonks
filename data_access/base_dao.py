@@ -15,9 +15,9 @@ class BaseDAO:
     async def insert(
         self,
         data: Union[Dict[str, Any], pd.DataFrame, tuple],
-        skip_existing: bool = True,
+        on_conflict: str = "IGNORE",
     ):
-        return await self.db.insert(self.table_name, data, skip_existing=skip_existing)
+        return await self.db.insert(self.table_name, data, on_conflict=on_conflict)
 
     async def update(self, identifier: Any, data: Dict[str, Any]):
         set_clause = ", ".join([f"{key} = ?" for key in data.keys()])
