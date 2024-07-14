@@ -19,7 +19,7 @@ class BaseDAO:
         on_conflict: str = "IGNORE",
     ):
         query, params, many = construct_insert_query(table, data, on_conflict)
-        return await self.execute_query(query, params, many=many)
+        return await self.db.execute_query(query, params, many=many)
 
     async def update(self, identifier: Any, data: Dict[str, Any]):
         set_clause = ", ".join([f"{key} = ?" for key in data.keys()])
