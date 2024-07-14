@@ -30,7 +30,6 @@ async def create_app():
     @app.route("/start/<plugin>", methods=["POST"])
     async def start(request, plugin):
         print(f"Received request to start {plugin}")
-        print(request.form)
         nonlocal plugins
         if plugin not in plugins:
             return response.json({"error": f"{plugin} not found"})
@@ -41,7 +40,7 @@ async def create_app():
                 await act["task"]
             else:
                 return response.json({"status": f"{plugin} is already running"})
-        act["task"] = asyncio.create_task(act["function"]())
+        act["task"] = asyncio.create_task(act["function"](**request.form))
         print(f"Started {plugin}")
         return response.json({"status": f"{plugin} started"})
 
