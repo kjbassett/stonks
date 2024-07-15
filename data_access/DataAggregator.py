@@ -6,7 +6,7 @@ from .db.async_database import AsyncDatabase
 
 class DataAggregator(BaseDAO):
     def __init__(self, db: AsyncDatabase):
-        super().__init__(db, "")
+        super().__init__(db, "TradingData")
 
     async def get_data(
         self,

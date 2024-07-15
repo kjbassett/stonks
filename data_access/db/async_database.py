@@ -3,6 +3,7 @@ from typing import Tuple, Union, List
 import aiosqlite
 import pandas as pd
 from async_lru import alru_cache
+from icecream import ic
 
 
 class AsyncDatabase:
@@ -32,6 +33,7 @@ class AsyncDatabase:
         many=False,
         query_type="",
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
+        ic(query)
         await self.connect()
         if many:  # TODO detect this automatically somehow
             cursor = await self.conn.executemany(query, params)

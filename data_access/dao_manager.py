@@ -32,10 +32,12 @@ class DAOManager:
         # Create base data access objects for all tables
         for table in all_tables:
             self.daos[table] = BaseDAO(self.db, table)
+            await self.daos[table].init2()
         # Read in any custom data access objects, potentially overwriting the base ones
         for dao in non_base_daos:
             dao_class = getattr(import_module(f"data_access.{dao}"), dao)
             self.daos[dao] = dao_class(self.db)
+            await self.daos[dao].init2()
 
         ic(self.daos)
 

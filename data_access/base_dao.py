@@ -11,14 +11,25 @@ class BaseDAO:
     def __init__(self, db: AsyncDatabase, table_name: str):
         self.db = db
         self.table_name = table_name
+        self.columns = []
+        self.primary_keys = []
+
+    async def init2(
+        self,
+    ):  # separate method for async initialization. Must be called after instantiation
+        await self.get_column_names()
 
     async def insert(
         self,
-        table: str,
         data: Union[Dict[str, Any], pd.DataFrame, tuple, list],
         on_conflict: str = "IGNORE",
+        update_cols: List[str] = None,
     ):
-        query, params, many = construct_insert_query(table, data, on_conflict)
+        if update_cols is None:
+            update_cols = [col for col in self.columns if col not in self.primary_keys]
+        query, params, many = construct_insert_query(
+            self.table_name, data, on_conflict, update_cols
+        )
         return await self.db.execute_query(query, params, many=many)
 
     async def update(self, identifier: Any, data: Dict[str, Any]):
@@ -58,6 +69,17 @@ class BaseDAO:
             f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{self.table_name}';"
         )
         return bool(result)
+
+    async def get_column_names(self) -> List[str]:
+        result = await self.db.execute_query(
+            f"PRAGMA table_info({self.table_name})", query_type="SELECT"
+        )
+        columns = []
+        for row in result:
+            columns.append(row[1])
+            if row[5] != 0:  # primary key
+                self.primary_keys.append(row[1])
+        self.columns = columns
 
 
 def construct_insert_query(table, data, on_conflict, update_cols: list = None):
