@@ -6,6 +6,7 @@ from ..decorator import plugin
 
 reddit_dao = dao_manager.get_dao("Reddit")
 
+
 async def fetch_posts_and_comments(subreddits):
     reddit = asyncpraw.Reddit(
         client_id=get_key("reddit_id"),
@@ -59,43 +60,14 @@ async def save_data(data):
     return
 
 
-@plugin(companies={"ui_element": "textbox", "default": "all"})
-async def main(db, companies=None):
+@plugin()
+async def main():
     """
     test docstring
     """
     # companies not used but keeps standard format for data sources
     subs = ["wallstreetbets", "stocks", "StockMarket", "investing"]
-    await fetch_posts_and_comments(db, subs)
+    await fetch_posts_and_comments(subs)
 
 
-"""
-re.findall(r"(?<=\$)\w+|[A-Z]{3,6}", text):  # magic
-buy_words = [
-    "ape",
-    "buy",
-    "bull",
-    "up",
-    "increase",
-    "green",
-    "top",
-    "safe",
-    "yolo",
-    "buying",
-    "increasing",
-]
-sell_words = [
-    "sell",
-    "bear",
-    "down",
-    "decrease",
-    "red",
-    "pump",
-    "dump",
-    "selling",
-    "decreasing",
-    "pumping",
-    "dumping",
-]
-negate_words = ["not", "never", "n't", "no"]
-"""
+# re.findall(r"(?<=\$)\w+|[A-Z]{3,6}", text):  # magic
