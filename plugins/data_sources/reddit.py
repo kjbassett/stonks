@@ -1,10 +1,12 @@
 import asyncpraw
-
+from data_access.dao_manager import dao_manager
 from utils.project_utilities import get_key
+
 from ..decorator import plugin
 
+reddit_dao = dao_manager.get_dao("Reddit")
 
-async def fetch_posts_and_comments(db, subreddits):
+async def fetch_posts_and_comments(subreddits):
     reddit = asyncpraw.Reddit(
         client_id=get_key("reddit_id"),
         client_secret=get_key("reddit_secret"),
@@ -28,20 +30,11 @@ async def fetch_posts_and_comments(db, subreddits):
                 data.append(second_level_comment)
 
         # Save submission data to the database
-        await save_data(db, data)
+        await save_data(data)
     await reddit.close()
 
 
-async def save_data(db, data):
-    query = """
-    INSERT INTO Reddit 
-        VALUES (?, ?, ?, ?, ?, ?, ?) 
-        ON CONFLICT (id) DO 
-            UPDATE SET 
-                body = excluded.body,
-                author_id = excluded.author_id, 
-                score = excluded.score;
-    """
+async def save_data(data):
     params = []
     await data[0].subreddit.load()
     sub = data[0].subreddit.display_name
@@ -62,7 +55,7 @@ async def save_data(db, data):
             author_id = None
         params.append((d.id, sub, d.parent_id, None, d.body, author_id, d.score))
 
-    await db.execute_query(query, params, many=True)
+    await reddit_dao.insert(params, on_conflict="UPDATE")
     return
 
 
