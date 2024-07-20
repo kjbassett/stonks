@@ -34,7 +34,6 @@ class DataAggregator(BaseDAO):
             news_relative_age_threshold,
             n_news,
         )
-        print(query)
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame"
         )
@@ -77,8 +76,9 @@ class DataAggregator(BaseDAO):
             "SELECT * FROM IndustryOffice;", return_type="DataFrame"
         )
         for i, row in industry_groups.iterrows():
+            name = row["name"].replace(" ", "_").replace("&", "and")
             columns.append(
-                f"CASE WHEN (io.id = {row.id}) THEN 1 ELSE 0 END AS industry_{row.name}"
+                f"CASE WHEN (io.id = {row.id}) THEN 1 ELSE 0 END AS industry_{name}"
             )
 
         # Get various statistics over each window
