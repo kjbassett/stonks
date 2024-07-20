@@ -25,6 +25,7 @@ class BaseDAO:
         on_conflict: str = "IGNORE",
         update_cols: List[str] = None,
     ):
+        # If there is a conflict and on_conflict is UPDATE, then udpate_cols is used
         if update_cols is None:
             update_cols = [col for col in self.columns if col not in self.primary_keys]
         query, params, many = construct_insert_query(
