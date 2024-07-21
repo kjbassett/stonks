@@ -7,15 +7,7 @@ from ..decorator import plugin
 reddit_dao = dao_manager.get_dao("Reddit")
 
 
-async def fetch_posts_and_comments(subreddits):
-    reddit = asyncpraw.Reddit(
-        client_id=get_key("reddit_id"),
-        client_secret=get_key("reddit_secret"),
-        password=get_key("reddit_password"),
-        user_agent="stonks",
-        username=get_key("reddit_username"),
-    )
-
+async def fetch_posts_and_comments(reddit, subreddits):
     subreddits = await reddit.subreddit("+".join(subreddits))
     i = 0
     async for submission in subreddits.top(time_filter="hour"):
@@ -32,7 +24,6 @@ async def fetch_posts_and_comments(subreddits):
 
         # Save submission data to the database
         await save_data(data)
-    await reddit.close()
 
 
 async def save_data(data):
@@ -57,7 +48,6 @@ async def save_data(data):
         params.append((d.id, sub, d.parent_id, None, d.body, author_id, d.score))
 
     await reddit_dao.insert(params, on_conflict="UPDATE")
-    return
 
 
 @plugin()
@@ -65,9 +55,18 @@ async def main():
     """
     test docstring
     """
-    # companies not used but keeps standard format for data sources
     subs = ["wallstreetbets", "stocks", "StockMarket", "investing"]
-    await fetch_posts_and_comments(subs)
+
+    reddit = asyncpraw.Reddit(
+        client_id=get_key("reddit_id"),
+        client_secret=get_key("reddit_secret"),
+        password=get_key("reddit_password"),
+        user_agent="stonks",
+        username=get_key("reddit_username"),
+    )
+
+    await fetch_posts_and_comments(reddit, subs)
+    await reddit.close()
 
 
 # re.findall(r"(?<=\$)\w+|[A-Z]{3,6}", text):  # magic
