@@ -41,7 +41,9 @@ CREATE TABLE Reddit (
   title TEXT,
   body TEXT,  -- Content of the post
   author_id TEXT,
-  score INTEGER
+  score INTEGER,
+  timestamp INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0
 );
 
 -- RedditCompanyLink Table
