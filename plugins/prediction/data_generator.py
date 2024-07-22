@@ -3,29 +3,26 @@ import asyncio
 import numpy as np
 import pandas as pd
 from data_access.dao_manager import dao_manager
-from plugins.decorator import plugin
 from transformers import BertTokenizer
 
+data_dao = dao_manager.get_dao("DataAggregator")
 news_dao = dao_manager.get_dao("News")
 
 
 # We don't use a generator that inherits Sequence because we are relying on asynchronous db operations for each batch
 class DataGenerator:
-    def __init__(self, data, batch_size=32, max_length=512, shuffle=True):
+    def __init__(self, data, batch_size=32, max_text_length=512, shuffle_data=True):
         self.data = data
         self.data["target"] = 1  # delete me later!
         self.batch_size = batch_size
-        self.max_length = max_length
+        self.max_text_length = max_text_length
         self.shuffle = shuffle
         self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-        if shuffle:
-            self.shuffle_data()
+        if shuffle_data:
+            self.data = shuffle(self.data)
 
     def __len__(self):
         return int(np.floor(len(self.data) / self.batch_size))
-
-    def shuffle_data(self):
-        self.data = self.data.sample(frac=1).reset_index(drop=True)
 
     def encode_texts(self, texts):
         result = []
@@ -33,7 +30,7 @@ class DataGenerator:
             encoded = self.tokenizer.encode_plus(
                 text,
                 add_special_tokens=True,
-                max_length=self.max_length,
+                max_length=self.max_text_length,
                 padding="max_length",
                 truncation=True,
                 return_attention_mask=True,
@@ -58,6 +55,10 @@ class DataGenerator:
         X = np.hstack([encoded_text, structured_data])
         y = batch_data["target"].values
         return X, y
+
+
+def shuffle(data):
+    return data.sample(frac=1).reset_index(drop=True)
 
 
 async def fetch_all_news(batch_data, news_columns):
@@ -91,12 +92,15 @@ def _get_news_columns(batch_data):
     return news_columns
 
 
-@plugin()
-async def main():
-    structured_dao = dao_manager.get_dao("DataAggregator")
-    _data = await structured_dao.get_data()
-    data_generator = DataGenerator(_data)
-    for i in range(len(data_generator)):
-        X, y = await data_generator.load_batch(i)
-        print(X)
-        print(y)
+def create_generators(batch_size, max_text_length):
+    data = data_dao.get_data()
+    data = shuffle(data)
+    train = data.loc[: int(0.8 * len(data))]
+    test = data.loc[int(0.8 * len(data)) :]
+    train_generator = DataGenerator(
+        train, batch_size=batch_size, max_text_length=max_text_length, shuffle_data=True
+    )
+    test_generator = DataGenerator(
+        test, batch_size=len(test.index), max_text_length=max_text_length
+    )
+    return train_generator, test_generator
