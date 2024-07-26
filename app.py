@@ -27,47 +27,55 @@ async def create_app():
         nonlocal plugins
         return jinja.render("control_panel.html", request, metadata=metadata)
 
-    @app.route("/start/<plugin>", methods=["POST"])
-    async def start(request, plugin):
-        print(f"Received request to start {plugin}")
+    @app.route("/start/<plugin_name>", methods=["POST"])
+    async def start(request, plugin_name):
+        print(f"Received request to start {plugin_name}")
         nonlocal plugins
-        if plugin not in plugins:
-            return response.json({"error": f"{plugin} not found"})
+        if plugin_name not in plugins:
+            return response.json({"error": f"{plugin_name} not found"})
         print("Found plugin")
-        act = plugins[plugin]
-        if act["task"]:
-            if act["task"].done():
-                await act["task"]
-            else:
-                return response.json({"status": f"{plugin} is already running"})
-        act["task"] = asyncio.create_task(act["function"](**request.form))
-        print(f"Started {plugin}")
-        return response.json({"status": f"{plugin} started"})
+        plugin = plugins[plugin_name]
+        if plugin["task"]:
+            return response.json({"status": f"{plugin_name} is already running"})
+        plugin["task"] = asyncio.create_task(plugin["function"](**request.form))
+        plugin["task"].add_done_callback(complete_callback(plugin))
+        print(f"Started {plugin_name}")
+        return response.json({"status": f"{plugin_name} started"})
 
-    @app.route("/stop/<plugin>")
-    async def stop(request, plugin):
+    @app.route("/stop/<plugin_name>")
+    async def stop(request, plugin_name):
         nonlocal plugins
-        if plugin not in plugins:
-            return response.json({"error": f"{plugin} not found"})
-        act = plugins[plugin]
-        if not act["task"]:
-            return response.json({"status": f"{plugin} has not started"})
-        if act["task"].done():
-            return response.json({"status": f"{plugin} is already finished"})
-        act["task"].cancel()
-        return response.json({"status": f"{plugin} stopped"})
+        if plugin_name not in plugins:
+            return response.json({"error": f"{plugin_name} not found"})
+        plugin = plugins[plugin_name]
+        if not plugin["task"]:
+            return response.json({"status": f"{plugin_name} has not started"})
+        if plugin["task"].done():
+            return response.json({"status": f"{plugin_name} is already finished"})
+        plugin["task"].cancel()
+        return response.json({"status": f"{plugin_name} stopped"})
 
-    @app.route("/status/<plugin>")
-    async def status(request, plugin):
+    @app.route("/status/<plugin_name>")
+    async def status(request, plugin_name):
         nonlocal plugins
-        if plugin not in plugins:
-            return response.json({"error": f"{plugin} not found"})
-        act = plugins[plugin]
-        if not act["task"]:
+        if plugin_name not in plugins:
+            return response.json({"error": f"{plugin_name} not found"})
+        plugin = plugins[plugin_name]
+        if not plugin["task"]:
             return response.json({"running": False})
-        if act["task"].done():
-            return response.json({"running": False, "result": act["task"].result()})
+        if plugin["task"].done():
+            return response.json({"running": False, "result": plugin["task"].result()})
         else:
             return response.json({"running": True})
 
     return app
+
+
+def complete_callback(plugin):
+    def callback(task):
+        result = task.result()
+        print(f"Finished {plugin['function'].__name__}")
+        print(f"Result: {result}")
+        plugin["task"] = None
+
+    return callback
