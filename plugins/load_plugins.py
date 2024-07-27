@@ -1,6 +1,7 @@
 import importlib
 import inspect
 import os
+import types
 
 from icecream import ic
 
@@ -29,15 +30,19 @@ def load_plugin_metadata(func):
         "name": func.__name__,
         "doc": func.__doc__,
         "arguments": [],
-        "return_type": str(signature.return_annotation),
+        "return_type": str(signature.return_annotation.__name__),
     }
 
     metadata.update(func.decorator_metadata)
 
     for name, param in signature.parameters.items():
+        if isinstance(param.annotation, types.UnionType):
+            _type = "any"
+        else:
+            _type = param.annotation.__name__
         arg_info = {
             "name": name,
-            "type": str(param.annotation),
+            "type": _type,
             "default": (
                 param.default if param.default is not inspect.Parameter.empty else None
             ),
@@ -49,9 +54,8 @@ def load_plugin_metadata(func):
 
 
 def load_plugins(folder="plugins"):
-    metadata = (
-        {}
-    )  # Matches folder structure of plugin folder and holds metadata for each plugin. Used for webpage
+    # metadata matches folder structure of plugin folder and holds metadata for each plugin. Used for webpage
+    metadata = {}
     plugins = {}  # dict of plugin functions
 
     for root, dirs, files in os.walk(folder):
