@@ -1,4 +1,5 @@
 import tensorflow as tf
+from plugins.decorator import plugin
 from transformers import TFBertModel
 
 
@@ -9,15 +10,16 @@ def get_text_embedding(text_model, input_ids, attention_mask):
     return tf.keras.layers.Flatten()(last_hidden_state)
 
 
-# Combine both encoders and define the final model
+@plugin()
 def create_combined_model(
-    text_model_name,
-    num_texts,
-    structured_input_dim,
-    combined_hidden_dim,
-    output_dim,
-    output_activation="sigmoid",
-    dropout_rate=0.3,
+    model_name: str,
+    num_texts: str,
+    structured_input_dim: int,
+    combined_hidden_dim: int,
+    output_dim: int,
+    text_model_name: str = "bert-base-uncased",
+    output_activation: str = "sigmoid",
+    dropout_rate: float = 0.3,
 ):
     text_encoder = TFBertModel.from_pretrained(text_model_name)
 
@@ -65,5 +67,7 @@ def create_combined_model(
     model = tf.keras.Model(inputs=input_layer, outputs=output)
     model.summary()
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+
+    model.save(f"{model_name}.h5")
 
     return model
