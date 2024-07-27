@@ -92,8 +92,32 @@ def _get_news_columns(batch_data):
     return news_columns
 
 
-def create_generators(batch_size, max_text_length):
-    data = data_dao.get_data()
+def create_generators(
+    batch_size,
+    max_text_length,
+    company_id: int = None,
+    min_timestamp: int = None,
+    max_timestamp: int = None,
+    avg_close: bool = True,
+    avg_volume: bool = True,
+    std_dev: bool = True,
+    windows: iter = None,
+    n_news: int = 3,
+    news_relative_age_threshold: int = 24 * 60 * 60,
+) -> pd.DataFrame:
+    if windows is None:
+        windows = [4, 19, 59, 389]
+    data = data_dao.get_data(
+        company_id,
+        min_timestamp,
+        max_timestamp,
+        avg_close,
+        avg_volume,
+        std_dev,
+        windows,
+        n_news,
+        news_relative_age_threshold,
+    )
     data = shuffle(data)
     train = data.loc[: int(0.8 * len(data))]
     test = data.loc[int(0.8 * len(data)) :]

@@ -21,8 +21,7 @@ class DataAggregator(BaseDAO):
         news_relative_age_threshold: int = 24 * 60 * 60,
     ) -> pd.DataFrame:
         if windows is None:
-            windows = [4, 19, 59, 389]
-
+            windows = []
         query = await self.construct_query(
             company_id,
             min_timestamp,
