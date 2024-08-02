@@ -51,11 +51,15 @@ async def find_gaps(current_data, min_gap_size):
     # Todo filter < gap threshold here as well to speed up apply? because adjusting gap can only make it smaller
     current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
 
-    # gaps ranges are EXCLUSIVE except for dummy timestamps
-    # This seems dangerous since we are saving timestamps and retrieving them later
+    # We choose to save a previously fetched time range in TradingDataGaps and NewsDataGaps table IF there were NO
+    # results in the time range, so we can't include any row from current_data because we know there is data.
+    # In other words, we might query the API and get no data BETWEEN t1 and t2, but we got data at timestamps t1 and t2.
+    # So the gap isn't saved when it should have been.
+    # ^ To fix this, we want to query for a time range of (t1 + 60, t2 - 60) unless either t1 or t2 are dummy timestamps
+
     current_data.reset_index(drop=True, inplace=True)
-    current_data.loc[1:, "previous"] += 60
-    current_data.loc[: len(current_data) - 1, "timestamp"] -= 60
+    current_data.loc[1:, "previous"] += 60  # see comments above
+    current_data.loc[: len(current_data) - 1, "timestamp"] -= 60  # see comments above
 
     gaps = current_data[
         current_data["gap"] > min_gap_size
@@ -83,8 +87,7 @@ def adjust_gap(row):
         raise ValueError(f"{d2} is not in {all_open_dates}")
     open_days = i2 - i1
     closed = row["days_apart"] - open_days
-    # 28800 is the time between the end of one market day and the start of another.
-    # 4 hrs after 8 pm and 4 hours before 4am is 8 hours * 3600 = 28800
+    # 28800 is the time between the end of one market day and the start of another. 8pm to 4am = 8 hours * 3600 = 28800
     # 86400 is number of seconds in a day
     row["gap"] = row["gap"] - 28800 * open_days - 86400 * closed
     return row["gap"]
@@ -127,11 +130,15 @@ async def fill_gaps(
     load_data_func: callable,
     get_data_func: callable,
     save_data_func: callable,
-    companies: pd.DataFrame,
+    companies: str,
     min_gap_size=1800,
 ):
-    if not companies:
+    if not companies or companies == "all":
         companies = await cmp.get_all()
+    else:
+        companies = companies.replace(" ", "").split(",")
+        companies = pd.DataFrame({"symbol": companies})
+    # TODO some function that takes a list of tickers and gives a dataframe of companies, fetches new if necessary
     tasks = []
     for _, cpy in companies.iterrows():
         current_data = await load_data_func(cpy["id"], min_market_ts)
