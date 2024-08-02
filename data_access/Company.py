@@ -20,7 +20,7 @@ class Company(BaseDAO):
             company = await self.get(name=name)
 
         # if not found, create a new company if symbol is provided
-        if company.empty:
+        if not company or company.empty:
             if symbol:
                 await self.insert(
                     {"symbol": symbol, "name": name, "industry_id": industry_id}
