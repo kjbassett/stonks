@@ -50,11 +50,23 @@ class BaseDAO:
         where_clause = []
         params = []
         if identifier is not None:
-            where_clause.append("id =?")
-            params.append(identifier)
+            if isinstance(identifier, (list, tuple)):
+                where_clause.append(
+                    "id IN ({})".format(", ".join("?" * len(identifier)))
+                )
+                params.extend(identifier)
+            else:
+                where_clause.append("id =?")
+                params.append(identifier)
         for key, value in kwargs.items():
-            where_clause.append(f"{key} =?")
-            params.append(value)
+            if isinstance(value, (list, tuple)):
+                where_clause.append(
+                    "{} IN ({})".format(key, ", ".join("?" * len(value)))
+                )
+                params.extend(value)
+            else:
+                where_clause.append(f"{key} =?")
+                params.append(value)
 
         query += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""
 
