@@ -24,8 +24,7 @@ async def handle_result(result):
     await cpy.insert(result, on_conflict="UPDATE")
 
 
-@plugin(companies={"ui_element": "textbox", "default": "all"})
-async def get_ticker_details(companies):
+async def _get_ticker_details(companies):
     async with AsyncReferenceClient(get_key("polygon_io"), True) as client:
         companies = [c.strip() for c in companies[0].split(",")]
         tasks = []
@@ -34,3 +33,18 @@ async def get_ticker_details(companies):
         for task in tasks:
             result = await task
             await handle_result(result)
+
+
+@plugin()
+async def get_ticker_details(companies: str = "all", skip_existing=True):
+    companies = [c.strip() for c in companies[0].split(",")]
+
+    # if skip_existing is True, only get companies that aren't in current_companies dataframe
+    if skip_existing:
+        current_companies = await cpy.get(symbol=companies)
+        # drop rows with any null values from current_companies dataframe
+        current_companies = current_companies.dropna()
+        current_companies = current_companies["symbol"].tolist()
+        companies = [c for c in companies if c not in current_companies]
+
+    await _get_ticker_details(companies)
