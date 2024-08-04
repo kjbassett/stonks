@@ -5,6 +5,7 @@ from functools import partial
 import pandas as pd
 from config import CONFIG
 from data_access.dao_manager import dao_manager
+from plugins.data_sources.tickers import get_ticker_details
 from utils.market_calendar import (
     latest_market_time,
     market_date_delta,
@@ -133,12 +134,7 @@ async def fill_gaps(
     companies: str,
     min_gap_size=1800,
 ):
-    if not companies or companies == "all":
-        companies = await cmp.get_all()
-    else:
-        companies = companies.replace(" ", "").split(",")
-        companies = pd.DataFrame({"symbol": companies})
-    # TODO some function that takes a list of tickers and gives a dataframe of companies, fetches new if necessary
+    companies = await get_ticker_details(companies)
     tasks = []
     for _, cpy in companies.iterrows():
         current_data = await load_data_func(cpy["id"], min_market_ts)

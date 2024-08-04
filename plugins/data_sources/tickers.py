@@ -1,5 +1,6 @@
 import asyncio
 
+import pandas as pd
 from data_access.dao_manager import dao_manager
 from polygon.reference_apis.reference_api import AsyncReferenceClient
 from utils.project_utilities import get_key
@@ -22,11 +23,11 @@ def convert_result(result):
 async def handle_result(result):
     result = convert_result(result)
     await cpy.insert(result, on_conflict="UPDATE")
+    return result
 
 
-async def _get_ticker_details(companies):
+async def _get_ticker_details(companies: list):
     async with AsyncReferenceClient(get_key("polygon_io"), True) as client:
-        companies = [c.strip() for c in companies[0].split(",")]
         tasks = []
         for company in companies:
             tasks.append(asyncio.create_task(client.get_ticker_details(company)))
@@ -36,15 +37,18 @@ async def _get_ticker_details(companies):
 
 
 @plugin()
-async def get_ticker_details(companies: str = "all", skip_existing=True):
+async def get_ticker_details(companies: str = "all"):
+    if not companies or companies == "all":
+        return await cpy.get_all()
     companies = [c.strip() for c in companies[0].split(",")]
 
-    # if skip_existing is True, only get companies that aren't in current_companies dataframe
-    if skip_existing:
-        current_companies = await cpy.get(symbol=companies)
-        # drop rows with any null values from current_companies dataframe
-        current_companies = current_companies.dropna()
-        current_companies = current_companies["symbol"].tolist()
-        companies = [c for c in companies if c not in current_companies]
+    # only get companies that aren't already in db
+    current_companies = await cpy.get(symbol=companies)
+    # drop rows with any null values from current_companies dataframe
+    current_companies = current_companies.dropna()
+    companies = [c for c in companies if c not in current_companies["symbol"].tolist()]
 
     await _get_ticker_details(companies)
+    companies = await cpy.get(symbol=companies)
+    companies = pd.concat([current_companies, companies])
+    return companies
