@@ -122,7 +122,7 @@ def _construct_on_conflict_clause(on_conflict, update_cols):
         update_parts = [f"{col} = excluded.{col}" for col in update_cols]
         on_conflict_clause += ", ".join(update_parts)
     elif on_conflict == "IGNORE":
-        on_conflict_clause = " ON CONFLICT IGNORE"
+        on_conflict_clause = " ON CONFLICT DO NOTHING"
     elif on_conflict is None:
         on_conflict_clause = ""
     else:

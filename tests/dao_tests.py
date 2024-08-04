@@ -143,7 +143,7 @@ class TestConstructInsertQuery(unittest.TestCase):
         on_conflict = "IGNORE"
         query, params, many = construct_insert_query(table, data, on_conflict)
 
-        expected_query = "INSERT INTO test_table (column1, column2) VALUES (?, ?) ON CONFLICT IGNORE;"
+        expected_query = "INSERT INTO test_table (column1, column2) VALUES (?, ?) ON CONFLICT DO NOTHING;"
         expected_params = (1, "a")
 
         self.assertEqual(expected_query, query)

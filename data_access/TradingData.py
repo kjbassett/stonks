@@ -42,7 +42,7 @@ class TradingData(BaseDAO):
     async def get_timestamps_by_company(
         self, company_id: int, min_timstamp: int = 0
     ) -> pd.DataFrame:
-        query = f"SELECT timestamp FROM {self.table_name} WHERE t.company_id =? AND timestamp >=? ORDER BY timestamp ASC;"
+        query = f"SELECT timestamp FROM {self.table_name} WHERE company_id =? AND timestamp >=? ORDER BY timestamp ASC;"
         return await self.db.execute_query(
             query, (company_id, min_timstamp), return_type="DataFrame"
         )
