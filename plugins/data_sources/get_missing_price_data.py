@@ -40,8 +40,8 @@ async def save_data(company_id, data):
     return n
 
 
-@plugin(companies={"ui_element": "textbox", "default": "all"})
-async def main(companies=None):
+@plugin()
+async def main(companies: str = "all"):
     try:
         async with StocksClient(get_key("polygon_io"), True) as client:
             await fill_gaps(
