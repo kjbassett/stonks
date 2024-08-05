@@ -1,0 +1,16 @@
+pandas
+pandas_market_calendars
+icecream
+polygon
+requests
+sanic
+websockets
+sanic_jinja2
+numpy
+urllib3
+python-dateutil
+asyncpraw
+async-lru
+websocket-client==1.2.0
+tensorflow<2.11
+transformers
