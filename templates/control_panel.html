@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Control Panel</title>
-    <link rel="stylesheet" type="text/css" href="control_panel.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='control_panel.css') }}">
 </head>
 <body>
 
@@ -15,7 +15,7 @@
                     {% if arg['ui_element'] == 'textbox' %}
                         <input type="text" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
                                value="{{ arg.default }}"
-                               min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %} DO IT LIKE DIS
+                               min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %}
                                max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
                                required="{{ 'required' if arg.required else 'optional' }}">
                     {% elif arg['ui_element'] == 'slider' %}

@@ -8,6 +8,7 @@ from sanic_jinja2 import SanicJinja2
 
 async def create_app():
     app = Sanic("Stonks")
+    app.static("/static", "./static")
     await dao_manager.initialize()
 
     print("CREATING APP")
