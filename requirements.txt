@@ -6,7 +6,7 @@ requests
 sanic
 websockets
 sanic_jinja2
-numpy
+numpy==1.26.4
 urllib3
 python-dateutil
 asyncpraw
