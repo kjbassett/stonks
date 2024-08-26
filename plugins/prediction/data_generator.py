@@ -56,14 +56,16 @@ class DataGenerator:
             # fetch
             task = asyncio.create_task(fetch_news([row[col]]))
             # encode
-            task.add_done_callback(lambda future: self.encode_text(future.result(), name, symbol))
+            task.add_done_callback(
+                lambda future: self.encode_text(future.result(), name, symbol)
+            )
             tasks.append(task)
 
         encoded_texts = []
         for task in tasks:
             enc_text = await task
-            encoded_texts.append(enc_text['input_ids'])
-            encoded_texts.append(enc_text['attention_mask'])
+            encoded_texts.append(enc_text["input_ids"])
+            encoded_texts.append(enc_text["attention_mask"])
         return np.hstack(encoded_texts)[0]
 
     async def encode_text(self, text, name, symbol):
