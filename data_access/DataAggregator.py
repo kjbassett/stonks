@@ -68,6 +68,7 @@ class DataAggregator(BaseDAO):
             "t.vw_average",
             "t.volume",
             "c.symbol",
+            "c.name",
         ]
 
         # one hot encode each industry
@@ -179,3 +180,9 @@ class DataAggregator(BaseDAO):
 # TODO
 #  How to tokenize company in text?
 #  Data Generator
+#  tokenizer = BertTokenizer.from_pretrained(text_model_name)
+#  tokenizer.add_tokens(additional_tokens)
+#  text_encoder.resize_token_embeddings(len(tokenizer))
+#  existing_words = list(tokenizer.vocab.keys())
+#  can fine tune new model or only weights associated with new embeddings?
+#  Check out NER?
