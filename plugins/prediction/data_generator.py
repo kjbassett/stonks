@@ -3,93 +3,134 @@ import asyncio
 import numpy as np
 import pandas as pd
 from data_access.dao_manager import dao_manager
-from transformers import BertTokenizer
+from transformers import BertTokenizer, pipeline
 
 data_dao = dao_manager.get_dao("DataAggregator")
 news_dao = dao_manager.get_dao("News")
 
 
 # We don't use a generator that inherits Sequence because we are relying on asynchronous db operations for each batch
+
+
 class DataGenerator:
-    def __init__(self, data, batch_size=32, max_text_length=512, shuffle_data=True):
+    def __init__(
+        self,
+        data,
+        n_news,
+        batch_size=32,
+        max_text_length=512,
+        shuffle_data=True,
+        hide_company_names=False,
+    ):
         self.data = data
         self.data["target"] = 1  # delete me later!
+        self.news_columns = [f"news{i}_id" for i in range(1, n_news + 1)]
         self.batch_size = batch_size
         self.max_text_length = max_text_length
-        self.shuffle = shuffle
         self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         if shuffle_data:
             self.data = shuffle(self.data)
+        self.hide_company_names = hide_company_names
 
     def __len__(self):
         return int(np.floor(len(self.data) / self.batch_size))
 
-    def encode_texts(self, texts):
-        result = []
-        for text in texts:
-            encoded = self.tokenizer.encode_plus(
-                text,
-                add_special_tokens=True,
-                max_length=self.max_text_length,
-                padding="max_length",
-                truncation=True,
-                return_attention_mask=True,
-                return_tensors="tf",
-            )
-            result.append(encoded["input_ids"])
-            result.append(encoded["attention_mask"])
-        result = np.hstack(result)[0]
-        return result
-
     async def load_batch(self, index):
         batch_data = self.data[index * self.batch_size : (index + 1) * self.batch_size]
         encoded_text = []
+        # fetch all news for each company in the batch, and encode them into a list of tensors
 
-        news_columns = _get_news_columns(batch_data)
+        for _, row in batch_data.iterrows():
+            encoded_text = asyncio.create_task(self.fetch_and_encode_texts(row))
+        await asyncio.gather(*encoded_text)
 
-        news_texts_list = await fetch_all_news(batch_data, news_columns)
-        for news_texts in news_texts_list:
-            encoded_text.append(self.encode_texts(news_texts))
-
-        structured_data = batch_data.drop(columns=news_columns + ["target"]).values
+        structured_data = batch_data.drop(columns=self.news_columns + ["target"]).values
         X = np.hstack([encoded_text, structured_data])
         y = batch_data["target"].values
         return X, y
+
+    async def fetch_and_encode_texts(self, row):
+        tasks = []
+        name, symbol = row["name"], row["symbol"]
+        for col in self.news_columns:
+            # fetch
+            task = asyncio.create_task(fetch_news([row[col]]))
+            # encode
+            task.add_done_callback(lambda future: self.encode_text(future.result(), name, symbol))
+            tasks.append(task)
+
+        encoded_texts = []
+        for task in tasks:
+            enc_text = await task
+            encoded_texts.append(enc_text['input_ids'])
+            encoded_texts.append(enc_text['attention_mask'])
+        return np.hstack(encoded_texts)[0]
+
+    async def encode_text(self, text, name, symbol):
+        if self.hide_company_names:
+            text = replace_company_names(text, name, symbol)
+        return self.tokenizer.encode_plus(
+            text,
+            add_special_tokens=True,
+            max_length=self.max_text_length,
+            padding="max_length",
+            truncation=True,
+            return_attention_mask=True,
+            return_tensors="tf",
+        )
 
 
 def shuffle(data):
     return data.sample(frac=1).reset_index(drop=True)
 
 
-async def fetch_all_news(batch_data, news_columns):
-    tasks = []
-    for _, row in batch_data.iterrows():
-        tasks.append(fetch_news(row[news_columns].values.tolist()))
-    return await asyncio.gather(*tasks)
+async def fetch_news(news_id):
+    if pd.isna(news_id):
+        return ""
+    else:
+        # TODO could be faster by querying all at once. Also cache?
+        news_data = await news_dao.get_data(news_id=news_id)
+        return news_data["text"].values[0]
 
 
-async def fetch_news(news_ids):
-    news_texts = []
-    for news_id in news_ids:
-        if pd.isna(news_id):
-            news_texts.append("")
+def replace_company_names(
+    text, subject_name, subject_symbol, ner_model_name="dslim/bert-base-NER-uncased"
+):
+    ner_pipeline = pipeline("ner", model=ner_model_name, tokenizer=ner_model_name)
+    ner_results = ner_pipeline(text)
+
+    # Initialize variables to keep track of entities
+    entities = []
+    current_entity = ""
+    current_label = ""
+
+    # Group B-ORG and I-ORG tokens into full entity names
+    for entity in ner_results:
+        entity_text = text[entity["start"] : entity["end"]]
+        # B-ORG is start of a new oganization, save last one if new one found
+        if entity["entity"] == "B-ORG":
+            if current_entity:
+                entities.append((current_entity, current_label))
+            current_entity = entity_text
+            current_label = entity["entity"]
+        # I-ORG is continuation of an existing organization, add to current entity
+        elif entity["entity"] == "I-ORG" and current_entity:
+            current_entity += " " + entity_text
+
+    # Add the last entity if any
+    if current_entity:
+        entities.append((current_entity, current_label))
+
+    replaced_text = text
+
+    # Replace entities with appropriate placeholders
+    for entity_text, _ in entities:
+        if entity_text == subject_name or entity_text == subject_symbol:
+            replaced_text = replaced_text.replace(entity_text, "this company")
         else:
-            news_data = await news_dao.get_data(news_id=news_id)
-            news_texts.append(news_data["text"].values[0])
-    return news_texts
+            replaced_text = replaced_text.replace(entity_text, "another company")
 
-
-def _get_news_columns(batch_data):
-    news_columns = []
-    i = 1
-    while True:
-        news_col = f"news{i}_id"
-        if news_col not in batch_data.columns:
-            break
-        else:
-            news_columns.append(news_col)
-        i += 1
-    return news_columns
+    return replaced_text
 
 
 def create_generators(
@@ -122,9 +163,13 @@ def create_generators(
     train = data.loc[: int(0.8 * len(data))]
     test = data.loc[int(0.8 * len(data)) :]
     train_generator = DataGenerator(
-        train, batch_size=batch_size, max_text_length=max_text_length, shuffle_data=True
+        train,
+        n_news,
+        batch_size=batch_size,
+        max_text_length=max_text_length,
+        shuffle_data=True,
     )
     test_generator = DataGenerator(
-        test, batch_size=len(test.index), max_text_length=max_text_length
+        test, n_news, batch_size=len(test.index), max_text_length=max_text_length
     )
     return train_generator, test_generator
