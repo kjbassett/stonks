@@ -60,7 +60,6 @@ def load_plugins(folder="plugins"):
 
     for root, dirs, files in os.walk(folder):
         for file in files:
-            ic(root, file)
             if file.endswith(".py") and file != "__init__.py":
                 relative_path = os.path.relpath(root, folder)
                 if relative_path == ".":
@@ -72,7 +71,6 @@ def load_plugins(folder="plugins"):
 
                 # ic(import_path)
                 module = importlib.import_module(import_path, package=folder)
-                print(import_path)
 
                 for name, func in inspect.getmembers(module, inspect.isfunction):
                     if getattr(func, "is_plugin", False):
@@ -83,7 +81,7 @@ def load_plugins(folder="plugins"):
 
                         # add plugin metadata to folder-structured metadata
                         parts = import_path.split(".")
-                        print(parts)
+                        ic(parts)
                         current_level = metadata
                         # Recursively enter/create folder structure to put metadata in correct spot
                         for part in parts:
