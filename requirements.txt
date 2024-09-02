@@ -14,3 +14,4 @@ async-lru
 websocket-client==1.2.0
 tensorflow<2.11
 transformers
+scikit-learn

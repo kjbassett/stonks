@@ -3,6 +3,9 @@ import asyncio
 import numpy as np
 import pandas as pd
 from data_access.dao_manager import dao_manager
+from icecream import ic
+from plugins.decorator import plugin
+from sklearn.preprocessing import StandardScaler
 from transformers import BertTokenizer, pipeline
 
 data_dao = dao_manager.get_dao("DataAggregator")
@@ -24,13 +27,20 @@ class DataGenerator:
     ):
         self.data = data
         self.data["target"] = 1  # delete me later!
+
         self.news_columns = [f"news{i}_id" for i in range(1, n_news + 1)]
+        exclude = ["company_id", "symbol", "name", "target"] + self.news_columns
+        self.x_columns = [col for col in self.data.columns if col not in exclude]
+
         self.batch_size = batch_size
         self.max_text_length = max_text_length
         self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         if shuffle_data:
             self.data = shuffle(self.data)
         self.hide_company_names = hide_company_names
+        self.scaler = StandardScaler()
+
+        self.scaler.fit(self.data[self.x_columns])
 
     def __len__(self):
         return int(np.floor(len(self.data) / self.batch_size))
@@ -44,7 +54,9 @@ class DataGenerator:
             encoded_text = asyncio.create_task(self.fetch_and_encode_texts(row))
         await asyncio.gather(*encoded_text)
 
-        structured_data = batch_data.drop(columns=self.news_columns + ["target"]).values
+        structured_data = batch_data[self.x_columns].values
+        # TODO check if there are some columns that should be excluded
+        structured_data = self.scaler.transform(structured_data)
         X = np.hstack([encoded_text, structured_data])
         y = batch_data["target"].values
         return X, y
@@ -135,7 +147,7 @@ def replace_company_names(
     return replaced_text
 
 
-def create_generators(
+async def create_generators(
     batch_size,
     max_text_length,
     company_id: int = None,
@@ -147,10 +159,10 @@ def create_generators(
     windows: iter = None,
     n_news: int = 3,
     news_relative_age_threshold: int = 24 * 60 * 60,
-) -> pd.DataFrame:
+) -> tuple[DataGenerator, DataGenerator]:
     if windows is None:
         windows = [4, 19, 59, 389]
-    data = data_dao.get_data(
+    data = await data_dao.get_data(
         company_id,
         min_timestamp,
         max_timestamp,
@@ -175,3 +187,34 @@ def create_generators(
         test, n_news, batch_size=len(test.index), max_text_length=max_text_length
     )
     return train_generator, test_generator
+
+
+@plugin()
+async def scratch():
+    # Create generators
+    train_generator, test_generator = await create_generators(
+        batch_size=32,
+        max_text_length=512,
+        avg_close=True,
+        avg_volume=True,
+        std_dev=True,
+        windows=(4, 19, 59, 389),
+        n_news=3,
+        news_relative_age_threshold=24 * 60 * 60,
+    )
+    for i in range(len(train_generator)):
+        print(f"Batch {i+1}/{len(train_generator)}:")
+        d = await train_generator.load_batch(i)
+        ic(d)
+
+
+# TODO YOU LEFT OFF HERE
+#  1. Make a working version first
+#     a. Normalize data
+#     b. train model
+#     c. find hyperparameter, nn structure, and encoding logic combo that works
+#  2. Restructure for handling new data.
+#     a. You need to decide how training and inferences will be triggered.
+#     b. Decide on code structure and organization.
+#     c. Implement new structure and organization
+#  3. Make logic that saves hyperparameters, model, and encoding logic combo
