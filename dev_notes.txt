@@ -1,0 +1,50 @@
+EZMT handles data shuffling and distribution
+
+1. load/augment training data | load/augment new data.
+   Hard to augment pandas data when augmentation is done in a SQL query, so use db as medium of transfer. This also allows for decoupling.
+   Could have EZMT choose # of news to load, or we could choose a high number and let EZMT filter down
+2. Remove columns to not include in analysis
+EZMT STARTS ON BELOW STEP
+3. Generate hyperparams | Load hyperparams
+4. Instantiate news data loader
+5. Instantiate NN
+6. Calculate settings/params based on population (like which columns to remove, normalization params) | Nothing
+   a. Based on nulls in training population?
+   b. Based on variance in training population?
+7. Preprocessing steps (need to determine best order?)
+   a. Remove columns
+   b. handle nulls
+   c. filter rows based on nulls
+   d. handle outliers | use data anyway?
+   d. normalize
+8. Train | Run inference
+   a. Batch data | Nothing
+   b. load news data
+   c. hide names in news if params
+   c. Tokenize
+9. Save entire model
+
+each step is marked training = True, inference = True, once = False
+T|I|O
+F|F|F Doesn't make sense
+F|F|T Doesn't make sense
+F|T|F Run each time we make an inference (No examples yet, preprocessing)
+F|T|T Run only once when using model for inference (load params)
+T|F|F Run for each batch? (backward pass)
+T|F|T Run once when training (create params, preprocessing)
+T|T|F Run for each batch/inference (load news data), could move both preprocessing steps here
+T|T|T Run once
+
+Can EZMT assume that it can save / load params for all things running once?
+Yes, therefore should split into model tuner and model loader
+Model tuner saves all params & hyperparams. model loader loads, instantiates things, and returns a function that takes data input and returns a prediction.
+
+Ways to trigger inference:
+   Manually
+   When new data appears, user specifies whether to trigger when they start/schedule stream data
+   On a schedule
+
+List of EZMT Improvements
+Model saving
+Model loading
+Step marking

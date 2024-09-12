@@ -206,15 +206,3 @@ async def scratch():
         print(f"Batch {i+1}/{len(train_generator)}:")
         d = await train_generator.load_batch(i)
         ic(d)
-
-
-# TODO YOU LEFT OFF HERE
-#  1. Make a working version first
-#     a. Normalize data
-#     b. train model
-#     c. find hyperparameter, nn structure, and encoding logic combo that works
-#  2. Restructure for handling new data.
-#     a. You need to decide how training and inferences will be triggered.
-#     b. Decide on code structure and organization.
-#     c. Implement new structure and organization
-#  3. Make logic that saves hyperparameters, model, and encoding logic combo
