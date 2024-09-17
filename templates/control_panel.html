@@ -6,6 +6,27 @@
     <script src="{{ url_for('static', filename='control_panel.js') }}"></script>
 </head>
 <body>
+
+    {% macro render_textbox(plugin_id, arg) %}
+        <input type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %}
+            max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
+            required="{{ 'required' if arg.required else 'optional' }}">
+    {% endmacro %}
+
+    {% macro render_slider(plugin_id, arg) %}
+        <input type="range" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
+            min="{{ arg.get('min', None) }}"
+            max="{{ arg.get('max', None) }}"
+            value="{{ arg.default }}">
+    {% endmacro %}
+
+    {% macro render_checkbox(plugin_id, arg) %}
+        <input type="checkbox" id="{{ plugin.id + '.' + arg.name}}" name="{{ arg.name }}"
+            {% if arg.default %}checked{% endif %}>
+    {% endmacro %}
+
     {% macro render_plugin(plugin_name, plugin) %}
         <div class="plugin">
             <h4>{{ plugin_name }}</h4>
@@ -13,21 +34,13 @@
                 {% for arg in plugin.arguments %}
                     <label for="{{ plugin.id + '.' + arg.name }}">{{ arg.name }}:</label>
                     {% if arg['ui_element'] == 'textbox' %}
-                        <input type="text" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
-                               value="{{ arg.default }}"
-                               min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %}
-                               max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
-                               required="{{ 'required' if arg.required else 'optional' }}">
+                        {{ render_textbox(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'slider' %}
-                        <input type="range" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
-                               min="{{ arg.get('min', None) }}"
-                               max="{{ arg.get('max', None) }}"
-                               value="{{ arg.default }}">
+                        {{ render_slider(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'checkbox' %}
-                        <input type="checkbox" id="{{ plugin.id + '.' + arg['name']}}" name="{{ arg.name }}"
-                               {% if arg['default'] %}checked{% endif %}>
-                    <!-- Add other UI elements as needed -->
+                        {{ render_checkbox(plugin.id, arg) }}
                     {% endif %}
+                    <!-- Add other UI elements as needed -->
                 {% endfor %}
                 <button type="submit">Start</button>
                 <button type="button" onclick="stop('{{ plugin.id }}')">Stop</button>
