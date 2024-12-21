@@ -14,3 +14,4 @@ async-lru
 websocket-client==1.2.0
 tensorflow<2.11
 transformers
+git+https://github.com/kjbassett/Genetic_Model_Tuner@dev
