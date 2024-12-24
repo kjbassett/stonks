@@ -119,8 +119,11 @@ def create_generators(
         news_relative_age_threshold,
     )
     data = shuffle(data)
-    train = data.loc[: int(0.8 * len(data))]
-    test = data.loc[int(0.8 * len(data)) :]
+    n_train = int(0.8 * len(data))
+    if batch_size == 0:
+        batch_size = n_train
+    train = data.loc[: n_train]
+    test = data.loc[n_train :]
     train_generator = DataGenerator(
         train, batch_size=batch_size, max_text_length=max_text_length, shuffle_data=True
     )
