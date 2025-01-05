@@ -4,6 +4,7 @@ keys.txt
 *.log
 Archive/
 scratch.py
+config.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
