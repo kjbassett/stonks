@@ -74,8 +74,8 @@ async def fetch_news(news_ids):
         if pd.isna(news_id):
             news_texts.append("")
         else:
-            news_data = await news_dao.get_data(news_id=news_id)
-            news_texts.append(news_data["text"].values[0])
+            news_data = await news_dao.get(news_id)
+            news_texts.append(news_data["body"].values[0])
     return news_texts
 
 
@@ -92,7 +92,7 @@ def _get_news_columns(batch_data):
     return news_columns
 
 
-def create_generators(
+async def create_generators(
     batch_size,
     max_text_length,
     company_id: int = None,
@@ -107,7 +107,7 @@ def create_generators(
 ) -> pd.DataFrame:
     if windows is None:
         windows = [4, 19, 59, 389]
-    data = data_dao.get_data(
+    data = await data_dao.get_data(
         company_id,
         min_timestamp,
         max_timestamp,
