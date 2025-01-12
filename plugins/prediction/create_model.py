@@ -12,8 +12,7 @@ def get_text_embedding(text_model, input_ids, attention_mask):
 
 @plugin()
 def create_combined_model(
-    model_name: str,
-    num_texts: str,
+    num_texts: int,
     structured_input_dim: int,
     combined_hidden_dim: int,
     output_dim: int,
@@ -36,12 +35,12 @@ def create_combined_model(
         slice_start = i * 512 * 2
         # first 512 tokens are input ids, next 512 are attention masks
         input_ids = tf.cast(
-            input_layer[:, slice_start : slice_start + 512],
+            input_layer[:, slice_start: slice_start + 512],
             dtype=tf.int32,
             name=f"input_ids_{i}",
         )
         attention_mask = tf.cast(
-            input_layer[:, slice_start + 512 : slice_start + 512 * 2],
+            input_layer[:, slice_start + 512: slice_start + 512 * 2],
             dtype=tf.int32,
             name=f"attention_mask_{i}",
         )
@@ -67,7 +66,5 @@ def create_combined_model(
     model = tf.keras.Model(inputs=input_layer, outputs=output)
     model.summary()
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-
-    model.save(f"{model_name}.h5")
 
     return model
