@@ -5,15 +5,11 @@ import pandas as pd
 from data_access.dao_manager import dao_manager
 from transformers import BertTokenizer
 
-data_dao = dao_manager.get_dao("DataAggregator")
-news_dao = dao_manager.get_dao("News")
-
 
 # We don't use a generator that inherits Sequence because we are relying on asynchronous db operations for each batch
 class DataGenerator:
     def __init__(self, data, batch_size=32, max_text_length=512, shuffle_data=True):
         self.data = data
-        self.data["target"] = 1  # delete me later!
         self.batch_size = batch_size
         self.max_text_length = max_text_length
         self.shuffle = shuffle
@@ -23,6 +19,11 @@ class DataGenerator:
 
     def __len__(self):
         return int(np.floor(len(self.data) / self.batch_size))
+
+    async def __call__(self):
+        for batch_index in range(len(self)):
+            x, y = await self.get_batch(batch_index)
+            yield x, y
 
     def encode_texts(self, texts):
         result = []
@@ -41,8 +42,8 @@ class DataGenerator:
         result = np.hstack(result)[0]
         return result
 
-    async def load_batch(self, index):
-        batch_data = self.data[index * self.batch_size : (index + 1) * self.batch_size]
+    async def get_batch(self, index):
+        batch_data = self.data[index * self.batch_size: (index + 1) * self.batch_size]
         encoded_text = []
 
         news_columns = _get_news_columns(batch_data)
@@ -51,10 +52,13 @@ class DataGenerator:
         for news_texts in news_texts_list:
             encoded_text.append(self.encode_texts(news_texts))
 
+        # for debugging. delete me later
+        if len(batch_data.index) < 50:
+            batch_data.to_csv(f"batch{index}_data.csv")
         structured_data = batch_data.drop(columns=news_columns + ["target"]).values
-        X = np.hstack([encoded_text, structured_data])
+        x = np.hstack([encoded_text, structured_data])
         y = batch_data["target"].values
-        return X, y
+        return x, y
 
 
 def shuffle(data):
@@ -69,6 +73,7 @@ async def fetch_all_news(batch_data, news_columns):
 
 
 async def fetch_news(news_ids):
+    news_dao = dao_manager.get_dao("News")
     news_texts = []
     for news_id in news_ids:
         if pd.isna(news_id):
@@ -98,19 +103,22 @@ async def create_generators(
     company_id: int = None,
     min_timestamp: int = None,
     max_timestamp: int = None,
+    price_change_window: int = 86400,
     avg_close: bool = True,
     avg_volume: bool = True,
     std_dev: bool = True,
     windows: iter = None,
     n_news: int = 3,
     news_relative_age_threshold: int = 24 * 60 * 60,
-) -> pd.DataFrame:
+) -> (DataGenerator, DataGenerator):
     if windows is None:
         windows = [4, 19, 59, 389]
+    data_dao = dao_manager.get_dao("DataAggregator")
     data = await data_dao.get_data(
         company_id,
         min_timestamp,
         max_timestamp,
+        price_change_window,
         avg_close,
         avg_volume,
         std_dev,
@@ -118,12 +126,13 @@ async def create_generators(
         n_news,
         news_relative_age_threshold,
     )
+    data = data.drop(columns=['company_id', 'timestamp', 'symbol'])
     data = shuffle(data)
     n_train = int(0.8 * len(data))
     if batch_size == 0:
         batch_size = n_train
     train = data.loc[: n_train]
-    test = data.loc[n_train :]
+    test = data.loc[n_train:]
     train_generator = DataGenerator(
         train, batch_size=batch_size, max_text_length=max_text_length, shuffle_data=True
     )
