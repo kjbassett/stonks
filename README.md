@@ -20,6 +20,6 @@ It will use this data to try and predict future price changes.
 
 4. Run the program
 
-    ```python run.py```
+    ```sanic run --single-process```
 
 

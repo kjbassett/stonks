@@ -13,6 +13,7 @@ class DataAggregator(BaseDAO):
         company_id: int = None,
         min_timestamp: int = None,
         max_timestamp: int = None,
+        price_change_window: int = 86400,
         avg_close: bool = True,
         avg_volume: bool = True,
         std_dev: bool = True,
@@ -26,6 +27,7 @@ class DataAggregator(BaseDAO):
             company_id,
             min_timestamp,
             max_timestamp,
+            price_change_window,
             avg_close,
             avg_volume,
             std_dev,
@@ -49,6 +51,7 @@ class DataAggregator(BaseDAO):
         company_id,
         min_timestamp,
         max_timestamp,
+        price_change_window,
         avg_close,
         avg_volume,
         std_dev,
@@ -68,7 +71,20 @@ class DataAggregator(BaseDAO):
             "t.vw_average",
             "t.volume",
             "c.symbol",
-            "c.name",
+            f"""
+            (
+                (SELECT (
+                    SELECT t2.close 
+                    FROM TradingData t2 
+                    WHERE
+                        t2.company_id = t.company_id
+                        AND t2.timestamp >= t.timestamp + {price_change_window}  -- 900 seconds = 15 minutes
+                        AND t2.timestamp <= t.timestamp + {price_change_window} + 900  -- 900 seconds = 15 minutes
+                    ORDER BY t2.timestamp ASC
+                    LIMIT 1
+                ) - t.close) / t.close
+            ) AS target
+            """
         ]
 
         # one hot encode each industry
@@ -116,20 +132,13 @@ class DataAggregator(BaseDAO):
                         t.company_id,
                         t.timestamp AS trading_timestamp,
                         ROW_NUMBER() OVER (PARTITION BY t.company_id, t.timestamp ORDER BY n.timestamp DESC) AS rn
-                    FROM
-                        TradingData t
-                    JOIN
-                        NewsCompanyLink ncl
-                    ON
-                        t.company_id = ncl.company_id
-                    JOIN
-                        News n
-                    ON
-                        ncl.news_id = n.id
-                    AND
-                        n.timestamp <= t.timestamp
-                    AND 
-                        n.timestamp >= t.timestamp - {news_relative_age_threshold}
+                    FROM TradingData t
+                    JOIN NewsCompanyLink ncl
+                    ON t.company_id = ncl.company_id
+                    JOIN News n
+                        ON ncl.news_id = n.id
+                        AND n.timestamp <= t.timestamp
+                        AND n.timestamp >= t.timestamp - {news_relative_age_threshold}
                 )"""
             )
         # Apply filters if necessary
@@ -155,20 +164,13 @@ class DataAggregator(BaseDAO):
         {CTEs}
         SELECT 
             {columns}
-        FROM 
-            TradingData t
-        JOIN 
-            Company c
-        ON 
-            t.company_id = c.id
-        LEFT JOIN 
-            Industry i
-        ON
-            c.industry_id = i.id
-        LEFT JOIN
-            IndustryOffice io
-        ON
-            i.office_id = io.id
+        FROM TradingData t
+        JOIN Company c
+            ON t.company_id = c.id
+        LEFT JOIN Industry i
+            ON c.industry_id = i.id
+        LEFT JOIN IndustryOffice io
+            ON i.office_id = io.id
         {ranked_news_joins}
         {where_clause}
         ORDER BY 
@@ -180,9 +182,3 @@ class DataAggregator(BaseDAO):
 # TODO
 #  How to tokenize company in text?
 #  Data Generator
-#  tokenizer = BertTokenizer.from_pretrained(text_model_name)
-#  tokenizer.add_tokens(additional_tokens)
-#  text_encoder.resize_token_embeddings(len(tokenizer))
-#  existing_words = list(tokenizer.vocab.keys())
-#  can fine tune new model or only weights associated with new embeddings?
-#  Check out NER?
