@@ -16,11 +16,11 @@ def create_combined_model(
     structured_input_dim: int,
     combined_hidden_dim: int,
     output_dim: int,
-    text_model_name: str = "bert-base-uncased",
+    text_model_name: str = "M-FAC/bert-tiny-finetuned-mrpc",  # distilbert-base-uncased, M-FAC/bert-tiny-finetuned-mrpc, bert-base-uncased
     output_activation: str = "sigmoid",
     dropout_rate: float = 0.3,
 ):
-    text_encoder = TFBertModel.from_pretrained(text_model_name)
+    text_encoder = TFBertModel.from_pretrained(text_model_name, from_pt=True)
 
     # One input layer for all tokenized text inputs and structured numerical input
     input_layer = tf.keras.layers.Input(
@@ -35,12 +35,12 @@ def create_combined_model(
         slice_start = i * 512 * 2
         # first 512 tokens are input ids, next 512 are attention masks
         input_ids = tf.cast(
-            input_layer[:, slice_start: slice_start + 512],
+            input_layer[:, slice_start : slice_start + 512],
             dtype=tf.int32,
             name=f"input_ids_{i}",
         )
         attention_mask = tf.cast(
-            input_layer[:, slice_start + 512: slice_start + 512 * 2],
+            input_layer[:, slice_start + 512 : slice_start + 512 * 2],
             dtype=tf.int32,
             name=f"attention_mask_{i}",
         )
@@ -65,6 +65,14 @@ def create_combined_model(
 
     model = tf.keras.Model(inputs=input_layer, outputs=output)
     model.summary()
-    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer="adam", loss="mean_squared_error")
+
+    tf.keras.utils.plot_model(
+        model,
+        to_file="model.png",
+        show_shapes=True,
+        show_layer_names=True,
+        expand_nested=True,
+    )
 
     return model
