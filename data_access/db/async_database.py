@@ -35,8 +35,8 @@ class AsyncDatabase:
         print_query=False,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
         if print_query:
-            ic(f"Executing query: {query}")
-            ic(f"Params: {params}")
+            print(f"Executing query:\n{query}")
+            ic(params)
         await self.connect()
         if many:  # TODO detect this automatically somehow
             cursor = await self.conn.executemany(query, params)
