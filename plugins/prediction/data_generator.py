@@ -8,14 +8,14 @@ from transformers import BertTokenizer
 
 # We don't use a generator that inherits Sequence because we are relying on asynchronous db operations for each batch
 class DataGenerator:
-    def __init__(self, data, batch_size=32, max_text_length=512, shuffle_data=True):
+    def __init__(self, data, news_data, batch_size=32, max_text_length=512):
         self.data = data
+        self.news_data = news_data
         self.batch_size = batch_size
         self.max_text_length = max_text_length
         self.shuffle = shuffle
         self.tokenizer = BertTokenizer.from_pretrained("M-FAC/bert-tiny-finetuned-mrpc")
-        if shuffle_data:
-            self.data = shuffle(self.data)
+        self.data = shuffle(self.data)
 
     def __len__(self):
         return int(np.floor(len(self.data) / self.batch_size))
@@ -24,6 +24,7 @@ class DataGenerator:
         for batch_index in range(len(self)):
             x, y = await self.get_batch(batch_index)
             yield x, y
+        self.data = shuffle(self.data)
 
     def encode_texts(self, texts):
         result = []
@@ -116,41 +117,14 @@ def _get_news_columns(batch_data):
 
 async def create_generators(
     batch_size,
-    max_text_length,
-    company_id: int = None,
-    min_timestamp: int = None,
-    max_timestamp: int = None,
-    price_change_window: int = 86400,
-    avg_close: bool = True,
-    avg_volume: bool = True,
-    std_dev: bool = True,
-    windows: iter = None,
-    n_news: int = 3,
-    news_relative_age_threshold: int = 24 * 60 * 60,
+    structured_data,
+    news_data=None
 ) -> (DataGenerator, DataGenerator):
-    if windows is None:
-        windows = [4, 19, 59, 389]
-    data_dao = dao_manager.get_dao("DataAggregator")
-    data = await data_dao.get_data(
-        company_id,
-        min_timestamp,
-        max_timestamp,
-        price_change_window,
-        avg_close,
-        avg_volume,
-        std_dev,
-        windows,
-        n_news,
-        news_relative_age_threshold,
-    )
-    data = shuffle(data)
-    n_train = int(0.8 * len(data))
+    n_train = int(0.8 * len(structured_data))
     if batch_size == 0:
         batch_size = n_train
-    train = data.loc[:n_train]
-    test = data.loc[n_train:]
-    train_generator = DataGenerator(
-        train, batch_size=batch_size, max_text_length=max_text_length, shuffle_data=True
-    )
-    test_generator = DataGenerator(test, batch_size=15, max_text_length=max_text_length)
+    train = structured_data.loc[:n_train]
+    test = structured_data.loc[n_train:]
+    train_generator = DataGenerator(train, news_data, batch_size=batch_size)
+    test_generator = DataGenerator(test, news_data, batch_size=15)
     return train_generator, test_generator
