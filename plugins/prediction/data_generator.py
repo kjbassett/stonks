@@ -1,13 +1,9 @@
-import asyncio
-
 import numpy as np
-import pandas as pd
-from data_access.dao_manager import dao_manager
 from transformers import BertTokenizer
 
 
 # We don't use a generator that inherits Sequence because we are relying on asynchronous db operations for each batch
-class DataGenerator:
+class DataGenerator():
     def __init__(self, data, news_data, batch_size=32, max_text_length=512):
         self.data = data
         self.news_data = news_data
