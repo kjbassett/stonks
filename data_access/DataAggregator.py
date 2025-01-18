@@ -13,6 +13,7 @@ class DataAggregator(BaseDAO):
 
     async def get_data(
         self,
+        price_change_offset: int = 0,
         min_timestamp: int = 0,
         max_timestamp: int = 0,
         max_window: int = 0,
@@ -29,6 +30,7 @@ class DataAggregator(BaseDAO):
         include_volume_over_average: bool = False,
     ) -> pd.DataFrame:
         query = construct_query(
+            price_change_offset,
             min_timestamp,
             max_timestamp,
             max_window,
@@ -53,6 +55,7 @@ class DataAggregator(BaseDAO):
 
 
 def construct_query(
+    price_change_offset: int = 86400,  # 15 minutes in seconds
     min_timestamp: int = 0,
     max_timestamp: int = 0,
     max_window: int = 0,
@@ -73,6 +76,19 @@ def construct_query(
     ctes = []  # common table expressions
     columns = ["t.close", "t.vw_average"]
     joins = []
+
+    # target column
+    pco_min = price_change_offset - 0.02 * price_change_offset
+    pco_max = price_change_offset + 0.02 * price_change_offset
+    columns.append(f"""
+((
+    SELECT AVG(t2.close)
+    FROM TradingData t2 
+    WHERE
+        t2.company_id = t.company_id
+        AND t2.timestamp >= {pco_min}
+        AND t2.timestamp <= {pco_max}
+) - t.close) / t.close AS target""")
 
     # hour, day of week, and month of year
     columns.append("strftime('%H', datetime(t.timestamp, 'unixepoch')) AS hour")
@@ -106,19 +122,25 @@ def construct_query(
     )
 
     # company symbol
+    company_join = "JOIN Company c ON t.company_id = c.id"
     if include_symbol:
         columns.append("c.symbol")
-        joins.append("JOIN Company c ON t.company_id = c.id")
+        joins.append(company_join)
 
     # industry
+    # before "if include_industry" to guarantee that it gets defined for "if include_office" code block
+    industry_join = "JOIN Industry i ON c.industry_id = i.id"
     if include_industry:
+        if company_join not in joins:
+            joins.append(company_join)
         columns.append("i.name AS industry")
-        industry_join = "JOIN Industry i ON c.industry_id = i.id"
         joins.append(industry_join)
 
     # industry office (aka industry category)
     if include_office:
         columns.append("io.name AS office")
+        if company_join not in joins:
+            joins.append(company_join)
         if industry_join not in joins:
             joins.append(industry_join)
         joins.append("JOIN IndustryOffice io ON i.office_id = io.id")
