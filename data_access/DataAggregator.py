@@ -28,6 +28,7 @@ class DataAggregator(BaseDAO):
         include_coeff_var: bool = False,
         include_price_over_average: bool = False,
         include_volume_over_average: bool = False,
+        print_query: bool = False
     ) -> pd.DataFrame:
         query = construct_query(
             price_change_offset,
@@ -47,10 +48,10 @@ class DataAggregator(BaseDAO):
             include_volume_over_average,
         )
         data = await self.db.execute_query(
-            query, query_type="SELECT", return_type="DataFrame", print_query=True
+            query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
         print(data.dtypes)
-
+        data.to_csv("data.csv")
         return data
 
 
@@ -86,12 +87,12 @@ def construct_query(
     FROM TradingData t2 
     WHERE
         t2.company_id = t.company_id
-        AND t2.timestamp >= {pco_min}
-        AND t2.timestamp <= {pco_max}
+        AND t2.timestamp >= t.timestamp + {pco_min}
+        AND t2.timestamp <= t.timestamp + {pco_max}
 ) - t.close) / t.close AS target""")
 
     # hour, day of week, and month of year
-    columns.append("strftime('%H', datetime(t.timestamp, 'unixepoch')) AS hour")
+    columns.append("CAST(strftime('%H', datetime(t.timestamp, 'unixepoch')) AS INTEGER) AS hour")
     columns.append(
         """
     CASE strftime('%w', datetime(t.timestamp, 'unixepoch')) 
@@ -228,7 +229,6 @@ ORDER BY t.timestamp
 
 
 # TODO
-#  Cast hour as int
 #  Get diff of current timestamp and news timestamps
 #  Verify hour is correct (and day of week and month with same fix if needed). Just put timestamp into data and convert it online.
 #  How to tokenize company in text?
