@@ -1,9 +1,11 @@
 import numpy as np
 from transformers import BertTokenizer
+from icecream import ic
+from tensorflow import keras
 
 
 # We don't use a generator that inherits Sequence because we are relying on asynchronous db operations for each batch
-class DataGenerator():
+class DataGenerator(keras.utils.Sequence):
     def __init__(self, data, news_data, batch_size=32, max_text_length=512):
         self.data = data
         self.news_data = news_data
@@ -49,6 +51,10 @@ def _get_news_columns(batch_data):
     return news_columns
 
 
+def shuffle(df):
+    return df.sample(frac=1, random_state=42)  # shuffle the dataframe in place, and reset index afterwards
+
+
 async def create_generators(
     batch_size,
     structured_data,
@@ -57,6 +63,7 @@ async def create_generators(
     n_train = int(0.8 * len(structured_data))
     if batch_size == 0:
         batch_size = n_train
+    structured_data = shuffle(structured_data)
     train = structured_data.loc[:n_train]
     test = structured_data.loc[n_train:]
     train_generator = DataGenerator(train, news_data, batch_size=batch_size)
