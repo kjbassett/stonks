@@ -50,6 +50,7 @@ class DataAggregator(BaseDAO):
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
+        data = data[~data["target"].isnull()]
         print(data.dtypes)
         data.to_csv("data.csv")
         return data
