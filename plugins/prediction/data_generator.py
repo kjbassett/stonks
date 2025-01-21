@@ -20,21 +20,26 @@ class DataGenerator(keras.utils.Sequence):
     def __getitem__(self, index):
         index = index % len(self)
         batch_data = self.data[index * self.batch_size: (index + 1) * self.batch_size]
-        y = batch_data["target"].values
-        x = self.merge_news(batch_data).values
-        return x, y
+
+        x = self.merge_news(batch_data)
+        y = batch_data[["target"]]
+        x = x.drop(columns=["target"])
+        x = x.fillna(0)
+        return x.values, y.values
 
     def get_random_batch(self):
         indices = np.random.choice(len(self), self.batch_size, replace=False)
         batch_data = self.data.iloc[indices]
-        y = batch_data["target"].values
-        x = self.merge_news(batch_data).values
-        return x, y
+        x = self.merge_news(batch_data)
+        y = batch_data[["target"]]
+        x = x.drop(columns=["target"])
+        x = x.fillna(0)
+        return x.values, y.values
 
     def merge_news(self, batch_data):
         for column in self.news_columns:
-            batch_data = batch_data.merge(self.news_data, left_on=column, right_on="id")
-        batch_data = batch_data.drop(columns=self.news_columns)
+            batch_data = batch_data.merge(self.news_data, left_on=column, right_on="id", how="left")
+        batch_data = batch_data.drop(columns=self.news_columns + ["id"])
         return batch_data
 
 
