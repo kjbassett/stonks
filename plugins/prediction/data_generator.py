@@ -21,11 +21,23 @@ class DataGenerator(keras.utils.Sequence):
         index = index % len(self)
         batch_data = self.data[index * self.batch_size: (index + 1) * self.batch_size]
 
-        x = self.merge_news(batch_data)
-        y = batch_data[["target"]]
-        x = x.drop(columns=["target"])
-        x = x.fillna(0)
-        return x.values, y.values
+        x_structured = batch_data.drop(columns=self.news_columns + ["target"]).fillna(0)
+        x = [x_structured.values]
+
+        # Merge news data for each news column
+        for column in self.news_columns:
+            news_batch = batch_data.merge(self.news_data, left_on=column, right_on="id", how="left")
+
+            # Extract input IDs and attention masks from the merged data
+            input_ids = news_batch.iloc[:, -2 * self.max_text_length: -self.max_text_length].fillna(0).values
+            attention_masks = news_batch.iloc[:, -self.max_text_length:].fillna(0).values
+            x.append(input_ids)
+            x.append(attention_masks)
+
+        # Extract targets
+        y = batch_data[["target"]].values
+
+        return x, y
 
     def get_random_batch(self):
         indices = np.random.choice(len(self), self.batch_size, replace=False)
