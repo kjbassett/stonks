@@ -15,7 +15,7 @@ from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
 
 
-@plugin(model_name={"ui_element": "textbox", "default": "Genesis"})
+@plugin(model_name={"ui_element": "textbox"})
 async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
     hyperparams = {
         "batch_size": DiscreteOrdinal([64]),
