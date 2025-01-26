@@ -37,7 +37,7 @@ The prediction model is a neural network, and the hyperparameters for it and its
 </details>
 
 <details><summary>Web Interface</summary>
-The web interface is a simple way to trigger function that we have written. Upon starting the application, the web server scans all code written in the "plugins" folder. If it finds a function decorated with the @plugin() decorator, it stores its metadata in a dictionary. The dictionary of metadata is supplied to a jinja template. The template iterates through the metadata and generates the webpage.
+The web interface is a simple way to trigger functions that we have written. Upon starting the application, the web server scans all code written in the "plugins" folder. If it finds a function decorated with the @plugin() decorator, it stores its metadata in a dictionary. The dictionary of metadata is supplied to a jinja template. The template iterates through the metadata and generates the webpage.
 </details>
 
 ## Future Developments
