@@ -14,6 +14,7 @@ def get_text_embedding(text_model, input_ids, attention_mask):
 def create_combined_model(
     num_texts: int,
     structured_input_dim: int,
+    n_hidden_layers: int,
     combined_hidden_dim: int,
     output_dim: int,
     text_model_name: str = "M-FAC/bert-tiny-finetuned-mrpc",  # distilbert-base-uncased, M-FAC/bert-tiny-finetuned-mrpc, bert-base-uncased
@@ -22,6 +23,7 @@ def create_combined_model(
 ):
     # Load the pre-trained text encoder (BERT)
     text_encoder = TFBertModel.from_pretrained(text_model_name, from_pt=True)
+    text_encoder.trainable = False  # freeze the pre-trained text encoder
 
     # Structured numerical input
     structured_input = tf.keras.layers.Input(shape=(structured_input_dim,), name="structured_input")
@@ -35,23 +37,23 @@ def create_combined_model(
         inputs.extend([text_input, attention_mask])
 
         # Get embedding for each text input
-        embedding = text_encoder(input_ids=text_input, attention_mask=attention_mask).pooler_output
-        text_embeddings.append(embedding)
+        embedding = text_encoder(input_ids=text_input, attention_mask=attention_mask).last_hidden_state  # pooler_output
+        text_embeddings.append(tf.keras.layers.Flatten()(embedding))
 
     # combine all text embeddings and the structured input into a single input layer for the combined model
     combined = tf.keras.layers.Concatenate()([structured_input, *text_embeddings])
 
     # Fully connected layers
-    combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
-    combined = tf.keras.layers.Dropout(dropout_rate)(combined)
-    combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
-    combined = tf.keras.layers.Dropout(dropout_rate)(combined)
+    for _ in range(n_hidden_layers):
+        combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
+        combined = tf.keras.layers.Dropout(dropout_rate)(combined)
 
     output = tf.keras.layers.Dense(output_dim, activation=output_activation)(combined)
 
     model = tf.keras.Model(inputs=inputs, outputs=output)
     model.summary()
-    model.compile(optimizer="adam", loss="mean_squared_error")
+    optimizer = tf.keras.optimizers.Adam()
+    model.compile(optimizer=optimizer, loss="mean_squared_error")
 
     tf.keras.utils.plot_model(
         model,

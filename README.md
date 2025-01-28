@@ -6,7 +6,7 @@ It will use this data to try and predict future price changes.
 
 ## Install
 
-1. Use python 3.10 to create a virtual environment in the project's root directory
+1. Use python 3.10 to create a virtual environment in the project's root directory. (Only do this once).
 
     ```python3.10 -m venv venv```
 
@@ -68,4 +68,5 @@ Currently we predict the percentage change after some amount of time. We could t
 * Predicting the percentage change and a confidence level
 * Predicting only buy/sell
 * Predicting the distribution of investment across multiple companies that yields the most money
+* Predicting multiple price changes at different intervals in the future
 </details>

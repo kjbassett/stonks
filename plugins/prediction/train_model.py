@@ -13,30 +13,58 @@ from plugins.prediction.data_generator import create_generators
 from transformers import BertTokenizer
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
+import tensorflow as tf
 
 
 @plugin(model_name={"ui_element": "textbox"})
 async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
+    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp, model_name)
+    mt = ModelTuner(model_space, hyperparams, None, "target", 5, 5)
+    model = await mt.run()
+    model.save(model_name)
+
+async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
+    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp, model_name)
+    model_space = [
+        {
+            "name": "load_data",
+            "train": {
+                "func": load_short_data,
+                "outputs": ["structured_data", "enc_text_data"]
+            }
+        }
+    ] + model_space[-3:]
+
+    mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
+    model = await mt.run()
+    model.save(model_name)
+
+def load_short_data():
+    structured_data = pd.read_csv("data6.csv", index_col=0).reset_index(drop=True)
+    news_data = pd.read_csv("news_data.csv")
+    return structured_data, news_data
+
+def create_model_space(max_timestamp, min_timestamp, model_name):
     hyperparams = {
-        "batch_size": DiscreteOrdinal([64]),
+        "batch_size": DiscreteOrdinal([32]),
         "max_text_length": DiscreteOrdinal([512]),
-        "price_change_offset": ContinuousRange(86400, 86400*5),
-        "max_window": DiscreteOrdinal([500, 1000, 1500, 2000]),
+        "price_change_offset": ContinuousRange(86400, 86400 * 10),
+        "max_window": DiscreteOrdinal([500, 1000, 1500, 2000, 2500, 3000, 4000, 5000]),
         "num_windows": DiscreteOrdinal([3, 5, 10]),
         "num_news": DiscreteOrdinal([1]),
-        "news_history_threshold": ContinuousRange(24*60*60, 5*24*60*60),
-        "include_symbol": DiscreteOrdinal([True, False]),
-        "include_industry": DiscreteOrdinal([True, False]),
+        "news_history_threshold": ContinuousRange(24 * 60 * 60, 5 * 24 * 60 * 60),
+        "include_symbol": DiscreteOrdinal([False]),
+        "include_industry": DiscreteOrdinal([False]),
         "include_office": DiscreteOrdinal([True, False]),
         "include_price_change": DiscreteOrdinal([True, False]),
         "include_volume_change": DiscreteOrdinal([True, False]),
         "include_coeff_var": DiscreteOrdinal([True, False]),
         "include_price_over_average": DiscreteOrdinal([True, False]),
         "include_volume_over_average": DiscreteOrdinal([True, False]),
-        "n_hidden_layers": DiscreteOrdinal([1, 2, 3, 4, 5, 6]),
+        "n_hidden_layers": DiscreteOrdinal([1, 2, 3, 4, 5, 6, 7]),
         "hidden_layer_dim": DiscreteOrdinal([100, 250, 500, 750, 1000, 1500, 2000]),
         "dropout_rate": ContinuousRange(0.3, 0.4),
-        "missing_data_%_threshold": ContinuousRange(0.15, 0.25)  # Should go from 0 to x, not 0.15
+        "missing_data_%_threshold": ContinuousRange(0, 0.25)
     }
     model_space = [
         {
@@ -126,7 +154,7 @@ async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: in
             "name": "get_structured_input_dim",
             "train": {
                 "func": get_num_x_columns,
-                "args": ["structured_data"],
+                "args": ["structured_data", "num_news"],
                 "outputs": "structured_input_dim",
             },
         },
@@ -138,7 +166,9 @@ async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: in
                     model_name,
                     "num_news",
                     "structured_input_dim",
+                    "n_hidden_layers",
                     "hidden_layer_dim",
+                    "dropout_rate",
                     "train_generator",
                     "test_generator",
                     10,  # epochs
@@ -146,19 +176,9 @@ async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: in
                 "outputs": "score",
                 "gpu": True,
             },
-        },
-        # {
-        #     'name': 'score',
-        #     'train': {
-        #         'func': get_score,
-        #         'args': 'history',
-        #         'outputs': 'score'
-        #     }
-        # }
+        }
     ]
-    mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
-    model = await mt.run()
-    model.save(model_name)
+    return hyperparams, model_space
 
 
 async def load_data(
@@ -338,8 +358,8 @@ def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = No
     else:
         encoded_data = encoder.transform(dataframe[cols_to_encode]).toarray()
 
-    encoded_df = pd.DataFrame(encoded_data, columns=encoder.get_feature_names_out(cols_to_encode))
-    dataframe = pd.concat([dataframe.drop(columns=cols_to_encode), encoded_df], axis=1)
+    encoded_df = pd.DataFrame(encoded_data, columns=encoder.get_feature_names_out(cols_to_encode)).reset_index(drop=True)
+    dataframe = pd.concat([dataframe.drop(columns=cols_to_encode).reset_index(drop=True), encoded_df], axis=1)
 
     return dataframe, encoder
 
@@ -355,8 +375,8 @@ def impute(dataframe, imputer=None, ignore_cols=None):
         imputer = MissForest()
         imputer.fit(df_to_impute)
     imputed_array = imputer.transform(df_to_impute)
-    imputed_data = pd.DataFrame(imputed_array, columns=df_to_impute.columns)
-    dataframe = pd.concat([imputed_data, dataframe[ignore_cols]], axis=1)
+    imputed_data = pd.DataFrame(imputed_array, columns=df_to_impute.columns).reset_index(drop=True)
+    dataframe = pd.concat([imputed_data, dataframe[ignore_cols].reset_index(drop=True)], axis=1)
     return dataframe, imputer
 
 
@@ -364,16 +384,27 @@ def create_and_train(
     model_name,
     num_news,
     structured_input_dim,
+    n_hidden_layers,
     hidden_layer_dim,
+    dropout_rate,
     train_generator,
     test_generator,
     epochs,
 ):
     model = create_combined_model(
-        num_news, structured_input_dim, hidden_layer_dim, 1  # output dim
+        num_news, structured_input_dim, n_hidden_layers, hidden_layer_dim, 1, dropout_rate=dropout_rate  # output dim
     )
-    history = model.fit(train_generator, epochs=epochs, validation_data=test_generator)
-    plot_moving_average(history, 50)
+
+    # Define the EarlyStopping callback
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',  # Monitor the validation loss
+        patience=3,  # Number of epochs with no improvement after which training will be stopped
+        verbose=1,  # Verbosity mode
+        restore_best_weights=True  # Restore model weights from the epoch with the best value of the monitored quantity
+    )
+
+    history = model.fit(train_generator, epochs=epochs, validation_data=test_generator, callbacks=[early_stopping])
+    plot_moving_average(history, 10)
     save_model(model, model_name=model_name)
     avg_val_loss = np.mean(history.history["val_loss"][-10:])
     return avg_val_loss
@@ -389,11 +420,11 @@ def save_model(model, model_folder: str = "models", model_name: str = None):
     return model_path
 
 
-def get_num_x_columns(structured_data):
+def get_num_x_columns(structured_data, num_news=0):
     if "target" in structured_data.columns:
-        return structured_data.shape[1] - 1  # exclude target
+        return structured_data.shape[1] - 1 - num_news  # exclude target and news_id columns
     else:
-        return structured_data.shape[1]
+        return structured_data.shape[1] - num_news
 
 
 def get_score(history):
@@ -408,7 +439,6 @@ def get_score(history):
 #  de-couple statistics and news data from initial data load
 #  OR
 #  make a separate query to get only the necessary info for new_data
-
 
 
 def plot_moving_average(history, window_size):
@@ -437,3 +467,9 @@ def plot_moving_average(history, window_size):
 
     # Show the plot
     plt.savefig("loss_history.png")
+
+
+if __name__ == "__main__":
+    df = pd.read_csv("C:\Coding\stonks\data3.csv")
+    df, encoders = one_hot_encode(df, ignore_cols=["industry_id", "news1_id"])
+    df.to_csv("ohedata.csv")
