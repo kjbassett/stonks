@@ -42,11 +42,7 @@ class DataGenerator(keras.utils.Sequence):
     def get_random_batch(self):
         indices = np.random.choice(len(self), self.batch_size, replace=False)
         batch_data = self.data.iloc[indices]
-        x = self.merge_news(batch_data)
-        y = batch_data[["target"]]
-        x = x.drop(columns=["target"])
-        x = x.fillna(0)
-        return x.values, y.values
+        raise NotImplementedError("Tell Kenny to finish this method!")
 
     def merge_news(self, batch_data):
         for column in self.news_columns:
@@ -81,8 +77,8 @@ async def create_generators(
     if batch_size == 0:
         batch_size = n_train
     structured_data = shuffle(structured_data)
-    train = structured_data.loc[:n_train]
-    test = structured_data.loc[n_train:]
+    train = structured_data.iloc[:n_train]
+    test = structured_data.iloc[n_train:]
     train_generator = DataGenerator(train, news_data, batch_size=batch_size)
     test_generator = DataGenerator(test, news_data, batch_size=15)
     return train_generator, test_generator
