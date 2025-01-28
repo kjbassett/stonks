@@ -23,7 +23,7 @@
     {% endmacro %}
 
     {% macro render_checkbox(plugin_id, arg) %}
-        <input type="checkbox" id="{{ plugin.id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
             {% if arg.default %}checked{% endif %}>
     {% endmacro %}
 
@@ -38,6 +38,10 @@
                     {% elif arg['ui_element'] == 'slider' %}
                         {{ render_slider(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'checkbox' %}
+                        {{ render_checkbox(plugin.id, arg) }}
+                    {% elif arg['type'] == 'str' %}
+                        {{ render_textbox(plugin.id, arg) }}
+                    {% elif arg['type'] == 'bool' %}
                         {{ render_checkbox(plugin.id, arg) }}
                     {% endif %}
                     <!-- Add other UI elements as needed -->
