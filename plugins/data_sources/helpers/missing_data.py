@@ -11,6 +11,7 @@ from utils.market_calendar import (
     market_date_delta,
     all_open_dates,
 )
+from utils.project_utilities import call_limiter
 
 min_market_date = market_date_delta(CONFIG["min_date"])
 min_market_ts = int(
@@ -116,7 +117,8 @@ async def fill_gap(
 ):
     start, end = gap["start"], gap["end"]
     print("STARTING API CALL")
-    data = await get_data_func(client, cpy["symbol"], int(start), int(end))
+    async with call_limiter:
+        data = await get_data_func(client, cpy["symbol"], int(start), int(end))
 
     # save_new_data returns the number of rows inserted, so if it's 0,
     #   we don't want to try this gap again. We save the record of our attempt here

@@ -35,7 +35,7 @@ async def save_data(company_id, data):
                 "id": d["id"],
                 "source": d["publisher"]["name"],
                 "timestamp": int(
-                    datetime.fromisoformat(d["published_utc"]).timestamp()
+                    datetime.fromisoformat(d["published_utc"].replace('z', '+00:00')).timestamp()
                 ),
                 "title": d["title"],
                 "body": d.get("description", ""),

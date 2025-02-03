@@ -12,7 +12,8 @@ td = dao_manager.get_dao("TradingData")
 cp = dao_manager.get_dao("Company")
 
 
-async def get_data(client, symbol, start, end):
+async def get_data(client: StocksClient, symbol: str, start: int, end: int):
+    # Put everything into utc
     start = datetime.datetime.fromtimestamp(start, tz=datetime.timezone.utc)
     end = datetime.datetime.fromtimestamp(end, tz=datetime.timezone.utc)
     aggs = await client.get_aggregate_bars(
