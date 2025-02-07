@@ -23,6 +23,9 @@ async def get_data(client, symbol, start, end):
 
     if "results" in news_items:
         return news_items["results"]
+    else:
+        print(news_items)
+        return []
 
 
 async def save_data(company_id, data):
@@ -35,7 +38,7 @@ async def save_data(company_id, data):
                 "id": d["id"],
                 "source": d["publisher"]["name"],
                 "timestamp": int(
-                    datetime.fromisoformat(d["published_utc"].replace('z', '+00:00')).timestamp()
+                    datetime.fromisoformat(d["published_utc"].replace('Z', '+00:00')).timestamp()
                 ),
                 "title": d["title"],
                 "body": d.get("description", ""),
@@ -51,7 +54,7 @@ async def save_data(company_id, data):
     # insert data and return new rows in News table
     n = await news.insert(news_data)
     await nc_link.insert(n_c_link_data)
-
+    print(f"{n} rows inserted into News")
     return n
 
 
@@ -67,6 +70,7 @@ async def main(companies: str = "all"):
                 save_data,
                 companies,
                 min_gap_size=3600,
+                max_gap_size=86400*7
             )
     except asyncio.CancelledError:
         return

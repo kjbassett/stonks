@@ -20,7 +20,7 @@ min_market_ts = int(
 cmp = dao_manager.get_dao("Company")
 
 
-async def find_gaps(current_data, min_gap_size):
+async def find_gaps(current_data: pd.DataFrame, min_gap_size: int, adjust_for_market_hours: bool):
     # add dummy timestamps and end of time range to get all gaps
     ends = [min_market_ts, latest_market_time()]
     # TODO is it faster to test if there are gaps on the ends before concat?
@@ -51,7 +51,8 @@ async def find_gaps(current_data, min_gap_size):
     current_data = current_data.iloc[1:,]
 
     # Todo filter < gap threshold here as well to speed up apply? because adjusting gap can only make it smaller
-    current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
+    if adjust_for_market_hours:
+        current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
 
     # We choose to save a previously fetched time range in TradingDataGaps and NewsDataGaps table IF there were NO
     # results in the time range, so we can't include any row from current_data because we know there is data.
@@ -65,7 +66,7 @@ async def find_gaps(current_data, min_gap_size):
 
     gaps = current_data[
         current_data["gap"] > min_gap_size
-    ]  # gaps > 30 minutes are counted
+    ]  # gaps > min_gap_size minutes are counted
     gaps = gaps[["previous", "timestamp"]].rename(
         columns={"previous": "start", "timestamp": "end"}
     )
@@ -100,11 +101,44 @@ async def filter_out_past_attempts(table, gaps, company_id):
     # Check if gap already in corresponding gap table
     # ptg = previously tried gaps
     ptg = await dao_manager.get_dao(gap_table).get(company_id=company_id)
-    # left anti join gap and ptg
-    gaps = pd.merge(gaps, ptg, on=["start", "end"], how="outer", indicator=True)
-    gaps = gaps[gaps["_merge"] == "left_only"]
-    gaps = gaps[["start", "end"]]
-    return gaps
+    # Ensure both dataframes are sorted by start time
+    gaps = gaps.sort_values(by='start').reset_index(drop=True)
+    ptg = ptg.sort_values(by='start').reset_index(drop=True)
+
+    filtered_gaps = []
+    j = 0
+
+    for i, row1 in gaps.iterrows():
+        start1, end1 = row1['start'], row1['end']
+
+        while j < len(ptg):
+            start2, end2 = ptg.loc[j, 'start'], ptg.loc[j, 'end']
+
+            # If the second range starts after the first range ends, break
+            if start2 >= end1:
+                break
+
+            # If the second range ends before the first range starts, move to the next range in df2
+            if end2 <= start1:
+                j += 1
+                continue
+
+            # If there is an overlap, adjust the start and end of the first range
+            if start2 <= start1 < end2:
+                start1 = end2
+            elif start1 <= start2 < end1:
+                filtered_gaps.append({'start': start1, 'end': start2})
+                start1 = end2
+
+            # If the first range is completely within the second range, skip to the next range in df1
+            if start1 >= end1:
+                break
+
+        # If there is any remaining non-overlapping part of the first range, add it to the result
+        if start1 < end1:
+            filtered_gaps.append({'start': start1, 'end': end1})
+
+    return filtered_gaps
 
 
 async def fill_gap(
@@ -113,11 +147,11 @@ async def fill_gap(
     get_data_func,
     save_data_func: callable,
     cpy: pd.Series,
-    gap: pd.Series,
+    gap: dict,
 ):
     start, end = gap["start"], gap["end"]
-    print("STARTING API CALL")
     async with call_limiter:
+        print("STARTING API CALL")
         data = await get_data_func(client, cpy["symbol"], int(start), int(end))
 
     # save_new_data returns the number of rows inserted, so if it's 0,
@@ -127,6 +161,16 @@ async def fill_gap(
         await dao_manager.get_dao(gap_table).insert((cpy["id"], start, end))
 
 
+def break_large_gaps(gaps, max_gap_size):
+    new_gaps = []
+    for gap in gaps:
+        if gap["end"] - gap["start"] > max_gap_size:
+            s = gap["start"]
+            while s < gap["end"]:
+                new_gaps.append({"start": s, "end": min(s + max_gap_size, gap["end"])})
+                s += max_gap_size
+    return new_gaps
+
 async def fill_gaps(
     client,
     table: str,
@@ -134,15 +178,19 @@ async def fill_gaps(
     get_data_func: callable,
     save_data_func: callable,
     companies: str,
-    min_gap_size=1800,
+    min_gap_size: int = 1800,
+    max_gap_size: int = 0,
+    adjust_for_market_hours=False
 ):
     companies = await get_ticker_details(companies)
     tasks = []
     for _, cpy in companies.iterrows():
         current_data = await load_data_func(cpy["id"], min_market_ts)
-        gaps = await find_gaps(current_data, min_gap_size)
+        gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
         gaps = await filter_out_past_attempts(table, gaps, cpy["id"])
-        for _, gap in gaps.iterrows():
+        if max_gap_size:
+            gaps = break_large_gaps(gaps, max_gap_size)
+        for gap in gaps:
             # Create a task for each gap handling
             task = asyncio.create_task(
                 fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
