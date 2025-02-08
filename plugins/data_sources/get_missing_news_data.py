@@ -54,7 +54,8 @@ async def save_data(company_id, data):
     # insert data and return new rows in News table
     n = await news.insert(news_data)
     await nc_link.insert(n_c_link_data)
-    print(f"{n} rows inserted into News")
+    if n > 0:
+        print(f"{n} rows inserted into News")
     return n
 
 
@@ -70,7 +71,7 @@ async def main(companies: str = "all"):
                 save_data,
                 companies,
                 min_gap_size=3600,
-                max_gap_size=86400*7
+                max_gap_size=86400*30
             )
     except asyncio.CancelledError:
         return

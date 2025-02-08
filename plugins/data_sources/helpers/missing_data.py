@@ -101,6 +101,8 @@ async def filter_out_past_attempts(table, gaps, company_id):
     # Check if gap already in corresponding gap table
     # ptg = previously tried gaps
     ptg = await dao_manager.get_dao(gap_table).get(company_id=company_id)
+    # TODO This filter should be done in the query
+    ptg = ptg[ptg['end'] >= min_market_ts]  # only consider gaps that occurred in the past
     # Ensure both dataframes are sorted by start time
     gaps = gaps.sort_values(by='start').reset_index(drop=True)
     ptg = ptg.sort_values(by='start').reset_index(drop=True)
@@ -149,9 +151,8 @@ async def fill_gap(
     cpy: pd.Series,
     gap: dict,
 ):
-    start, end = gap["start"], gap["end"]
+    start, end = int(gap["start"]), int(gap["end"])
     async with call_limiter:
-        print("STARTING API CALL")
         data = await get_data_func(client, cpy["symbol"], int(start), int(end))
 
     # save_new_data returns the number of rows inserted, so if it's 0,
@@ -184,19 +185,23 @@ async def fill_gaps(
 ):
     companies = await get_ticker_details(companies)
     tasks = []
-    for _, cpy in companies.iterrows():
+    n_cpy = len(companies)
+    for c, cpy in companies.iterrows():
         current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
         gaps = await filter_out_past_attempts(table, gaps, cpy["id"])
         if max_gap_size:
             gaps = break_large_gaps(gaps, max_gap_size)
-        for gap in gaps:
+        n_gaps = len(gaps)
+        for g, gap in enumerate(gaps):
+            # print company and gap index out of total
+            print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
+            print(f"Gap {g + 1}/{n_gaps}, {gap['start']} - {gap['end']}, {gap['end'] - gap['start']} seconds")
             # Create a task for each gap handling
             task = asyncio.create_task(
                 fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
             )
             tasks.append(task)
-            print("TASK CREATED FOR GAP")
     # Wait for all tasks to complete
     print("WAITING FOR TASKS")
     await asyncio.gather(*tasks)
