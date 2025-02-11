@@ -10,16 +10,32 @@
     {% macro render_textbox(plugin_id, arg) %}
         <input type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
             value="{{ arg.default }}"
-            min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %}
-            max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
-            required="{{ 'required' if arg.required else 'optional' }}">
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
+            {% if arg.get('pattern') is not none %}pattern="{{ arg.pattern }}"{% endif %}
+            {{ 'required' if arg.required else '' }}>
+    {% endmacro %}
+
+    {% macro render_date(plugin_id, arg) %}
+        <input type="date" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
+            {{ 'required' if arg.required else '' }}>
     {% endmacro %}
 
     {% macro render_slider(plugin_id, arg) %}
-        <input type="range" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
             min="{{ arg.get('min', None) }}"
-            max="{{ arg.get('max', None) }}"
-            value="{{ arg.default }}">
+            max="{{ arg.get('max', None) }}">
+    {% endmacro %}
+
+    {% macro render_number(plugin_id, arg) %}
+        <input type="number" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_checkbox(plugin_id, arg) %}
@@ -41,6 +57,8 @@
                         {{ render_checkbox(plugin.id, arg) }}
                     {% elif arg['type'] == 'str' %}
                         {{ render_textbox(plugin.id, arg) }}
+                    {% elif arg['type'] == 'int' %}
+                        {{ render_number(plugin.id, arg) }}
                     {% elif arg['type'] == 'bool' %}
                         {{ render_checkbox(plugin.id, arg) }}
                     {% endif %}
