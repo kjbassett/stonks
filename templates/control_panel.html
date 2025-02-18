@@ -117,6 +117,8 @@
                         {{ render_checkbox(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'color' %}
                         {{ render_color(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'date' %}
+                        {{ render_date(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'datetime_local' %}
                         {{ render_datetime_local(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'email' %}
