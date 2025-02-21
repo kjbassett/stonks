@@ -13,7 +13,7 @@ news = dao_manager.get_dao("News")
 nc_link = dao_manager.get_dao("NewsCompanyLink")
 
 
-async def get_data(client, symbol, start, end):
+async def _get_data(client, symbol, start, end):
     news_items = await client.get_ticker_news(
         symbol,
         published_utc_gte=start * 1000,
@@ -67,7 +67,7 @@ async def main(companies: str = "all"):
                 client,
                 "News",
                 news.get_timestamps_by_company,
-                get_data,
+                _get_data,
                 save_data,
                 companies,
                 min_gap_size=3600,
@@ -75,3 +75,11 @@ async def main(companies: str = "all"):
             )
     except asyncio.CancelledError:
         return
+
+
+@plugin()
+async def get_data(symbol: str, start: int, end: int):
+    if symbol in ("all", "*"):
+        symbol = ""
+    async with ReferenceClient(get_key("polygon_io"), True) as client:
+        return await _get_data(client, symbol, start, end)
