@@ -20,7 +20,6 @@ class DataAggregator(BaseDAO):
         num_windows: int = 0,
         num_news: int = 0,
         news_history_threshold: int = 24 * 60 * 60,
-        include_symbol: bool = False,
         include_industry: bool = False,
         include_office: bool = False,
         include_price_change: bool = False,
@@ -38,7 +37,6 @@ class DataAggregator(BaseDAO):
             num_windows,
             num_news,
             news_history_threshold,
-            include_symbol,
             include_industry,
             include_office,
             include_price_change,
@@ -52,7 +50,6 @@ class DataAggregator(BaseDAO):
         )
         data = data[~data["target"].isnull()]
         print(data.dtypes)
-        data.to_csv("data.csv")
         return data
 
 
@@ -64,7 +61,6 @@ def construct_query(
     num_windows: int = 0,
     num_news: int = 0,
     news_history_threshold: int = 24 * 60 * 60,
-    include_symbol: bool = False,
     include_industry: bool = False,
     include_office: bool = False,
     include_price_change: bool = False,
@@ -76,21 +72,21 @@ def construct_query(
     # TODO break this function into smaller parts. One for each condition
     # Initialize the columns for the query
     ctes = []  # common table expressions
-    columns = ["t.close", "t.vw_average"]
-    joins = []
+    columns = ["t.close", "t.vw_average", "c.symbol", "c.name"]
+    joins = ["JOIN Company c ON t.company_id = c.id"]
 
     # target column
     pco_min = price_change_offset - 0.02 * price_change_offset
     pco_max = price_change_offset + 0.02 * price_change_offset
     columns.append(f"""
-((
+CAST(((
     SELECT AVG(t2.close)
     FROM TradingData t2 
     WHERE
         t2.company_id = t.company_id
         AND t2.timestamp >= t.timestamp + {pco_min}
         AND t2.timestamp <= t.timestamp + {pco_max}
-) - t.close) / t.close AS target""")
+) - t.close) / t.close AS REAL) AS target""")
 
     # hour, day of week, and month of year
     columns.append("CAST(strftime('%H', datetime(t.timestamp, 'unixepoch')) AS INTEGER) AS hour")
@@ -123,26 +119,16 @@ def construct_query(
     END AS month_name"""
     )
 
-    # company symbol
-    company_join = "JOIN Company c ON t.company_id = c.id"
-    if include_symbol:
-        columns.append("c.symbol")
-        joins.append(company_join)
-
     # industry
     # before "if include_industry" to guarantee that it gets defined for "if include_office" code block
     industry_join = "JOIN Industry i ON c.industry_id = i.id"
     if include_industry:
-        if company_join not in joins:
-            joins.append(company_join)
         columns.append("i.name AS industry")
         joins.append(industry_join)
 
     # industry office (aka industry category)
     if include_office:
         columns.append("io.name AS office")
-        if company_join not in joins:
-            joins.append(company_join)
         if industry_join not in joins:
             joins.append(industry_join)
         joins.append("JOIN IndustryOffice io ON i.office_id = io.id")
