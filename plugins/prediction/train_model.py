@@ -7,6 +7,7 @@ import pandas as pd
 from data_access.dao_manager import dao_manager
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal, DiscreteNonOrdinal
 from ezmt.model_tuner import ModelTuner
+from icecream import ic
 from plugins.decorator import plugin
 from plugins.prediction.create_model import create_combined_model
 from plugins.prediction.data_generator import create_generators
@@ -18,8 +19,9 @@ import tensorflow as tf
 
 @plugin(model_name={"ui_element": "textbox"})
 async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
+    min_timestamp = 1734757200  # TODO Delete this line later!
     hyperparams, model_space = create_model_space(max_timestamp, min_timestamp, model_name)
-    mt = ModelTuner(model_space, hyperparams, None, "target", 5, 5)
+    mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
     model = await mt.run()
     model.save(model_name)
 
@@ -30,7 +32,7 @@ async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: in
             "name": "load_data",
             "train": {
                 "func": load_short_data,
-                "outputs": ["structured_data", "enc_text_data"]
+                "outputs": ["structured_data", "text_data"]
             }
         }
     ] + model_space[-3:]
@@ -39,10 +41,12 @@ async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: in
     model = await mt.run()
     model.save(model_name)
 
+
 def load_short_data():
     structured_data = pd.read_csv("data6.csv", index_col=0).reset_index(drop=True)
     news_data = pd.read_csv("news_data.csv")
     return structured_data, news_data
+
 
 def create_model_space(max_timestamp, min_timestamp, model_name):
     hyperparams = {
@@ -53,7 +57,6 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         "num_windows": DiscreteOrdinal([3, 5, 10]),
         "num_news": DiscreteOrdinal([1]),
         "news_history_threshold": ContinuousRange(24 * 60 * 60, 5 * 24 * 60 * 60),
-        "include_symbol": DiscreteOrdinal([False]),
         "include_industry": DiscreteOrdinal([False]),
         "include_office": DiscreteOrdinal([True, False]),
         "include_price_change": DiscreteOrdinal([True, False]),
@@ -64,7 +67,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         "n_hidden_layers": DiscreteOrdinal([1, 2, 3, 4, 5, 6, 7]),
         "hidden_layer_dim": DiscreteOrdinal([100, 250, 500, 750, 1000, 1500, 2000]),
         "dropout_rate": ContinuousRange(0.3, 0.4),
-        "missing_data_%_threshold": ContinuousRange(0, 0.25)
+        "missing_data_%_threshold": ContinuousRange(0.2, 0.25)
     }
     model_space = [
         {
@@ -79,18 +82,15 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "num_windows": "num_windows",
                     "num_news": "num_news",
                     "news_history_threshold": "news_history_threshold",
-                    "include_symbol": "include_symbol",
                     "include_industry": "include_industry",
                     "include_office": "include_office",
                     "include_price_change": "include_price_change",
                     "include_volume_change": "include_volume_change",
                     "include_coeff_var": "include_coeff_var",
                     "include_price_over_average": "include_price_over_average",
-                    "include_volume_over_average": "include_volume_over_average",
-                    "text_encoder": "M-FAC/bert-tiny-finetuned-mrpc",
-                    "max_text_length": "max_text_length",
+                    "include_volume_over_average": "include_volume_over_average"
                 },
-                "outputs": ["structured_data", "enc_text_data"],
+                "outputs": ["structured_data", "text_data"],
             }
         },
         {
@@ -115,7 +115,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": impute,
                 "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["news1_id", "target"]},
+                "kwargs": {"ignore_cols": ["target"]},
                 "outputs": ["structured_data", "imputer"],
             },
             # "inference": {
@@ -129,7 +129,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": one_hot_encode,
                 "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["news1_id"]},
+                "kwargs": {"ignore_cols": ["news1_id", "symbol", "name"]},
                 "outputs": ["structured_data", "one_hot_encoder"]
             },
             # "inference": {
@@ -143,9 +143,11 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": create_generators,
                 "args": [
-                    "batch_size",
                     "structured_data",
-                    "enc_text_data",
+                    "text_data",
+                    "batch_size",
+                    "M-FAC/bert-tiny-finetuned-mrpc",
+                    "max_text_length"
                 ],
                 "outputs": ["train_generator", "test_generator"],
             },
@@ -154,7 +156,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "name": "get_structured_input_dim",
             "train": {
                 "func": get_num_x_columns,
-                "args": ["structured_data", "num_news"],
+                "args": ["structured_data"],
                 "outputs": "structured_input_dim",
             },
         },
@@ -189,18 +191,15 @@ async def load_data(
     num_windows: int = 0,
     num_news: int = 0,
     news_history_threshold: int = 24 * 60 * 60,
-    include_symbol: bool = False,
     include_industry: bool = False,
     include_office: bool = False,
     include_price_change: bool = False,
     include_volume_change: bool = False,
     include_coeff_var: bool = False,
     include_price_over_average: bool = False,
-    include_volume_over_average: bool = False,
-    text_encoder: str = None,
-    max_text_length: int = 512,
+    include_volume_over_average: bool = False
 ):
-    structure_data = await get_structure_data(
+    structure_data = await get_structured_data(
         price_change_offset,
         min_timestamp,
         max_timestamp,
@@ -208,7 +207,6 @@ async def load_data(
         num_windows,
         num_news,
         news_history_threshold,
-        include_symbol,
         include_industry,
         include_office,
         include_price_change,
@@ -218,13 +216,14 @@ async def load_data(
         include_volume_over_average,
     )
     if num_news > 0:
-        news_data = await get_news_data(text_encoder, max_text_length)
+        news_data_dao = dao_manager.get_dao("News")
+        news_data = await news_data_dao.get_all()
     else:
         news_data = None
     return structure_data, news_data
 
 
-async def get_structure_data(
+async def get_structured_data(
     price_change_offset,
     min_timestamp,
     max_timestamp,
@@ -232,7 +231,6 @@ async def get_structure_data(
     num_windows,
     num_news,
     news_history_threshold,
-    include_symbol,
     include_industry,
     include_office,
     include_price_change,
@@ -250,7 +248,6 @@ async def get_structure_data(
         num_windows,
         num_news,
         news_history_threshold,
-        include_symbol,
         include_industry,
         include_office,
         include_price_change,
@@ -259,33 +256,6 @@ async def get_structure_data(
         include_price_over_average,
         include_volume_over_average
     )
-
-
-async def get_news_data(text_encoder, max_text_length):
-    # Should I init the dao manager?
-    news_data_dao = dao_manager.get_dao("News")
-    news_data = await news_data_dao.get_all()
-    tokenizer = BertTokenizer.from_pretrained(text_encoder)  # tokenizer uses same name as encoder
-    enocded = news_data["body"].apply(encode_text, args=(tokenizer, max_text_length))
-    enocded_expanded = pd.DataFrame(enocded.tolist(), index=news_data.index)
-    news_data = pd.concat([news_data.drop(columns=['body']), enocded_expanded], axis=1)
-    news_data = news_data[['id'] + list(enocded_expanded.columns)]
-    news_data.to_csv("news_data.csv")
-    return news_data
-
-
-def encode_text(text, tokenizer, max_length):
-    encoded_dict = tokenizer.encode_plus(
-        text,
-        add_special_tokens=True,
-        max_length=max_length,
-        padding="max_length",
-        truncation=True,
-        return_attention_mask=True,
-        return_tensors="tf"
-    )
-
-    return np.hstack([encoded_dict["input_ids"], encoded_dict["attention_mask"]])[0]
 
 
 def filter_out_missing_data(structured_data, missing_data_threshold):
@@ -351,7 +321,6 @@ def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = No
     if ignore_cols is None:
         ignore_cols = []
     cols_to_encode = dataframe.select_dtypes(include=['object']).columns.difference(ignore_cols)
-
     if encoder is None:
         encoder = OneHotEncoder(handle_unknown='ignore')
         encoded_data = encoder.fit_transform(dataframe[cols_to_encode]).toarray()
@@ -420,11 +389,11 @@ def save_model(model, model_folder: str = "models", model_name: str = None):
     return model_path
 
 
-def get_num_x_columns(structured_data, num_news=0):
+def get_num_x_columns(structured_data):
+    n_cols = structured_data.shape[1] - structured_data.select_dtypes(include='object').shape[1]
     if "target" in structured_data.columns:
-        return structured_data.shape[1] - 1 - num_news  # exclude target and news_id columns
-    else:
-        return structured_data.shape[1] - num_news
+        n_cols -= 1
+    return n_cols
 
 
 def get_score(history):
@@ -467,9 +436,3 @@ def plot_moving_average(history, window_size):
 
     # Show the plot
     plt.savefig("loss_history.png")
-
-
-if __name__ == "__main__":
-    df = pd.read_csv("C:\Coding\stonks\data3.csv")
-    df, encoders = one_hot_encode(df, ignore_cols=["industry_id", "news1_id"])
-    df.to_csv("ohedata.csv")
