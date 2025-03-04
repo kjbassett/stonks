@@ -1,4 +1,5 @@
 from config import CONFIG
+import asyncio
 
 
 def get_key(key_name):
@@ -8,3 +9,6 @@ def get_key(key_name):
             if name == key_name:
                 return key
     raise ValueError(f"No key found for key named: {key_name}")
+
+
+call_limiter = asyncio.Semaphore(32)

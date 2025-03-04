@@ -12,7 +12,8 @@ td = dao_manager.get_dao("TradingData")
 cp = dao_manager.get_dao("Company")
 
 
-async def get_data(client, symbol, start, end):
+async def _get_data(client: StocksClient, symbol: str, start: int, end: int):
+    # Put everything into utc
     start = datetime.datetime.fromtimestamp(start, tz=datetime.timezone.utc)
     end = datetime.datetime.fromtimestamp(end, tz=datetime.timezone.utc)
     aggs = await client.get_aggregate_bars(
@@ -41,17 +42,26 @@ async def save_data(company_id, data):
 
 
 @plugin()
-async def main(companies: str = "all"):
+async def fill_missing(companies: str = "all"):
     try:
         async with StocksClient(get_key("polygon_io"), True) as client:
             await fill_gaps(
                 client,
                 "TradingData",
                 td.get_timestamps_by_company,
-                get_data,
+                _get_data,
                 save_data,
                 companies,
                 min_gap_size=1800,  # 30 minutes
+                adjust_for_market_hours=True
             )
     except asyncio.CancelledError:
         return
+
+
+@plugin()
+async def get_data(symbol: str, start: int, end: int):
+    if symbol in ("all", "*"):
+        symbol = ""
+    async with StocksClient(get_key("polygon_io"), True) as client:
+        return await _get_data(client, symbol, start, end)

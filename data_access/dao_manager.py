@@ -19,7 +19,7 @@ class DAOManager:
         return cls._instance
 
     async def initialize(self):
-        name = CONFIG["db_folder"] + CONFIG["db_name"]
+        name = os.path.join(CONFIG["db_folder"], CONFIG["db_name"])
         self.db = AsyncDatabase(name)
 
         non_base_daos = [

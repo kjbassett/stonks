@@ -1,6 +1,7 @@
 from typing import Tuple, Union, List
 
 import aiosqlite
+import asyncio
 import pandas as pd
 from async_lru import alru_cache
 from icecream import ic
@@ -10,6 +11,7 @@ class AsyncDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn = None
+        self.query_limiter = asyncio.Semaphore(32)
 
     async def connect(self):
         if self.conn is None:
@@ -32,27 +34,31 @@ class AsyncDatabase:
         return_type: str = "list",
         many=False,
         query_type="",
+        print_query=False,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
-        ic(query)
-        await self.connect()
-        if many:  # TODO detect this automatically somehow
-            cursor = await self.conn.executemany(query, params)
-        else:
-            cursor = await self.conn.execute(query, params)
+        async with self.query_limiter:
+            if print_query:
+                print(f"Executing query:\n{query}")
+                ic(params)
+            await self.connect()
+            if many:  # TODO detect this automatically somehow
+                cursor = await self.conn.executemany(query, params)
+            else:
+                cursor = await self.conn.execute(query, params)
 
-        if query.strip().upper().startswith("SELECT") or query_type.upper() == "SELECT":
-            result = await cursor.fetchall()
-            if return_type == "DataFrame":
-                # get columns from cursor
-                columns = [column[0] for column in cursor.description]
-                result = pd.DataFrame(result, columns=columns)
-            await cursor.close()
-            return result
-        else:
-            await self.conn.commit()
-            rowcount = cursor.rowcount
-            await cursor.close()
-            return rowcount  # Return number of rows affected
+            if query.strip().upper().startswith("SELECT") or query_type.upper() == "SELECT":
+                result = await cursor.fetchall()
+                if return_type == "DataFrame":
+                    # get columns from cursor
+                    columns = [column[0] for column in cursor.description]
+                    result = pd.DataFrame(result, columns=columns)
+                await cursor.close()
+                return result
+            else:
+                await self.conn.commit()
+                rowcount = cursor.rowcount
+                await cursor.close()
+                return rowcount  # Return number of rows affected
 
     async def get_all_tables(self):
         result = await self.execute_query(

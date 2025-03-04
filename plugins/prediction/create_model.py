@@ -12,62 +12,55 @@ def get_text_embedding(text_model, input_ids, attention_mask):
 
 @plugin()
 def create_combined_model(
-    model_name: str,
-    num_texts: str,
+    num_texts: int,
     structured_input_dim: int,
+    n_hidden_layers: int,
     combined_hidden_dim: int,
     output_dim: int,
-    text_model_name: str = "bert-base-uncased",
-    output_activation: str = "sigmoid",
+    text_model_name: str = "M-FAC/bert-tiny-finetuned-mrpc",  # distilbert-base-uncased, M-FAC/bert-tiny-finetuned-mrpc, bert-base-uncased
+    output_activation: str = "linear",
     dropout_rate: float = 0.3,
 ):
-    text_encoder = TFBertModel.from_pretrained(text_model_name)
+    # Load the pre-trained text encoder (BERT)
+    text_encoder = TFBertModel.from_pretrained(text_model_name, from_pt=True)
+    text_encoder.trainable = False  # freeze the pre-trained text encoder
 
-    # One input layer for all tokenized text inputs and structured numerical input
-    input_layer = tf.keras.layers.Input(
-        shape=(512 * 2 * num_texts + structured_input_dim,),
-        dtype=tf.float32,
-        name="combined_input",
-    )
+    # Structured numerical input
+    structured_input = tf.keras.layers.Input(shape=(structured_input_dim,), name="structured_input")
 
-    # for each text input, get corresponding slices from the input layer for the input ids and attention masks
-    all_text_embeddings = []
+    # Textual inputs (input IDs and attention masks for each text)
+    inputs = [structured_input]
+    text_embeddings = []
     for i in range(num_texts):
-        slice_start = i * 512 * 2
-        # first 512 tokens are input ids, next 512 are attention masks
-        input_ids = tf.cast(
-            input_layer[:, slice_start : slice_start + 512],
-            dtype=tf.int32,
-            name=f"input_ids_{i}",
-        )
-        attention_mask = tf.cast(
-            input_layer[:, slice_start + 512 : slice_start + 512 * 2],
-            dtype=tf.int32,
-            name=f"attention_mask_{i}",
-        )
+        text_input = tf.keras.layers.Input(shape=(512,), dtype=tf.int32, name=f"input_ids_{i + 1}")
+        attention_mask = tf.keras.layers.Input(shape=(512,), dtype=tf.int32, name=f"attention_mask_{i + 1}")
+        inputs.extend([text_input, attention_mask])
 
-        embedding = get_text_embedding(text_encoder, input_ids, attention_mask)
-        all_text_embeddings.append(embedding)
-
-    structured_input = tf.identity(
-        input_layer[:, -structured_input_dim:], name="structured_input"
-    )
+        # Get embedding for each text input
+        embedding = text_encoder(input_ids=text_input, attention_mask=attention_mask).last_hidden_state  # pooler_output
+        text_embeddings.append(tf.keras.layers.Flatten()(embedding))
 
     # combine all text embeddings and the structured input into a single input layer for the combined model
-    combined = tf.keras.layers.Concatenate()([*all_text_embeddings, structured_input])
+    combined = tf.keras.layers.Concatenate()([structured_input, *text_embeddings])
 
-    # combined model is a fully connected neural network
-    combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
-    combined = tf.keras.layers.Dropout(dropout_rate)(combined)
-    combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
-    combined = tf.keras.layers.Dropout(dropout_rate)(combined)
+    # Fully connected layers
+    for _ in range(n_hidden_layers):
+        combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
+        combined = tf.keras.layers.Dropout(dropout_rate)(combined)
 
     output = tf.keras.layers.Dense(output_dim, activation=output_activation)(combined)
 
-    model = tf.keras.Model(inputs=input_layer, outputs=output)
+    model = tf.keras.Model(inputs=inputs, outputs=output)
     model.summary()
-    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    optimizer = tf.keras.optimizers.Adam()
+    model.compile(optimizer=optimizer, loss="mean_squared_error")
 
-    model.save(f"{model_name}.h5")
+    tf.keras.utils.plot_model(
+        model,
+        to_file="model.png",
+        show_shapes=True,
+        show_layer_names=True,
+        expand_nested=True,
+    )
 
     return model
