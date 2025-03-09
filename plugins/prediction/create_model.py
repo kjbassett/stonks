@@ -53,7 +53,7 @@ def create_combined_model(
     model = tf.keras.Model(inputs=inputs, outputs=output)
     model.summary()
     optimizer = tf.keras.optimizers.Adam()
-    model.compile(optimizer=optimizer, loss="mean_squared_error")
+    model.compile(optimizer=optimizer, loss=smape)
 
     tf.keras.utils.plot_model(
         model,
@@ -64,3 +64,20 @@ def create_combined_model(
     )
 
     return model
+
+
+def smape(y_true, y_pred):
+    """
+    Calculate Symmetric Mean Absolute Percentage Error (sMAPE).
+
+    Parameters:
+    - y_true: tf.Tensor
+        The true values.
+    - y_pred: tf.Tensor
+        The predicted values.
+
+    Returns:
+    - smape: tf.Tensor
+        The sMAPE value.
+    """
+    return tf.reduce_mean(2 * tf.abs(y_true - y_pred) / (tf.abs(y_true) + tf.abs(y_pred))) * 100

@@ -11,7 +11,6 @@ from icecream import ic
 from plugins.decorator import plugin
 from plugins.prediction.create_model import create_combined_model
 from plugins.prediction.data_generator import create_generators
-from transformers import BertTokenizer
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
 import tensorflow as tf
@@ -137,6 +136,14 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             #     "args": ["structured_data", "one_hot_encoder"],
             #     "outputs": "structured_data",
             # }
+        },
+        {
+            "name": "save_data",
+            "train": {
+                "func": save_data,
+                "args": ["structured_data", "text_data"],
+                "outputs": [],
+            },
         },
         {
             "name": "create_generators",
@@ -347,6 +354,12 @@ def impute(dataframe, imputer=None, ignore_cols=None):
     imputed_data = pd.DataFrame(imputed_array, columns=df_to_impute.columns).reset_index(drop=True)
     dataframe = pd.concat([imputed_data, dataframe[ignore_cols].reset_index(drop=True)], axis=1)
     return dataframe, imputer
+
+
+def save_data(structured_data, news_data):
+    structured_data.to_csv("structured_data.csv", index=False)
+    if news_data is not None:
+        news_data.to_csv("news_data.csv", index=False)
 
 
 def create_and_train(
