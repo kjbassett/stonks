@@ -5,7 +5,7 @@ from functools import partial
 import pandas as pd
 from config import CONFIG
 from data_access.dao_manager import dao_manager
-from plugins.data_sources.tickers import get_ticker_details
+from plugins.data_sources.tickers import get_companies
 from utils.market_calendar import (
     latest_market_time,
     market_date_delta,
@@ -183,7 +183,7 @@ async def fill_gaps(
     max_gap_size: int = 0,
     adjust_for_market_hours=False
 ):
-    companies = await get_ticker_details(companies)
+    companies = await get_companies(companies)
     tasks = []
     n_cpy = len(companies)
     for c, cpy in companies.iterrows():
