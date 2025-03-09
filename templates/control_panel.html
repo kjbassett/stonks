@@ -10,21 +10,97 @@
     {% macro render_textbox(plugin_id, arg) %}
         <input type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
             value="{{ arg.default }}"
-            min={% if arg.get('min') is not none %}min="{{ arg.get('min') }}"{% endif %}
-            max={% if arg.get('max') is not none %}min="{{ arg.get('max') }}"{% endif %}
-            required="{{ 'required' if arg.required else 'optional' }}">
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
+            {% if arg.get('pattern') is not none %}pattern="{{ arg.pattern }}"{% endif %}
+            {{ 'required' if arg.required else '' }}>
+    {% endmacro %}
+
+    {% macro render_date(plugin_id, arg) %}
+        <input type="date" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
+            {{ 'required' if arg.required else '' }}>
     {% endmacro %}
 
     {% macro render_slider(plugin_id, arg) %}
-        <input type="range" id="{{ plugin.id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
             min="{{ arg.get('min', None) }}"
-            max="{{ arg.get('max', None) }}"
-            value="{{ arg.default }}">
+            max="{{ arg.get('max', None) }}">
+    {% endmacro %}
+
+    {% macro render_number(plugin_id, arg) %}
+        <input type="number" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_checkbox(plugin_id, arg) %}
-        <input type="checkbox" id="{{ plugin.id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
             {% if arg.default %}checked{% endif %}>
+    {% endmacro %}
+
+    {% macro render_color(plugin_id, arg) %}
+        <input type="color" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.default }}">
+    {% endmacro %}
+
+    {% macro render_datetime_local(plugin_id, arg) %}
+        <input type="datetime-local" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
+    {% endmacro %}
+
+    {% macro render_email(plugin_id, arg) %}
+        <input type="email" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            pattern=".+@example\.com"
+            size="30">
+    {% endmacro %}
+
+    {% macro render_file(plugin_id, arg) %}
+        <input type="file" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            accept="{{ arg.accept }}">
+    {% endmacro %}
+
+    {% macro render_month(plugin_id, arg) %}
+        <input type="month" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
+    {% endmacro %}
+
+    {% macro render_password(plugin_id, arg) %}
+        <input type="password" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            minlength="{{ arg.minlength }}">
+    {% endmacro %}
+
+    {% macro render_tel(plugin_id, arg) %}
+        <input type="tel" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.value }}">
+    {% endmacro %}
+
+    {% macro render_time(plugin_id, arg) %}
+        <input type="time" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
+    {% endmacro %}
+
+    {% macro render_url(plugin_id, arg) %}
+        <input type="url" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.value }}">
+    {% endmacro %}
+
+    {% macro render_week(plugin_id, arg) %}
+        <input type="week" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+            value="{{ arg.default }}"
+            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
+            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_plugin(plugin_name, plugin) %}
@@ -38,6 +114,34 @@
                     {% elif arg['ui_element'] == 'slider' %}
                         {{ render_slider(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'checkbox' %}
+                        {{ render_checkbox(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'color' %}
+                        {{ render_color(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'date' %}
+                        {{ render_date(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'datetime_local' %}
+                        {{ render_datetime_local(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'email' %}
+                        {{ render_email(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'file' %}
+                        {{ render_file(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'month' %}
+                        {{ render_month(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'password' %}
+                        {{ render_password(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'tel' %}
+                        {{ render_tel(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'time' %}
+                        {{ render_time(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'url' %}
+                        {{ render_url(plugin.id, arg) }}
+                    {% elif arg['ui_element'] == 'week' %}
+                        {{ render_week(plugin.id, arg) }}
+                    {% elif arg['type'] == 'str' %}
+                        {{ render_textbox(plugin.id, arg) }}
+                    {% elif arg['type'] == 'int' %}
+                        {{ render_number(plugin.id, arg) }}
+                    {% elif arg['type'] == 'bool' %}
                         {{ render_checkbox(plugin.id, arg) }}
                     {% endif %}
                     <!-- Add other UI elements as needed -->
