@@ -1,5 +1,5 @@
 import numpy as np
-from icecream import ic
+from functools import lru_cache
 from transformers import BertTokenizer
 from tensorflow import keras
 import pandas as pd
@@ -22,7 +22,6 @@ class DataGenerator(keras.utils.Sequence):
         batch_data = self.data[index * self.batch_size: (index + 1) * self.batch_size]
 
         x_structured = batch_data.drop(columns=self.news_columns + ["name", "symbol", "target"]).fillna(0)
-        x_structured.to_csv(f"structured_batch_{index}.csv", index=False)
         x = [x_structured.values]
 
         # Merge news data for each news column
@@ -62,7 +61,6 @@ class DataGenerator(keras.utils.Sequence):
         contextualized_news = contextualized_news.fillna("")  # Fill missing news with empty string
         encoded = contextualized_news.apply(encode_text, args=(self.tokenizer, self.max_text_length))
         encoded_expanded = pd.DataFrame(encoded.tolist(), index=news_data.index)
-        encoded_expanded.to_csv("news_data.csv")
         return encoded_expanded
 
 
@@ -79,6 +77,7 @@ def _get_news_columns(batch_data):
     return news_columns
 
 
+@lru_cache(maxsize=1024)
 def encode_text(text, tokenizer, max_length):
     encoded_dict = tokenizer.encode_plus(
         text,
