@@ -3,12 +3,14 @@
 <head>
     <title>Control Panel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='control_panel.css') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
     <script src="{{ url_for('static', filename='control_panel.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 </head>
 <body>
 
     {% macro render_textbox(plugin_id, arg) %}
-        <input type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input class="form-control" type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
@@ -17,7 +19,7 @@
     {% endmacro %}
 
     {% macro render_date(plugin_id, arg) %}
-        <input type="date" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input class="form-control" type="date" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
@@ -25,79 +27,79 @@
     {% endmacro %}
 
     {% macro render_slider(plugin_id, arg) %}
-        <input type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input class="form-control" type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
             value="{{ arg.default }}"
             min="{{ arg.get('min', None) }}"
             max="{{ arg.get('max', None) }}">
     {% endmacro %}
 
     {% macro render_number(plugin_id, arg) %}
-        <input type="number" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input class="form-control" type="number" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_checkbox(plugin_id, arg) %}
-        <input type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
             {% if arg.default %}checked{% endif %}>
     {% endmacro %}
 
     {% macro render_color(plugin_id, arg) %}
-        <input type="color" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="color" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}">
     {% endmacro %}
 
     {% macro render_datetime_local(plugin_id, arg) %}
-        <input type="datetime-local" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="datetime-local" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_email(plugin_id, arg) %}
-        <input type="email" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="email" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             pattern=".+@example\.com"
             size="30">
     {% endmacro %}
 
     {% macro render_file(plugin_id, arg) %}
-        <input type="file" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="file" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             accept="{{ arg.accept }}">
     {% endmacro %}
 
     {% macro render_month(plugin_id, arg) %}
-        <input type="month" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="month" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_password(plugin_id, arg) %}
-        <input type="password" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="password" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             minlength="{{ arg.minlength }}">
     {% endmacro %}
 
     {% macro render_tel(plugin_id, arg) %}
-        <input type="tel" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="tel" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.value }}">
     {% endmacro %}
 
     {% macro render_time(plugin_id, arg) %}
-        <input type="time" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="time" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_url(plugin_id, arg) %}
-        <input type="url" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="url" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.value }}">
     {% endmacro %}
 
     {% macro render_week(plugin_id, arg) %}
-        <input type="week" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="form-control" type="week" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
             value="{{ arg.default }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
@@ -108,7 +110,7 @@
             <h4>{{ plugin_name }}</h4>
             <form id="plugin-form-{{ plugin.id }}" action="/start/{{plugin.id}}" method="post">
                 {% for arg in plugin.arguments %}
-                    <label for="{{ plugin.id + '.' + arg.name }}">{{ arg.name }}:</label>
+                    <label class="form-label" for="{{ plugin.id + '.' + arg.name }}">{{ arg.name }}</label>
                     {% if arg['ui_element'] == 'textbox' %}
                         {{ render_textbox(plugin.id, arg) }}
                     {% elif arg['ui_element'] == 'slider' %}
@@ -146,8 +148,8 @@
                     {% endif %}
                     <!-- Add other UI elements as needed -->
                 {% endfor %}
-                <button type="submit">Start</button>
-                <button type="button" onclick="stop('{{ plugin.id }}')">Stop</button>
+                <button class="btn btn-success" type="submit">Start</button>
+                <button class="btn btn-danger" type="button" onclick="stop('{{ plugin.id }}')">Stop</button>
             </form>
             <div class="tooltip">
                 <span class="tooltiptext">{{ plugin.doc }}</span>

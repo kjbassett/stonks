@@ -1,9 +1,9 @@
 body {
     background: url('https://static.vecteezy.com/system/resources/previews/007/153/280/original/abstract-diagonal-stripes-background-stripe-pattern-design-modern-background-free-vector.jpg');
     background-size: cover;
-    display: flex;
+    /*display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: center;*/
     font-family: Arial, sans-serif;
 }
 
