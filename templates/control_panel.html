@@ -11,7 +11,7 @@
 
     {% macro render_textbox(plugin_id, arg) %}
         <input class="form-control" type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
             {% if arg.get('pattern') is not none %}pattern="{{ arg.pattern }}"{% endif %}
@@ -20,7 +20,7 @@
 
     {% macro render_date(plugin_id, arg) %}
         <input class="form-control" type="date" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
             {{ 'required' if arg.required else '' }}>
@@ -28,14 +28,14 @@
 
     {% macro render_slider(plugin_id, arg) %}
         <input class="form-control" type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             min="{{ arg.get('min', None) }}"
             max="{{ arg.get('max', None) }}">
     {% endmacro %}
 
     {% macro render_number(plugin_id, arg) %}
         <input class="form-control" type="number" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
@@ -47,19 +47,19 @@
 
     {% macro render_color(plugin_id, arg) %}
         <input class="form-control" type="color" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}">
+            value="{{ arg.default if arg.default is not none else '' }}">
     {% endmacro %}
 
     {% macro render_datetime_local(plugin_id, arg) %}
         <input class="form-control" type="datetime-local" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
 
     {% macro render_email(plugin_id, arg) %}
         <input class="form-control" type="email" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             pattern=".+@example\.com"
             size="30">
     {% endmacro %}
@@ -71,7 +71,7 @@
 
     {% macro render_month(plugin_id, arg) %}
         <input class="form-control" type="month" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
@@ -88,7 +88,7 @@
 
     {% macro render_time(plugin_id, arg) %}
         <input class="form-control" type="time" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
@@ -100,7 +100,7 @@
 
     {% macro render_week(plugin_id, arg) %}
         <input class="form-control" type="week" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default }}"
+            value="{{ arg.default if arg.default is not none else '' }}"
             {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
             {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
     {% endmacro %}
