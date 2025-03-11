@@ -41,7 +41,7 @@
     {% endmacro %}
 
     {% macro render_checkbox(plugin_id, arg) %}
-        <input class="form-control" type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+        <input class="" type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
             {% if arg.default %}checked{% endif %}>
     {% endmacro %}
 

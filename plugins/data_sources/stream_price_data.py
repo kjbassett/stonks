@@ -39,3 +39,27 @@ async def main(db, companies: list | None = None):
         pass
     finally:
         await stream_client.close_stream()
+
+# test function for all template input types
+@plugin(
+    date={"ui_element": "date"},
+    slider={"ui_element": "slider", "default": 50, "min": 0, "max": 100},
+    color={"ui_element": "color", "default": "#000000"},
+    datetime_local={"ui_element": "datetime_local", "default": "2021-01-01T00:00"},
+    email={"ui_element": "email"},
+    file={"ui_element": "file"},
+    month={"ui_element": "month"},
+    password={"ui_element": "password"}
+)
+async def test_ui_elements(text: str, check: bool, integer: int, date: str, slider: int, color: str, datetime_local: str, email: str, file: str, month: str, password: str):
+    print(f"text: {text}")
+    print(f"check: {check}")
+    print(f"integer: {integer}")
+    print(f"date: {date}")
+    print(f"slider: {slider}")
+    print(f"color: {color}")
+    print(f"datetime_local: {datetime_local}")
+    print(f"email: {email}")
+    print(f"file: {file}")
+    print(f"month: {month}")
+    print(f"password: {password}")
