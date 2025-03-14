@@ -73,7 +73,7 @@ def load_plugins(folder="plugins"):
                 module = importlib.import_module(import_path, package=folder)
 
                 for name, func in inspect.getmembers(module, inspect.isfunction):
-                    if getattr(func, "is_plugin", False):
+                    if getattr(func, "is_plugin", False) and os.path.join(root, file) in inspect.getsourcefile(func):
                         # add plugin function to plugins
                         import_path = import_path.strip(".")
                         func_path = f"{import_path}.{name}"
@@ -81,14 +81,10 @@ def load_plugins(folder="plugins"):
 
                         # add plugin metadata to folder-structured metadata
                         parts = import_path.split(".")
-                        ic(parts)
                         current_level = metadata
                         # Recursively enter/create folder structure to put metadata in correct spot
                         for part in parts:
                             current_level = current_level.setdefault(part, {})
                         current_level[name] = load_plugin_metadata(func)
                         current_level[name]["id"] = func_path
-
-    ic(metadata)
-    ic(plugins)
     return metadata, plugins
