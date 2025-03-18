@@ -27,7 +27,7 @@
     {% endmacro %}
 
     {% macro render_slider(plugin_id, arg) %}
-        <input class="form-control" type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
+        <input class="form-range" type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
             value="{{ arg.default if arg.default is not none else '' }}"
             min="{{ arg.get('min', None) }}"
             max="{{ arg.get('max', None) }}">
@@ -41,8 +41,10 @@
     {% endmacro %}
 
     {% macro render_checkbox(plugin_id, arg) %}
-        <input class="" type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
-            {% if arg.default %}checked{% endif %}>
+        <div>
+            <input class="form-check-input" type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
+                {% if arg.default %}checked{% endif %}>
+        </div>
     {% endmacro %}
 
     {% macro render_color(plugin_id, arg) %}
