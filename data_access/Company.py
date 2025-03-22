@@ -33,4 +33,4 @@ class Company(BaseDAO):
                     "No company found, and no symbol provided to create new company."
                 )
 
-        return company.loc[0, "id"]
+        return int(company.loc[0, "id"])
