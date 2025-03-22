@@ -60,7 +60,7 @@ async def fill_missing(companies: str = "all"):
 
 
 @plugin()
-async def get_data(symbol: str, start: int, end: int):
+async def query_api(symbol: str, start: int, end: int):
     if symbol in ("all", "*"):
         symbol = ""
     async with StocksClient(get_key("polygon_io"), True) as client:

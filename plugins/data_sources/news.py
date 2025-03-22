@@ -14,18 +14,13 @@ nc_link = dao_manager.get_dao("NewsCompanyLink")
 
 
 async def _get_data(client, symbol, start, end):
-    news_items = await client.get_ticker_news(
+    return await client.get_ticker_news(
         symbol,
         published_utc_gte=start * 1000,
         published_utc_lte=end * 1000,
+        all_pages=True,
         merge_all_pages=True,
     )
-
-    if "results" in news_items:
-        return news_items["results"]
-    else:
-        print(news_items)
-        return []
 
 
 async def save_data(company_id, data):
@@ -60,7 +55,8 @@ async def save_data(company_id, data):
 
 
 @plugin()
-async def main(companies: str = "all"):
+async def fill_missing(companies: str = "all"):
+    print(companies)
     try:
         async with ReferenceClient(get_key("polygon_io"), True) as client:
             await fill_gaps(
@@ -71,15 +67,16 @@ async def main(companies: str = "all"):
                 save_data,
                 companies,
                 min_gap_size=3600,
-                max_gap_size=86400*30
+                max_gap_size=86400 * 30
             )
     except asyncio.CancelledError:
         return
 
 
 @plugin()
-async def get_data(symbol: str, start: int, end: int):
+async def query_api(symbol: str, start: int, end: int):
     if symbol in ("all", "*"):
         symbol = ""
     async with ReferenceClient(get_key("polygon_io"), True) as client:
         return await _get_data(client, symbol, start, end)
+
