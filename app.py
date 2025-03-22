@@ -38,7 +38,8 @@ async def create_app():
         plugin = plugins[plugin_name]
         if plugin["task"]:
             return response.json({"status": f"{plugin_name} is already running"})
-        plugin["task"] = asyncio.create_task(plugin["function"](**request.form))
+        form_data = prepare_form_data(request.form)
+        plugin["task"] = asyncio.create_task(plugin["function"](**form_data))
         plugin["task"].add_done_callback(complete_callback(plugin))
         print(f"Started {plugin_name}")
         return response.json({"status": f"{plugin_name} started"})
@@ -74,9 +75,19 @@ async def create_app():
 
 def complete_callback(plugin):
     def callback(task):
-        result = task.result()
-        print(f"Finished {plugin['function'].__name__}")
-        print(f"Result: {result}")
+        try:
+            result = task.result()
+            print(f"Finished {plugin['function'].__name__}")
+            print(f"Result: {result}")
+        except Exception as e:
+            print(f"Error in {plugin['function'].__name__}: {str(e)}")
         plugin["task"] = None
 
     return callback
+
+
+def prepare_form_data(form):
+    # Since a web request can have duplicate keys, sanic puts everything in lists
+    # ^ Undo that
+    return {k: v[0] for k, v in form.items()}
+
