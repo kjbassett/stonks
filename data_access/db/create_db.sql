@@ -48,7 +48,7 @@ CREATE TABLE TradingDataAggregation (
   avg_close REAL,
   cv_close REAL,
   price_change REAL, --percent change
-  sum_volume INTEGER,
+  avg_volume REAL,
   cv_volume REAL,
   row_count INTEGER,
   UNIQUE (company_id, interval, date, hour),
