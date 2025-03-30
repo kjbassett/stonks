@@ -33,6 +33,30 @@ CREATE TABLE TradingData (
   FOREIGN KEY(company_id) REFERENCES Company(id)
 );
 
+-- TradingDataAggregation Table
+CREATE TABLE TradingDataAggregation (
+  company_id INTEGER NOT NULL,
+  interval TEXT NOT NULL,  -- aggregation interval (e.g., 'hourly', 'daily')
+  date DATE,
+  hour INTEGER,
+  start INTEGER,
+  end INTEGER,
+  open REAL,
+  high REAL,
+  low REAL,
+  close REAL,
+  avg_close REAL,
+  cv_close REAL,
+  price_change REAL, --percent change
+  sum_volume INTEGER,
+  cv_volume REAL,
+  row_count INTEGER,
+  UNIQUE (company_id, interval, date, hour),
+  FOREIGN KEY(company_id) REFERENCES Company(id)
+);
+
+CREATE INDEX idx_trading_data_aggregation ON TradingDataAggregation (company_id, date, hour, interval);
+
 -- Reddit Table
 CREATE TABLE Reddit (
   id TEXT PRIMARY KEY,

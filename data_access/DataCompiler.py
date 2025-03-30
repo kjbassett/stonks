@@ -7,7 +7,7 @@ from .base_dao import BaseDAO
 from .db.async_database import AsyncDatabase
 
 
-class DataAggregator(BaseDAO):
+class DataCompiler(BaseDAO):
     def __init__(self, db: AsyncDatabase):
         super().__init__(db, "TradingData")
 

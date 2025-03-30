@@ -246,7 +246,7 @@ async def get_structured_data(
     include_price_over_average,
     include_volume_over_average,
 ):
-    structured_data_dao = dao_manager.get_dao("DataAggregator")
+    structured_data_dao = dao_manager.get_dao("DataCompiler")
     return await structured_data_dao.get_data(
         price_change_offset,
         min_timestamp,
@@ -417,7 +417,7 @@ def get_score(history):
 #  Verify what format the bert encoder is expecting (tokens + input mask? standardized?)
 #  OneHotEncoder has some nice options to limit the number of new columns (good for industry id)
 #  Hyperparams for imputation
-#  See DataAggregator for more to-do items
+#  See DataCompiler for more to-do items
 #  de-couple statistics and news data from initial data load
 #  OR
 #  make a separate query to get only the necessary info for new_data
