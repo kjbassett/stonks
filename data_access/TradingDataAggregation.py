@@ -86,7 +86,5 @@ SELECT
 FROM CalculatedMetrics;
         """
         await self.db.execute_query(query)
-        print(f"Time taken: {time.time() - t} seconds")
+        print(f"Time to group data by hour: {time.time() - t} seconds")
         print("Missing hourly aggregations updated.")
-
-
