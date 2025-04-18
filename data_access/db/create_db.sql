@@ -138,7 +138,7 @@ CREATE TABLE Prediction (
   UNIQUE (model_id, company_id)
 );
 
--- Calendar Table
+-- Calendar Table (TODO is this needed?)
 CREATE TABLE Calendar (
   date TEXT PRIMARY KEY,
   open INTEGER,
