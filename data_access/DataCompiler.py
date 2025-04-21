@@ -66,7 +66,7 @@ def construct_query(
 ) -> str:
     ctes = []  # common table expressions
     columns = []
-    joines = []
+    joins = []
     if aggregation_interval == "minute":
         columns += ["t.close", "t.vw_average", 'i.name', 'io.name']
     elif aggregation_interval == "hour":
@@ -76,15 +76,16 @@ def construct_query(
               "JOIN Industry i ON c.industry_id = i.id",
               "JOIN IndustryOffice io ON i.office_id = io.id"]
 
-
     # target column
     columns.append(construct_target_column(aggregation_interval, price_change_offset))
 
     # hour, day of week, and month of year
     columns += construct_dt_columns(aggregation_interval)
 
-     # news ids
-    news_cte, news_cols, news_joins = construct_news_columns(aggregation_interval, num_news)
+    # news
+    news_cte, news_cols, news_joins = construct_news_columns(
+        aggregation_interval, num_news, news_history_threshold, get_ids=aggregation_interval == minute
+    )
     ctes.append(news_cte)
     columns += news_cols
     joins += news_joins
@@ -221,6 +222,7 @@ def construct_news_columns(aggregation_interval, num_news, news_history_threshol
     if num_news < 1:
         return "", [], []
 
+    # define which tables and columns to use
     if aggregation_interval == "minute":
         t_col = "t.timestamp"
         table = "TradingData"
@@ -230,6 +232,7 @@ def construct_news_columns(aggregation_interval, num_news, news_history_threshol
     else:
         raise ValueError("Unsupported aggregation interval")
 
+    # get news ID only or get news text
     if get_ids:
         formula = "n.id"
         data_col = "news_id"
