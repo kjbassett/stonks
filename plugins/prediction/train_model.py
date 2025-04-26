@@ -206,7 +206,8 @@ async def load_data(
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
 ):
-    structure_data = await get_structured_data(
+    structured_data_dao = dao_manager.get_dao("DataCompiler")
+    structured_data = await structured_data_dao.get_data(
         price_change_offset,
         min_timestamp,
         max_timestamp,
@@ -225,38 +226,7 @@ async def load_data(
         news_data = await news_data_dao.get_all()
     else:
         news_data = None
-    return structure_data, news_data
-
-
-async def get_structured_data(
-    price_change_offset,
-    min_timestamp,
-    max_timestamp,
-    max_window,
-    num_windows,
-    num_news,
-    news_history_threshold,
-    include_close_ratio,
-    include_volume_ratio,
-    include_cv_close_ratio,
-    include_avg_volume_ratio,
-    include_cv_volume_ratio,
-):
-    structured_data_dao = dao_manager.get_dao("DataCompiler")
-    return await structured_data_dao.get_data(
-        price_change_offset,
-        min_timestamp,
-        max_timestamp,
-        max_window,
-        num_windows,
-        num_news,
-        news_history_threshold,
-        include_close_ratio,
-        include_volume_ratio,
-        include_cv_close_ratio,
-        include_avg_volume_ratio,
-        include_cv_volume_ratio,
-    )
+    return structured_data, news_data
 
 
 def filter_out_missing_data(structured_data, missing_data_threshold):
