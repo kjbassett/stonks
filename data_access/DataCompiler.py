@@ -1,5 +1,3 @@
-import time
-
 import numpy as np
 import pandas as pd
 
@@ -13,6 +11,7 @@ class DataCompiler(BaseDAO):
 
     async def get_data(
         self,
+        aggregation_interval: str,
         price_change_offset: int = 0,
         min_timestamp: int = 0,
         max_timestamp: int = 0,
@@ -20,14 +19,15 @@ class DataCompiler(BaseDAO):
         num_windows: int = 0,
         num_news: int = 0,
         news_history_threshold: int = 24 * 60 * 60,
-        include_price_change: bool = False,
-        include_volume_change: bool = False,
-        include_coeff_var: bool = False,
-        include_price_over_average: bool = False,
-        include_volume_over_average: bool = False,
-        print_query: bool = False
+        include_close_ratio: bool = True,
+        include_volume_ratio: bool = True,
+        include_cv_close_ratio: bool = True,
+        include_avg_volume_ratio: bool = True,
+        include_cv_volume_ratio: bool = True,
+        print_query: bool = False,
     ) -> pd.DataFrame:
         query = construct_query(
+            aggregation_interval,
             price_change_offset,
             min_timestamp,
             max_timestamp,
@@ -35,11 +35,11 @@ class DataCompiler(BaseDAO):
             num_windows,
             num_news,
             news_history_threshold,
-            include_price_change,
-            include_volume_change,
-            include_coeff_var,
-            include_price_over_average,
-            include_volume_over_average,
+            include_close_ratio,
+            include_volume_ratio,
+            include_cv_close_ratio,
+            include_avg_volume_ratio,
+            include_cv_volume_ratio,
         )
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
@@ -58,23 +58,41 @@ def construct_query(
     num_windows: int = 0,
     num_news: int = 0,
     news_history_threshold: int = 86400,
-    include_price_change: bool = False,
-    include_volume_change: bool = False,
-    include_coeff_var: bool = False,
-    include_price_over_average: bool = False,
-    include_volume_over_average: bool = False,
+    include_close_ratio: bool = True,
+    include_volume_ratio: bool = True,
+    include_cv_close_ratio: bool = True,
+    include_avg_volume_ratio: bool = True,
+    include_cv_volume_ratio: bool = True,
 ) -> str:
     ctes = []  # common table expressions
     columns = []
     joins = []
+    filters = []
     if aggregation_interval == "minute":
-        columns += ["t.close", "t.vw_average", 'i.name', 'io.name']
+        start_col = "t.timestamp"
+        end_col = "t.timestamp"
+        columns += ["t.close", "t.vw_average", "i.name", "io.name"]
     elif aggregation_interval == "hour":
-        columns += ['t.open', 't.low', 't.close', 't.avg_close', 't.cv_close',
-                    't.price_change', 't.avg_volume', 't.cv_volume', 't.row_count', 'i.name', 'io.name']
-    joins += ["JOIN Company c ON t.company_id = c.id",
-              "JOIN Industry i ON c.industry_id = i.id",
-              "JOIN IndustryOffice io ON i.office_id = io.id"]
+        start_col = "t.start"
+        end_col = "t.end"
+        columns += [
+            "t.open",
+            "t.low",
+            "t.close",
+            "t.avg_close",
+            "t.cv_close",
+            "t.price_change",
+            "t.avg_volume",
+            "t.cv_volume",
+            "t.row_count",
+            "i.name",
+            "io.name",
+        ]
+    joins += [
+        "JOIN Company c ON t.company_id = c.id",
+        "JOIN Industry i ON c.industry_id = i.id",
+        "JOIN IndustryOffice io ON i.office_id = io.id",
+    ]
 
     # target column
     columns.append(construct_target_column(aggregation_interval, price_change_offset))
@@ -84,56 +102,40 @@ def construct_query(
 
     # news
     news_cte, news_cols, news_joins = construct_news_columns(
-        aggregation_interval, num_news, news_history_threshold, get_ids=aggregation_interval == minute
+        aggregation_interval,
+        num_news,
+        news_history_threshold,
+        get_ids=aggregation_interval == "minute",
     )
     ctes.append(news_cte)
     columns += news_cols
     joins += news_joins
 
     # Add statistics for each window
-    if max_window > 0 and num_windows > 0:
-        window_sizes = np.linspace(0, max_window, num_windows + 1, dtype=int)[1:]
-        window_sizes = set(window_sizes)  # ensure we don't have duplicate window sizes
-        for offset in window_sizes:
-            # current price / past price
-            if include_price_change:
-                columns.append(
-                    f"(t.close / LAG(t.close, {offset}) OVER (PARTITION BY t.company_id ORDER BY t.timestamp)) AS price_ratio_window_{offset}"
-                )
-            # current volume / past volume
-            if include_volume_change:
-                columns.append(
-                    f"(t.volume / LAG(t.volume, {offset}) OVER (PARTITION BY t.company_id ORDER BY t.timestamp)) AS volume_ratio_window_{offset}"
-                )
-            # coefficient of variation of price over window
-            if include_coeff_var:
-                columns.append(
-                    f"""
-    SQRT(
-        AVG(t.close * t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {offset} PRECEDING AND CURRENT ROW) - 
-        (
-            AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {offset} PRECEDING AND CURRENT ROW) * 
-            AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {offset} PRECEDING AND CURRENT ROW)
-        )
-    ) / AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {offset} PRECEDING AND CURRENT ROW) as coeff_var_window_{offset}"""
-                )
-            # current price / average price over window
-            if include_price_over_average:
-                columns.append(
-                    f"(t.close / AVG(t.close) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {offset} PRECEDING AND CURRENT ROW)) AS price_avg_ratio_window_{offset}"
-                )
-            # current volume / average volume over window
-            if (
-                include_volume_over_average
-            ):  # current volume / average volume over window
-                columns.append(
-                    f"(t.volume / AVG(t.volume) OVER (PARTITION BY t.company_id ORDER BY t.timestamp ROWS BETWEEN {offset} PRECEDING AND CURRENT ROW)) AS volume_avg_ratio_window_{offset}"
-                )
+    columns += construct_calculated_columns(
+        aggregation_interval,
+        max_window,
+        num_windows,
+        include_close_ratio,
+        include_volume_ratio,
+        include_cv_close_ratio,
+        include_avg_volume_ratio,
+        include_cv_volume_ratio,
+    )
+
+    # Add filters
+    if min_timestamp > 0:
+        filters.append(f"{start_col} >= {min_timestamp}")
+    if max_timestamp > 0:
+        filters.append(f"{end_col} <= {max_timestamp}")
+    if aggregation_interval != "minute":
+        filters.append(f"interval = {aggregation_interval}")
 
     # format query parts
     ctes = "WITH " + ",\n".join(ctes) + "\n" if ctes else ""
     columns = ",\n".join(columns)
     joins = "\n".join(joins)
+    filters = "WHERE {' AND '.join(filters)}" if filters else " "
 
     # Construct the query
     query = f"""
@@ -141,8 +143,8 @@ def construct_query(
 SELECT {columns}
 FROM TradingData{"Aggregations" if aggregation_interval != "minute" else ""} t
 {joins}
-WHERE t.timestamp >= {min_timestamp} and t.timestamp <= {max_timestamp if max_timestamp else time.time()}
-ORDER BY t.timestamp
+{filters}
+ORDER BY {end_col}
 """
 
     return query
@@ -163,6 +165,7 @@ CAST(((
         AND t2.timestamp >= t.timestamp + {pco_min}
         AND t2.timestamp <= t.timestamp + {pco_max}
 ) - t.close) / t.close AS REAL) AS target"""
+
     elif aggregation_interval == "hour":
         # Grab the price_change_offset-th row after the current row
         return f"""
@@ -179,6 +182,7 @@ CAST(((
         LIMIT 1 OFFSET {price_change_offset - 1}
     )
 ) - t.close) / t.close AS REAL) AS target"""
+
 
 def construct_dt_columns(aggregation_interval):
     columns = []
@@ -209,16 +213,24 @@ def construct_dt_columns(aggregation_interval):
 
     # Add hour and weekday name, if hourly, we already have date and hour in TradingDataAggregation
     if aggregation_interval == "minute":
-        columns.append("CAST(strftime('%H', datetime(t.timestamp, 'unixepoch')) AS INTEGER) AS hour")
-        columns.append(f"CASE strftime('%w', datetime(t.timestamp, 'unixepoch')) {weekday_str}")
-        columns.append(f"CASE strftime('%m', datetime(t.timestamp, 'unixepoch')) {month_str}")
+        columns.append(
+            "CAST(strftime('%H', datetime(t.timestamp, 'unixepoch')) AS INTEGER) AS hour"
+        )
+        columns.append(
+            f"CASE strftime('%w', datetime(t.timestamp, 'unixepoch')) {weekday_str}"
+        )
+        columns.append(
+            f"CASE strftime('%m', datetime(t.timestamp, 'unixepoch')) {month_str}"
+        )
     elif aggregation_interval == "hour":
         columns.append("t.hour")
         columns.append(f"CASE strftime('%w', t.date) {weekday_str}")
         columns.append(f"CASE strftime('%m', t.date) {month_str}")
 
 
-def construct_news_columns(aggregation_interval, num_news, news_history_threshold, get_ids=False):
+def construct_news_columns(
+    aggregation_interval, num_news, news_history_threshold, get_ids=False
+):
     if num_news < 1:
         return "", [], []
 
@@ -266,7 +278,75 @@ def construct_news_columns(aggregation_interval, num_news, news_history_threshol
 
     return cte, columns, joins
 
+
+def construct_calculated_columns(
+    aggregation_interval,
+    max_window,
+    num_windows,
+    include_close_ratio=True,
+    include_volume_ratio=True,
+    include_cv_close_ratio=True,
+    include_avg_volume_ratio=True,
+    include_cv_volume_ratio=True,
+):
+    # guard clause
+    if max_window == 0 or num_windows == 0:
+        return []
+
+    # determine settings
+    if aggregation_interval == "minute":
+        ts_col = "t.timestamp"
+        if include_cv_close_ratio:
+            print(
+                "Coefficient of Variation calculation not supported for data by minute. Turning off cv flag"
+            )
+            include_cv_close_ratio = False
+    elif aggregation_interval in ("hour"):
+        ts_col = "t.end"
+    else:
+        raise ValueError("Unsupported aggregation interval")
+
+    # iterate through this and create all relative (ratio) columns
+    flag_columns = {
+        "close": include_close_ratio,
+        "volume": include_volume_ratio,
+        "cv_close": include_cv_close_ratio,
+        "avg_volume": include_avg_volume_ratio,
+        "cv_volume": include_cv_volume_ratio,
+    }
+    # create each relative column for each window
+    windows = np.linspace(0, max_window, num_windows + 1, dtype=int)[1:]
+    windows = set(
+        windows
+    )  # ensure we don't have duplicate window sizes. dtype=int could cause duplicates
+
+    # create columns which are comparisons between current data and past data
+    calc_columns = []
+    for offset in windows:
+        for col, include in flag_columns.items():
+            # current price / past price for current company in the past window
+            calc_columns.append(
+                f"(t.{col} / LAG({col}, {offset}) OVER (PARTITION BY t.company_id ORDER BY {ts_col})) AS {col}_ratio_lag_{offset}"
+            )
+    return calc_columns
+
+
 # TODO
 #  Get diff of current timestamp and news timestamps
 #  Verify hour is correct (and day of week and month with same fix if needed). Just put timestamp into data and convert it online.
 #  How to tokenize company in text?
+
+"""
+Developer notes
+You can include the following data:
+data from current hour
+data from current hour standardized to current company
+data from n hours ago
+data from n hours ago standardized to current company
+data from n hours ago compared to current hour
+data from n hours ago compared to next offset
+
+You probably want data from now for the model to be able to compare the business to others. vertical
+Then the past data should be relative to itself currently. horizontal
+Current is always "in the middle" relative to past to maintain comparability.
+"""
