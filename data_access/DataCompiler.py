@@ -20,7 +20,6 @@ class DataCompiler(BaseDAO):
         num_news: int = 0,
         news_history_threshold: int = 24 * 60 * 60,
         include_close_ratio: bool = True,
-        include_volume_ratio: bool = True,
         include_cv_close_ratio: bool = True,
         include_avg_volume_ratio: bool = True,
         include_cv_volume_ratio: bool = True,
@@ -36,7 +35,6 @@ class DataCompiler(BaseDAO):
             num_news,
             news_history_threshold,
             include_close_ratio,
-            include_volume_ratio,
             include_cv_close_ratio,
             include_avg_volume_ratio,
             include_cv_volume_ratio,
@@ -59,7 +57,6 @@ def construct_query(
     num_news: int = 0,
     news_history_threshold: int = 86400,
     include_close_ratio: bool = True,
-    include_volume_ratio: bool = True,
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
@@ -117,7 +114,6 @@ def construct_query(
         max_window,
         num_windows,
         include_close_ratio,
-        include_volume_ratio,
         include_cv_close_ratio,
         include_avg_volume_ratio,
         include_cv_volume_ratio,
@@ -135,13 +131,13 @@ def construct_query(
     ctes = "WITH " + ",\n".join(ctes) + "\n" if ctes else ""
     columns = ",\n".join(columns)
     joins = "\n".join(joins)
-    filters = "WHERE {' AND '.join(filters)}" if filters else " "
+    filters = f"WHERE {' AND '.join(filters)}" if filters else " "
 
     # Construct the query
     query = f"""
 {ctes} 
 SELECT {columns}
-FROM TradingData{"Aggregations" if aggregation_interval != "minute" else ""} t
+FROM TradingData{"Aggregation" if aggregation_interval != "minute" else ""} t
 {joins}
 {filters}
 ORDER BY {end_col}
@@ -168,9 +164,10 @@ CAST(((
 
     elif aggregation_interval == "hour":
         # Grab the price_change_offset-th row after the current row
+        # Would it be faster to use a window function here?
         return f"""
 CAST(((
-    SELECT AVG(t2.close)
+    SELECT AVG(close)
     FROM (
         SELECT t2.close
         FROM TradingDataAggregation t2
@@ -227,9 +224,14 @@ def construct_dt_columns(aggregation_interval):
         columns.append(f"CASE strftime('%w', t.date) {weekday_str}")
         columns.append(f"CASE strftime('%m', t.date) {month_str}")
 
+    return columns
+
 
 def construct_news_columns(
-    aggregation_interval, num_news, news_history_threshold, get_ids=False
+    aggregation_interval,
+    num_news,
+    news_history_threshold,
+    get_ids=False,
 ):
     if num_news < 1:
         return "", [], []
@@ -244,24 +246,14 @@ def construct_news_columns(
     else:
         raise ValueError("Unsupported aggregation interval")
 
-    # get news ID only or get news text
-    if get_ids:
-        formula = "n.id"
-        data_col = "news_id"
-    elif not get_ids:
-        formula = "CONCAT(t.symbol, ' ', t.name, ' ', n.body)"
-        data_col = "news_text"
-    else:
-        raise ValueError("Unsupported value for variable 'get_ids'")
-
     cte = f"""
     RankedNews AS (
     SELECT
-        {formula} AS {data_col},
+        {'n.id AS news_id' if get_ids else 'n.body AS body'},
         n.timestamp,
         t.company_id,
         {t_col} AS trade_ts,
-        ROW_NUMBER() OVER (PARTITION BY t.company_id, t.timestamp ORDER BY n.timestamp DESC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY t.company_id, {t_col} ORDER BY n.timestamp DESC) AS rn
     FROM {table} t
     JOIN NewsCompanyLink ncl ON t.company_id = ncl.company_id
     JOIN News n ON ncl.news_id = n.id
@@ -271,7 +263,10 @@ def construct_news_columns(
     columns = []
     joins = []
     for i in range(1, num_news + 1):
-        columns.append(f"n{i}.news_id AS news{i}_id")
+        if get_ids:
+            columns.append(f"n{i}.news_id AS news{i}_id")
+        else:
+            columns.append(f"c.symbol || ' ' || c.name || ' ' || n{i}.body as news{i}")
         joins.append(
             f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
         )
@@ -284,7 +279,6 @@ def construct_calculated_columns(
     max_window,
     num_windows,
     include_close_ratio=True,
-    include_volume_ratio=True,
     include_cv_close_ratio=True,
     include_avg_volume_ratio=True,
     include_cv_volume_ratio=True,
@@ -309,7 +303,6 @@ def construct_calculated_columns(
     # iterate through this and create all relative (ratio) columns
     flag_columns = {
         "close": include_close_ratio,
-        "volume": include_volume_ratio,
         "cv_close": include_cv_close_ratio,
         "avg_volume": include_avg_volume_ratio,
         "cv_volume": include_cv_volume_ratio,
