@@ -15,29 +15,20 @@ class TradingDataAggregation(BaseDAO):
             datetime.combine(CONFIG["min_date"], time()).timestamp()
         )  # midnight of earliest date in seconds since epoch
         now = int(datetime.now().timestamp())
-        for t in range(earliest_timestamp, now, window):
-            if (
-                t + window > now
-            ):  # final iteration, don't aggregate past the current time
-                latest_ts_cte = """
-                -- Get the latest timestamp for each company. Used later to make sure we don't aggregate an hour of incomplete data.
-                LatestTimestamps AS ( 
-                    SELECT company_id, MAX(timestamp) AS latest_timestamp
-                    FROM TradingData
-                    GROUP BY company_id
-                ),"""
-                grouped_data_part = f"""
-                    JOIN LatestTimestamps lt ON fd.company_id = lt.company_id
-                    GROUP BY fd.company_id, fd.date, fd.hour
-                    HAVING period_end <= lt.latest_timestamp
-                """
-            else:
-                latest_ts_cte = ""
-                grouped_data_part = "GROUP BY fd.company_id, fd.date, fd.hour"
-
+        windows = range(earliest_timestamp, now, window)
+        num_windows = len(windows)
+        for i, t in enumerate(windows):
             query = f"""
-WITH
-    {latest_ts_cte}
+WITH RowCounts AS (
+    SELECT
+        td.company_id,
+        DATE(td.timestamp, 'unixepoch') AS date,
+        strftime('%H', td.timestamp, 'unixepoch') AS hour,
+        COUNT(*) AS row_count
+    FROM TradingData td
+    WHERE td.timestamp >= {t} AND td.timestamp < {t + window}
+    GROUP BY td.company_id, DATE(td.timestamp, 'unixepoch'), strftime('%H', td.timestamp, 'unixepoch')
+),
 -- Get trading data that has not been aggregated yet.
 FilteredData AS (
     SELECT
@@ -51,11 +42,16 @@ FilteredData AS (
         td.close,
         td.volume
     FROM TradingData td
+    LEFT JOIN RowCounts rc
+    ON td.company_id = rc.company_id
+    AND DATE(td.timestamp, 'unixepoch') = rc.date
+    AND strftime('%H', td.timestamp, 'unixepoch') = rc.hour
     LEFT JOIN TradingDataAggregation tda
     ON td.company_id = tda.company_id
     AND DATE(td.timestamp, 'unixepoch') = tda.date
     AND strftime('%H', td.timestamp, 'unixepoch') = tda.hour
-    WHERE tda.company_id IS NULL AND td.timestamp >= {t} AND td.timestamp < {t + window}
+    WHERE (td.timestamp >= {t} AND td.timestamp < {t + window})
+    AND (tda.row_count IS NULL or rc.row_count > tda.row_count)
 ),
 -- Group the filtered data by company, date, and hour.
 GroupedData AS (
@@ -76,7 +72,7 @@ GroupedData AS (
         COUNT(*) AS row_count,
         CAST(strftime('%s', fd.date || ' ' || fd.hour || ':59:59') AS INTEGER) AS period_end
     FROM FilteredData fd
-    {grouped_data_part}
+    GROUP BY fd.company_id, fd.date, fd.hour
 ),
 -- Perform some additional calculations from the grouped data
 CalculatedMetrics AS (
@@ -111,9 +107,12 @@ SELECT
 FROM CalculatedMetrics;
         """
             current_iter_start = datetime.now().timestamp()
-            print(f"Starting aggegation query from {t} to {t + window}, end at {now}")
-            await self.db.execute_query(query)
             print(
-                f"Time to group data by hour: {int(datetime.now().timestamp() - current_iter_start)} seconds"
+                f"Starting aggegation query {i+1}/{num_windows} from {t} to {t + window}, end at {now}"
             )
-            print("Missing hourly aggregations updated.")
+            n = await self.db.execute_query(query, query_type="INSERT")
+            print(
+                f"Time to group data by hour: {int(datetime.now().timestamp() - current_iter_start)} seconds."
+            )
+            print(f"Updated or inserted {n} rows.")
+        print("Missing hourly aggregations updated.")
