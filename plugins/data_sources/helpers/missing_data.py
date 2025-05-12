@@ -155,15 +155,20 @@ async def fill_gap(
     cpy: pd.Series,
     gap: dict,
 ):
-    start, end = int(gap["start"]), int(gap["end"])
+    now = datetime.datetime.now().timestamp()
+    latest_api_ts = int(now - now % 60) - 60 * 15  # API is 15 minutes behind real time
+    start = int(gap["start"])
+    end = min(latest_api_ts, int(gap["end"]))
     async with call_limiter:
         data = await get_data_func(client, cpy["symbol"], int(start), int(end))
 
     # save_new_data returns the number of rows inserted, so if it's 0,
     #   we don't want to try this gap again. We save the record of our attempt here
-    if not data or not await save_data_func(cpy["id"], data):
-        gap_table = f"{table}Gap"
-        await dao_manager.get_dao(gap_table).insert((cpy["id"], start, end))
+    if data:
+        await save_data_func(cpy["id"], data)
+
+    ptq_table = table + "AttemptedQueries"
+    await dao_manager.get_dao(ptq_table).insert((cpy["id"], start, end))
 
 
 def break_large_gaps(gaps, max_gap_size):
