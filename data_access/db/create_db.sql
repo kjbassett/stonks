@@ -36,7 +36,7 @@ CREATE TABLE TradingData (
 -- TradingDataAggregation Table
 CREATE TABLE TradingDataAggregation (
   company_id INTEGER NOT NULL,
-  interval TEXT NOT NULL,  -- aggregation interval (e.g., 'hourly', 'daily')
+  interval TEXT NOT NULL,  -- aggregation interval (e.g., 'hour', 'day')
   date DATE,
   hour INTEGER,
   start INTEGER,
@@ -93,12 +93,14 @@ CREATE TABLE News (
 CREATE TABLE NewsCompanyLink (
   company_id INTEGER,
   news_id TEXT,
+  sentiment INTEGER,
+  sentiment_reasoning TEXT,
   FOREIGN KEY(company_id) REFERENCES Company(id),
   FOREIGN KEY(news_id) REFERENCES News(id),
   UNIQUE (company_id, news_id)
 );
 
-CREATE TABLE NewsGap (
+CREATE TABLE NewsAttemptedQueries (
   company_id INTEGER,
   start INTEGER,
   end INTEGER,
@@ -146,7 +148,7 @@ CREATE TABLE Calendar (
 );
 
 -- Trading Data Gap
-CREATE TABLE TradingDataGap (
+CREATE TABLE TradingDataAttemptedQueries (
   company_id INTEGER,
   start INTEGER,
   end INTEGER,

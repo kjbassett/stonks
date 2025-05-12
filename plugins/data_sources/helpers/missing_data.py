@@ -20,7 +20,9 @@ min_market_ts = int(
 cmp = dao_manager.get_dao("Company")
 
 
-async def find_gaps(current_data: pd.DataFrame, min_gap_size: int, adjust_for_market_hours: bool):
+async def find_gaps(
+    current_data: pd.DataFrame, min_gap_size: int, adjust_for_market_hours: bool
+):
     # add dummy timestamps and end of time range to get all gaps
     ends = [min_market_ts, latest_market_time()]
     # TODO is it faster to test if there are gaps on the ends before concat?
@@ -96,25 +98,27 @@ def adjust_gap(row):
     return row["gap"]
 
 
-async def filter_out_past_attempts(table, gaps, company_id):
-    gap_table = table + "Gap"
+async def filter_out_past_queries(table, gaps, company_id):
+    past_query_table = table + "AttemptedQueries"
     # Check if gap already in corresponding gap table
-    # ptg = previously tried gaps
-    ptg = await dao_manager.get_dao(gap_table).get(company_id=company_id)
+    # ptq = previously tried queries
+    ptq = await dao_manager.get_dao(past_query_table).get(company_id=company_id)
     # TODO This filter should be done in the query
-    ptg = ptg[ptg['end'] >= min_market_ts]  # only consider gaps that occurred in the past
+    ptq = ptq[
+        ptq["end"] >= min_market_ts
+    ]  # only consider gaps that occurred in the past
     # Ensure both dataframes are sorted by start time
-    gaps = gaps.sort_values(by='start').reset_index(drop=True)
-    ptg = ptg.sort_values(by='start').reset_index(drop=True)
+    gaps = gaps.sort_values(by="start").reset_index(drop=True)
+    ptq = ptq.sort_values(by="start").reset_index(drop=True)
 
     filtered_gaps = []
     j = 0
 
     for i, row1 in gaps.iterrows():
-        start1, end1 = row1['start'], row1['end']
+        start1, end1 = row1["start"], row1["end"]
 
-        while j < len(ptg):
-            start2, end2 = ptg.loc[j, 'start'], ptg.loc[j, 'end']
+        while j < len(ptq):
+            start2, end2 = ptq.loc[j, "start"], ptq.loc[j, "end"]
 
             # If the second range starts after the first range ends, break
             if start2 >= end1:
@@ -129,7 +133,7 @@ async def filter_out_past_attempts(table, gaps, company_id):
             if start2 <= start1 < end2:
                 start1 = end2
             elif start1 <= start2 < end1:
-                filtered_gaps.append({'start': start1, 'end': start2})
+                filtered_gaps.append({"start": start1, "end": start2})
                 start1 = end2
 
             # If the first range is completely within the second range, skip to the next range in df1
@@ -138,7 +142,7 @@ async def filter_out_past_attempts(table, gaps, company_id):
 
         # If there is any remaining non-overlapping part of the first range, add it to the result
         if start1 < end1:
-            filtered_gaps.append({'start': start1, 'end': end1})
+            filtered_gaps.append({"start": start1, "end": end1})
 
     return filtered_gaps
 
@@ -172,6 +176,7 @@ def break_large_gaps(gaps, max_gap_size):
                 s += max_gap_size
     return new_gaps
 
+
 async def fill_gaps(
     client,
     table: str,
@@ -181,22 +186,24 @@ async def fill_gaps(
     companies: str,
     min_gap_size: int = 1800,
     max_gap_size: int = 0,
-    adjust_for_market_hours=False
+    adjust_for_market_hours=False,
 ):
     companies = await get_companies(companies)
     tasks = []
     n_cpy = len(companies)
     for c, cpy in companies.iterrows():
+        print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
         current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
-        gaps = await filter_out_past_attempts(table, gaps, cpy["id"])
+        gaps = await filter_out_past_queries(table, gaps, cpy["id"])
         if max_gap_size:
             gaps = break_large_gaps(gaps, max_gap_size)
         n_gaps = len(gaps)
         for g, gap in enumerate(gaps):
             # print company and gap index out of total
-            print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
-            print(f"Gap {g + 1}/{n_gaps}, {gap['start']} - {gap['end']}, {gap['end'] - gap['start']} seconds")
+            print(
+                f"Gap {g + 1}/{n_gaps}, {gap['start']} - {gap['end']}, {gap['end'] - gap['start']} seconds"
+            )
             # Create a task for each gap handling
             task = asyncio.create_task(
                 fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
