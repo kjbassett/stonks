@@ -11,8 +11,8 @@ class DataCompiler(BaseDAO):
 
     async def get_data(
         self,
-        aggregation_interval: str,
-        price_change_offset: int = 0,
+        aggregation_interval: str = "minute",
+        price_change_offset: int = 86400 * 5,
         min_timestamp: int = 0,
         max_timestamp: int = 0,
         max_window: int = 0,
@@ -85,6 +85,7 @@ def construct_query(
             "i.name",
             "io.name",
         ]
+        filters.append("t.row_count > 5")
     joins += [
         "JOIN Company c ON t.company_id = c.id",
         "JOIN Industry i ON c.industry_id = i.id",
@@ -125,7 +126,7 @@ def construct_query(
     if max_timestamp > 0:
         filters.append(f"{end_col} <= {max_timestamp}")
     if aggregation_interval != "minute":
-        filters.append(f"interval = {aggregation_interval}")
+        filters.append(f"interval = '{aggregation_interval}'")
 
     # format query parts
     ctes = "WITH " + ",\n".join(ctes) + "\n" if ctes else ""
@@ -173,8 +174,9 @@ CAST(((
         FROM TradingDataAggregation t2
         WHERE
             t2.company_id = t.company_id
-            AND t2.interval = 'hourly'
+            AND t2.interval = 'hour'
             AND (t2.date > t.date OR (t2.date = t.date AND t2.hour > t.hour))
+            AND t2.row_count > 5
         ORDER BY t2.date, t2.hour
         LIMIT 1 OFFSET {price_change_offset - 1}
     )

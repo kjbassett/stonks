@@ -103,7 +103,7 @@ INSERT INTO TradingDataAggregation (
     company_id, interval, date, hour, start, end, open, high, low, close, avg_close, cv_close, price_change, avg_volume, cv_volume, row_count
 )
 SELECT
-    company_id, 'hourly', date, hour, start, end, open, high, low, close, avg_close, cv_close, price_change, avg_volume, cv_volume, row_count
+    company_id, 'hour', date, hour, start, end, open, high, low, close, avg_close, cv_close, price_change, avg_volume, cv_volume, row_count
 FROM CalculatedMetrics;
         """
             current_iter_start = datetime.now().timestamp()
