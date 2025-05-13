@@ -1,0 +1,53 @@
+{% import '_form_macros.html' as forms %}
+
+{% macro render_plugin(plugin_name, plugin) %}
+    <div class="plugin">
+        <h4>{{ plugin_name }}</h4>
+        <form id="plugin-form-{{ plugin.id }}" action="/start/{{plugin.id}}" method="post">
+            {% for arg in plugin.arguments %}
+                <label class="form-label" for="{{ plugin.id + '.' + arg.name }}">{{ arg.name }}</label>
+                {% if arg['ui_element'] == 'textbox' %}
+                    {{ forms.render_textbox(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'slider' %}
+                    {{ forms.render_slider(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'checkbox' %}
+                    {{ forms.render_checkbox(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'color' %}
+                    {{ forms.render_color(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'date' %}
+                    {{ forms.render_date(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'datetime_local' %}
+                    {{ forms.render_datetime_local(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'email' %}
+                    {{ forms.render_email(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'file' %}
+                    {{ forms.render_file(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'month' %}
+                    {{ forms.render_month(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'password' %}
+                    {{ forms.render_password(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'tel' %}
+                    {{ forms.render_tel(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'time' %}
+                    {{ forms.render_time(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'url' %}
+                    {{ forms.render_url(plugin.id, arg) }}
+                {% elif arg['ui_element'] == 'week' %}
+                    {{ forms.render_week(plugin.id, arg) }}
+                {% elif arg['type'] == 'str' %}
+                    {{ forms.render_textbox(plugin.id, arg) }}
+                {% elif arg['type'] == 'int' %}
+                    {{ forms.render_number(plugin.id, arg) }}
+                {% elif arg['type'] == 'bool' %}
+                    {{ forms.render_checkbox(plugin.id, arg) }}
+                {% endif %}
+                <!-- Add other UI elements as needed -->
+            {% endfor %}
+            <button class="btn btn-success" type="submit">Start</button>
+            <button class="btn btn-danger" type="button" onclick="stop('{{ plugin.id }}')">Stop</button>
+        </form>
+        <div class="tooltip">
+            <span class="tooltiptext">{{ plugin.doc }}</span>
+        </div>
+    </div>
+{% endmacro %}

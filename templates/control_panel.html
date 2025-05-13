@@ -8,161 +8,12 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 </head>
 <body>
-
-    {% macro render_textbox(plugin_id, arg) %}
-        <input class="form-control" type="text" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
-            {% if arg.get('pattern') is not none %}pattern="{{ arg.pattern }}"{% endif %}
-            {{ 'required' if arg.required else '' }}>
-    {% endmacro %}
-
-    {% macro render_date(plugin_id, arg) %}
-        <input class="form-control" type="date" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}
-            {{ 'required' if arg.required else '' }}>
-    {% endmacro %}
-
-    {% macro render_slider(plugin_id, arg) %}
-        <input class="form-range" type="range" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            min="{{ arg.get('min', None) }}"
-            max="{{ arg.get('max', None) }}">
-    {% endmacro %}
-
-    {% macro render_number(plugin_id, arg) %}
-        <input class="form-control" type="number" id="{{ plugin_id + '.' + arg.name }}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
-    {% endmacro %}
-
-    {% macro render_checkbox(plugin_id, arg) %}
-        <div>
-            <input class="form-check-input" type="checkbox" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}"
-                {% if arg.default %}checked{% endif %}>
-        </div>
-    {% endmacro %}
-
-    {% macro render_color(plugin_id, arg) %}
-        <input class="form-control" type="color" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}">
-    {% endmacro %}
-
-    {% macro render_datetime_local(plugin_id, arg) %}
-        <input class="form-control" type="datetime-local" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
-    {% endmacro %}
-
-    {% macro render_email(plugin_id, arg) %}
-        <input class="form-control" type="email" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            pattern=".+@example\.com"
-            size="30">
-    {% endmacro %}
-
-    {% macro render_file(plugin_id, arg) %}
-        <input class="form-control" type="file" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            accept="{{ arg.accept }}">
-    {% endmacro %}
-
-    {% macro render_month(plugin_id, arg) %}
-        <input class="form-control" type="month" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
-    {% endmacro %}
-
-    {% macro render_password(plugin_id, arg) %}
-        <input class="form-control" type="password" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            minlength="{{ arg.minlength }}">
-    {% endmacro %}
-
-    {% macro render_tel(plugin_id, arg) %}
-        <input class="form-control" type="tel" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.value }}">
-    {% endmacro %}
-
-    {% macro render_time(plugin_id, arg) %}
-        <input class="form-control" type="time" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
-    {% endmacro %}
-
-    {% macro render_url(plugin_id, arg) %}
-        <input class="form-control" type="url" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.value }}">
-    {% endmacro %}
-
-    {% macro render_week(plugin_id, arg) %}
-        <input class="form-control" type="week" id="{{ plugin_id + '.' + arg.name}}" name="{{ arg.name }}" placeholder="{{ arg.name }}"
-            value="{{ arg.default if arg.default is not none else '' }}"
-            {% if arg.get('min') is not none %}min="{{ arg.min }}"{% endif %}
-            {% if arg.get('max') is not none %}max="{{ arg.max }}"{% endif %}>
-    {% endmacro %}
-
-    {% macro render_plugin(plugin_name, plugin) %}
-        <div class="plugin">
-            <h4>{{ plugin_name }}</h4>
-            <form id="plugin-form-{{ plugin.id }}" action="/start/{{plugin.id}}" method="post">
-                {% for arg in plugin.arguments %}
-                    <label class="form-label" for="{{ plugin.id + '.' + arg.name }}">{{ arg.name }}</label>
-                    {% if arg['ui_element'] == 'textbox' %}
-                        {{ render_textbox(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'slider' %}
-                        {{ render_slider(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'checkbox' %}
-                        {{ render_checkbox(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'color' %}
-                        {{ render_color(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'date' %}
-                        {{ render_date(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'datetime_local' %}
-                        {{ render_datetime_local(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'email' %}
-                        {{ render_email(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'file' %}
-                        {{ render_file(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'month' %}
-                        {{ render_month(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'password' %}
-                        {{ render_password(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'tel' %}
-                        {{ render_tel(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'time' %}
-                        {{ render_time(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'url' %}
-                        {{ render_url(plugin.id, arg) }}
-                    {% elif arg['ui_element'] == 'week' %}
-                        {{ render_week(plugin.id, arg) }}
-                    {% elif arg['type'] == 'str' %}
-                        {{ render_textbox(plugin.id, arg) }}
-                    {% elif arg['type'] == 'int' %}
-                        {{ render_number(plugin.id, arg) }}
-                    {% elif arg['type'] == 'bool' %}
-                        {{ render_checkbox(plugin.id, arg) }}
-                    {% endif %}
-                    <!-- Add other UI elements as needed -->
-                {% endfor %}
-                <button class="btn btn-success" type="submit">Start</button>
-                <button class="btn btn-danger" type="button" onclick="stop('{{ plugin.id }}')">Stop</button>
-            </form>
-            <div class="tooltip">
-                <span class="tooltiptext">{{ plugin.doc }}</span>
-            </div>
-        </div>
-    {% endmacro %}
+    {% import '_plugin_display.html' as plugin_utils %}
 
     {% macro render_plugins(metadata) %}
         {% for key, value in metadata.items() %}
             {% if "is_plugin" in value %}
-                {{ render_plugin(key, value) }}
+                {{ plugin_utils.render_plugin(key, value) }}
             {% else %}
                 <div class="category">
                     <h3>{{ key }}</h3>
@@ -178,7 +29,7 @@
 
     <script>
         {% for plugin in plugins %}
-        setInterval(() => checkStatusAndUpdateLight('{{ plugin }}'), 5000);
+            setInterval(() => checkStatusAndUpdateLight('{{ plugin }}'), 5000);
         {% endfor %}
     </script>
 </body>
