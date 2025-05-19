@@ -53,7 +53,8 @@ async def fill_missing(companies: str = "all"):
                 save_data,
                 companies,
                 min_gap_size=1800,  # 30 minutes
-                adjust_for_market_hours=True
+                max_gap_size=86400 * 30,  # 30 days
+                adjust_for_market_hours=True,
             )
     except asyncio.CancelledError:
         return

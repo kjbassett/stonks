@@ -1,38 +1,42 @@
 import datetime
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import pandas as pd
-
+import tensorflow as tf
 from data_access.dao_manager import dao_manager
-from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal, DiscreteNonOrdinal
+from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
-from icecream import ic
+from missforest import MissForest
 from plugins.decorator import plugin
 from plugins.prediction.create_model import create_combined_model
 from plugins.prediction.data_generator import create_generators
-from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
-import tensorflow as tf
 
 
 @plugin(model_name={"ui_element": "textbox"})
 async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
     min_timestamp = 1734757200  # TODO Delete this line later!
-    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp, model_name)
+    hyperparams, model_space = create_model_space(
+        max_timestamp, min_timestamp, model_name
+    )
     mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
     model = await mt.run()
     model.save(model_name)
 
+
 async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
-    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp, model_name)
+    hyperparams, model_space = create_model_space(
+        max_timestamp, min_timestamp, model_name
+    )
     model_space = [
         {
             "name": "load_data",
             "train": {
                 "func": load_short_data,
-                "outputs": ["structured_data", "text_data"]
-            }
+                "outputs": ["structured_data", "text_data"],
+            },
         }
     ] + model_space[-3:]
 
@@ -56,17 +60,14 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         "num_windows": DiscreteOrdinal([3, 5, 10]),
         "num_news": DiscreteOrdinal([1]),
         "news_history_threshold": ContinuousRange(24 * 60 * 60, 5 * 24 * 60 * 60),
-        "include_industry": DiscreteOrdinal([False]),
-        "include_office": DiscreteOrdinal([True, False]),
-        "include_price_change": DiscreteOrdinal([True, False]),
-        "include_volume_change": DiscreteOrdinal([True, False]),
-        "include_coeff_var": DiscreteOrdinal([True, False]),
-        "include_price_over_average": DiscreteOrdinal([True, False]),
-        "include_volume_over_average": DiscreteOrdinal([True, False]),
+        "include_close_ratio": DiscreteOrdinal([True, False]),
+        "include_cv_close_ratio": DiscreteOrdinal([True, False]),
+        "include_avg_volume_ratio": DiscreteOrdinal([True, False]),
+        "include_cv_volume_ratio": DiscreteOrdinal([True, False]),
         "n_hidden_layers": DiscreteOrdinal([1, 2, 3, 4, 5, 6, 7]),
         "hidden_layer_dim": DiscreteOrdinal([100, 250, 500, 750, 1000, 1500, 2000]),
         "dropout_rate": ContinuousRange(0.3, 0.4),
-        "missing_data_%_threshold": ContinuousRange(0.2, 0.25)
+        "missing_data_%_threshold": ContinuousRange(0.2, 0.25),
     }
     model_space = [
         {
@@ -81,16 +82,13 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "num_windows": "num_windows",
                     "num_news": "num_news",
                     "news_history_threshold": "news_history_threshold",
-                    "include_industry": "include_industry",
-                    "include_office": "include_office",
-                    "include_price_change": "include_price_change",
-                    "include_volume_change": "include_volume_change",
-                    "include_coeff_var": "include_coeff_var",
-                    "include_price_over_average": "include_price_over_average",
-                    "include_volume_over_average": "include_volume_over_average"
+                    "include_close_ratio": "include_close_ratio",
+                    "include_cv_close_ratio": "include_cv_close_ratio",
+                    "include_avg_volume_ratio": "include_avg_volume_ratio",
+                    "include_cv_volume_ratio": "include_cv_volume_ratio",
                 },
                 "outputs": ["structured_data", "text_data"],
-            }
+            },
         },
         {
             "name": "filter_out_missing_data",
@@ -101,13 +99,15 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         {
             "name": "standardize_data",
             "train": {
-                "func": standardize_data, "args": ["structured_data"], "outputs": ["structured_data", "means", "stds"]
+                "func": standardize_data,
+                "args": ["structured_data"],
+                "outputs": ["structured_data", "means", "stds"],
             },
             "inference": {
                 "func": standardize_data,
                 "args": ["structured_data", "means", "stds"],
-                "outputs": "structured_data"
-            }
+                "outputs": "structured_data",
+            },
         },
         {
             "name": "impute",
@@ -129,7 +129,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "func": one_hot_encode,
                 "args": ["structured_data"],
                 "kwargs": {"ignore_cols": ["news1_id", "symbol", "name"]},
-                "outputs": ["structured_data", "one_hot_encoder"]
+                "outputs": ["structured_data", "one_hot_encoder"],
             },
             # "inference": {
             #     "func": one_hot_encode,
@@ -154,7 +154,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "text_data",
                     "batch_size",
                     "M-FAC/bert-tiny-finetuned-mrpc",
-                    "max_text_length"
+                    "max_text_length",
                 ],
                 "outputs": ["train_generator", "test_generator"],
             },
@@ -185,7 +185,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "outputs": "score",
                 "gpu": True,
             },
-        }
+        },
     ]
     return hyperparams, model_space
 
@@ -198,15 +198,13 @@ async def load_data(
     num_windows: int = 0,
     num_news: int = 0,
     news_history_threshold: int = 24 * 60 * 60,
-    include_industry: bool = False,
-    include_office: bool = False,
-    include_price_change: bool = False,
-    include_volume_change: bool = False,
-    include_coeff_var: bool = False,
-    include_price_over_average: bool = False,
-    include_volume_over_average: bool = False
+    include_close_ratio: bool = True,
+    include_cv_close_ratio: bool = True,
+    include_avg_volume_ratio: bool = True,
+    include_cv_volume_ratio: bool = True,
 ):
-    structure_data = await get_structured_data(
+    structured_data_dao = dao_manager.get_dao("DataCompiler")
+    structured_data = await structured_data_dao.get_data(
         price_change_offset,
         min_timestamp,
         max_timestamp,
@@ -214,55 +212,17 @@ async def load_data(
         num_windows,
         num_news,
         news_history_threshold,
-        include_industry,
-        include_office,
-        include_price_change,
-        include_volume_change,
-        include_coeff_var,
-        include_price_over_average,
-        include_volume_over_average,
+        include_close_ratio,
+        include_cv_close_ratio,
+        include_avg_volume_ratio,
+        include_cv_volume_ratio,
     )
     if num_news > 0:
         news_data_dao = dao_manager.get_dao("News")
         news_data = await news_data_dao.get_all()
     else:
         news_data = None
-    return structure_data, news_data
-
-
-async def get_structured_data(
-    price_change_offset,
-    min_timestamp,
-    max_timestamp,
-    max_window,
-    num_windows,
-    num_news,
-    news_history_threshold,
-    include_industry,
-    include_office,
-    include_price_change,
-    include_volume_change,
-    include_coeff_var,
-    include_price_over_average,
-    include_volume_over_average,
-):
-    structured_data_dao = dao_manager.get_dao("DataAggregator")
-    return await structured_data_dao.get_data(
-        price_change_offset,
-        min_timestamp,
-        max_timestamp,
-        max_window,
-        num_windows,
-        num_news,
-        news_history_threshold,
-        include_industry,
-        include_office,
-        include_price_change,
-        include_volume_change,
-        include_coeff_var,
-        include_price_over_average,
-        include_volume_over_average
-    )
+    return structured_data, news_data
 
 
 def filter_out_missing_data(structured_data, missing_data_threshold):
@@ -327,15 +287,22 @@ def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = No
     """
     if ignore_cols is None:
         ignore_cols = []
-    cols_to_encode = dataframe.select_dtypes(include=['object']).columns.difference(ignore_cols)
+    cols_to_encode = dataframe.select_dtypes(include=["object"]).columns.difference(
+        ignore_cols
+    )
     if encoder is None:
-        encoder = OneHotEncoder(handle_unknown='ignore')
+        encoder = OneHotEncoder(handle_unknown="ignore")
         encoded_data = encoder.fit_transform(dataframe[cols_to_encode]).toarray()
     else:
         encoded_data = encoder.transform(dataframe[cols_to_encode]).toarray()
 
-    encoded_df = pd.DataFrame(encoded_data, columns=encoder.get_feature_names_out(cols_to_encode)).reset_index(drop=True)
-    dataframe = pd.concat([dataframe.drop(columns=cols_to_encode).reset_index(drop=True), encoded_df], axis=1)
+    encoded_df = pd.DataFrame(
+        encoded_data, columns=encoder.get_feature_names_out(cols_to_encode)
+    ).reset_index(drop=True)
+    dataframe = pd.concat(
+        [dataframe.drop(columns=cols_to_encode).reset_index(drop=True), encoded_df],
+        axis=1,
+    )
 
     return dataframe, encoder
 
@@ -343,7 +310,11 @@ def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = No
 def impute(dataframe, imputer=None, ignore_cols=None):
     if ignore_cols is None:
         ignore_cols = []
-    ignore_cols += dataframe.select_dtypes(include=['object']).columns.difference(ignore_cols).tolist()
+    ignore_cols += (
+        dataframe.select_dtypes(include=["object"])
+        .columns.difference(ignore_cols)
+        .tolist()
+    )
     df_to_impute = dataframe.drop(columns=ignore_cols)
     if df_to_impute.isnull().sum().sum() == 0:
         return dataframe, None
@@ -351,8 +322,12 @@ def impute(dataframe, imputer=None, ignore_cols=None):
         imputer = MissForest()
         imputer.fit(df_to_impute)
     imputed_array = imputer.transform(df_to_impute)
-    imputed_data = pd.DataFrame(imputed_array, columns=df_to_impute.columns).reset_index(drop=True)
-    dataframe = pd.concat([imputed_data, dataframe[ignore_cols].reset_index(drop=True)], axis=1)
+    imputed_data = pd.DataFrame(
+        imputed_array, columns=df_to_impute.columns
+    ).reset_index(drop=True)
+    dataframe = pd.concat(
+        [imputed_data, dataframe[ignore_cols].reset_index(drop=True)], axis=1
+    )
     return dataframe, imputer
 
 
@@ -374,18 +349,28 @@ def create_and_train(
     epochs,
 ):
     model = create_combined_model(
-        num_news, structured_input_dim, n_hidden_layers, hidden_layer_dim, 1, dropout_rate=dropout_rate  # output dim
+        num_news,
+        structured_input_dim,
+        n_hidden_layers,
+        hidden_layer_dim,
+        1,
+        dropout_rate=dropout_rate,  # output dim
     )
 
     # Define the EarlyStopping callback
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor='val_loss',  # Monitor the validation loss
+        monitor="val_loss",  # Monitor the validation loss
         patience=3,  # Number of epochs with no improvement after which training will be stopped
         verbose=1,  # Verbosity mode
-        restore_best_weights=True  # Restore model weights from the epoch with the best value of the monitored quantity
+        restore_best_weights=True,  # Restore model weights from the epoch with the best value of the monitored quantity
     )
 
-    history = model.fit(train_generator, epochs=epochs, validation_data=test_generator, callbacks=[early_stopping])
+    history = model.fit(
+        train_generator,
+        epochs=epochs,
+        validation_data=test_generator,
+        callbacks=[early_stopping],
+    )
     plot_moving_average(history, 10)
     save_model(model, model_name=model_name)
     avg_val_loss = np.mean(history.history["val_loss"][-10:])
@@ -403,7 +388,10 @@ def save_model(model, model_folder: str = "models", model_name: str = None):
 
 
 def get_num_x_columns(structured_data):
-    n_cols = structured_data.shape[1] - structured_data.select_dtypes(include='object').shape[1]
+    n_cols = (
+        structured_data.shape[1]
+        - structured_data.select_dtypes(include="object").shape[1]
+    )
     if "target" in structured_data.columns:
         n_cols -= 1
     return n_cols
@@ -417,7 +405,7 @@ def get_score(history):
 #  Verify what format the bert encoder is expecting (tokens + input mask? standardized?)
 #  OneHotEncoder has some nice options to limit the number of new columns (good for industry id)
 #  Hyperparams for imputation
-#  See DataAggregator for more to-do items
+#  See DataCompiler for more to-do items
 #  de-couple statistics and news data from initial data load
 #  OR
 #  make a separate query to get only the necessary info for new_data

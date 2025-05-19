@@ -88,6 +88,6 @@ def complete_callback(plugin):
 
 def prepare_form_data(form):
     # Since a web request can have duplicate keys, sanic puts everything in lists
-    # ^ Undo that
+    # Might have to change this later
     return {k: v[0] for k, v in form.items()}
 

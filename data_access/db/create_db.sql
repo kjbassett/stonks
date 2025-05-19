@@ -33,6 +33,30 @@ CREATE TABLE TradingData (
   FOREIGN KEY(company_id) REFERENCES Company(id)
 );
 
+-- TradingDataAggregation Table
+CREATE TABLE TradingDataAggregation (
+  company_id INTEGER NOT NULL,
+  interval TEXT NOT NULL,  -- aggregation interval (e.g., 'hour', 'day')
+  date DATE,
+  hour INTEGER,
+  start INTEGER,
+  end INTEGER,
+  open REAL,
+  high REAL,
+  low REAL,
+  close REAL,
+  avg_close REAL,
+  cv_close REAL,
+  price_change REAL, --percent change
+  avg_volume REAL,
+  cv_volume REAL,
+  row_count INTEGER,
+  UNIQUE (company_id, interval, date, hour),
+  FOREIGN KEY(company_id) REFERENCES Company(id)
+);
+
+CREATE INDEX idx_trading_data_aggregation ON TradingDataAggregation (company_id, date, hour, interval);
+
 -- Reddit Table
 CREATE TABLE Reddit (
   id TEXT PRIMARY KEY,
@@ -69,12 +93,14 @@ CREATE TABLE News (
 CREATE TABLE NewsCompanyLink (
   company_id INTEGER,
   news_id TEXT,
+  sentiment INTEGER,
+  sentiment_reasoning TEXT,
   FOREIGN KEY(company_id) REFERENCES Company(id),
   FOREIGN KEY(news_id) REFERENCES News(id),
   UNIQUE (company_id, news_id)
 );
 
-CREATE TABLE NewsGap (
+CREATE TABLE NewsAttemptedQueries (
   company_id INTEGER,
   start INTEGER,
   end INTEGER,
@@ -114,7 +140,7 @@ CREATE TABLE Prediction (
   UNIQUE (model_id, company_id)
 );
 
--- Calendar Table
+-- Calendar Table (TODO is this needed?)
 CREATE TABLE Calendar (
   date TEXT PRIMARY KEY,
   open INTEGER,
@@ -122,7 +148,7 @@ CREATE TABLE Calendar (
 );
 
 -- Trading Data Gap
-CREATE TABLE TradingDataGap (
+CREATE TABLE TradingDataAttemptedQueries (
   company_id INTEGER,
   start INTEGER,
   end INTEGER,
