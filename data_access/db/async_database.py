@@ -1,7 +1,7 @@
+import asyncio
 from typing import Tuple, Union, List
 
 import aiosqlite
-import asyncio
 import pandas as pd
 from async_lru import alru_cache
 from icecream import ic
@@ -46,7 +46,10 @@ class AsyncDatabase:
             else:
                 cursor = await self.conn.execute(query, params)
 
-            if query.strip().upper().startswith("SELECT") or query_type.upper() == "SELECT":
+            if (
+                query.strip().upper().startswith("SELECT")
+                or query_type.upper() == "SELECT"
+            ):
                 result = await cursor.fetchall()
                 if return_type == "DataFrame":
                     # get columns from cursor
@@ -72,3 +75,30 @@ class AsyncDatabase:
             f"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{table}';"
         )
         return bool(result)
+
+    async def recreate_all_indices(self):
+        # Get all user-defined index names and their creation SQL
+        indices = await self.execute_query(
+            """
+            SELECT name, sql 
+            FROM sqlite_master 
+            WHERE type = 'index' 
+              AND sql IS NOT NULL
+            """
+        )
+
+        if not indices:
+            print("No user-defined indices found.")
+            return
+
+        for name, sql in indices:
+            print(f"\nRecreating index: {name}")
+            print(f"Original SQL: {sql}")
+
+            try:
+                await self.execute_query(f"DROP INDEX IF EXISTS {name}")
+                await self.execute_query(sql)
+                print("✅ Recreated successfully")
+            except Exception as e:
+                print(f"❌ Failed to recreate index {name}: {e}")
+        print("\nAll indices processed.")
