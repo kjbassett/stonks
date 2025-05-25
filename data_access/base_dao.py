@@ -44,29 +44,39 @@ class BaseDAO:
         return await self.db.execute_query(query, (identifier,))
 
     async def get(
-        self, identifier: Any = None, **kwargs
+        self, columns: list | tuple | str = "*", **kwargs
     ) -> Union[pd.DataFrame, List[Tuple]]:
-        query = f"SELECT * FROM {self.table_name}"
+        if isinstance(columns, (tuple, list)):
+            columns = ", ".join(columns)
+        query = f"SELECT {columns} FROM {self.table_name}"
         where_clause = []
         params = []
-        if identifier is not None:
-            if isinstance(identifier, (list, tuple)):
+
+        for col, fltrs in kwargs.items():
+            # standardize structure
+            if not isinstance(fltrs, (list, tuple)):
+                fltrs = [fltrs]
+
+            in_values = []
+            for fltr in fltrs:
+                if isinstance(fltr, (int, float, bool, type(None))):
+                    in_values.append(fltr)
+
+                # Extract operator and actual value
+                elif isinstance(fltr, str):
+                    for op in [">=", "<=", "!=", "<>", ">", "<"]:
+                        if op in fltr:
+                            where_clause.append(f"{col} {op} ?")
+                            params.append(fltr.split(op)[1].strip())
+                            break
+                    else:
+                        # TODO should check column type and adjust accordingly
+                        in_values.append(fltr)
+            if in_values:
                 where_clause.append(
-                    "id IN ({})".format(", ".join("?" * len(identifier)))
+                    "{} IN ({})".format(col, ", ".join("?" * len(in_values)))
                 )
-                params.extend(identifier)
-            else:
-                where_clause.append("id =?")
-                params.append(identifier)
-        for key, value in kwargs.items():
-            if isinstance(value, (list, tuple)):
-                where_clause.append(
-                    "{} IN ({})".format(key, ", ".join("?" * len(value)))
-                )
-                params.extend(value)
-            else:
-                where_clause.append(f"{key} =?")
-                params.append(value)
+                params.extend(in_values)
 
         query += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""
 
