@@ -52,7 +52,8 @@ async def find_gaps(
     current_data["gap"] = current_data["timestamp"] - current_data["previous"]
     current_data = current_data.iloc[1:,]
 
-    # Todo filter < gap threshold here as well to speed up apply? because adjusting gap can only make it smaller
+    # We filter out gaps before and after adjusting because adjusting can only make it smaller and is an expensive operation
+    current_data = current_data[current_data["gap"] > min_gap_size]
     if adjust_for_market_hours:
         current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
 
@@ -102,11 +103,9 @@ async def filter_out_past_queries(table, gaps, company_id):
     past_query_table = table + "AttemptedQueries"
     # Check if gap already in corresponding gap table
     # ptq = previously tried queries
-    ptq = await dao_manager.get_dao(past_query_table).get(company_id=company_id)
-    # TODO This filter should be done in the query
-    ptq = ptq[
-        ptq["end"] >= min_market_ts
-    ]  # only consider gaps that occurred in the past
+    ptq = await dao_manager.get_dao(past_query_table).get(
+        company_id=company_id, end=f">={min_market_ts}"
+    )
     # Ensure both dataframes are sorted by start time
     gaps = gaps.sort_values(by="start").reset_index(drop=True)
     ptq = ptq.sort_values(by="start").reset_index(drop=True)
@@ -159,8 +158,7 @@ async def fill_gap(
     latest_api_ts = int(now - now % 60) - 60 * 15  # API is 15 minutes behind real time
     start = int(gap["start"])
     end = min(latest_api_ts, int(gap["end"]))
-    async with call_limiter:
-        data = await get_data_func(client, cpy["symbol"], int(start), int(end))
+    data = await get_data_func(client, cpy["symbol"], int(start), int(end))
 
     # save_new_data returns the number of rows inserted, so if it's 0,
     #   we don't want to try this gap again. We save the record of our attempt here
@@ -197,7 +195,6 @@ async def fill_gaps(
     tasks = []
     n_cpy = len(companies)
     for c, cpy in companies.iterrows():
-        print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
         current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
         gaps = await filter_out_past_queries(table, gaps, cpy["id"])
@@ -210,9 +207,10 @@ async def fill_gaps(
                 f"Gap {g + 1}/{n_gaps}, {gap['start']} - {gap['end']}, {gap['end'] - gap['start']} seconds"
             )
             # Create a task for each gap handling
-            task = asyncio.create_task(
-                fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
-            )
+            async with call_limiter:
+                task = asyncio.create_task(
+                    fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
+                )
             tasks.append(task)
     # Wait for all tasks to complete
     print("WAITING FOR TASKS")
