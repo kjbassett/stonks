@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 
 from data_access.dao_manager import dao_manager
+from plugins.data_sources.tickers import get_or_create_company
 from polygon import ReferenceClient
 from utils.project_utilities import get_key
 
@@ -50,7 +51,7 @@ async def save_data(company_id, data):
         # append link data.
         for ticker in d["tickers"]:
             link_data = {
-                "company_id": await cmp.get_or_create_company(ticker),
+                "company_id": await get_or_create_company(ticker),
                 "news_id": d["id"],
                 "sentiment": None,
                 "sentiment_reasoning": None,

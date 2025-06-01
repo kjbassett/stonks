@@ -1,5 +1,7 @@
 import asyncio
 
+import pandas as pd
+from async_lru import alru_cache
 from data_access.dao_manager import dao_manager
 from icecream import ic
 from polygon.reference_apis.reference_api import AsyncReferenceClient
@@ -61,3 +63,39 @@ async def get_companies(symbols: str = "all"):
     elif isinstance(symbols, str):
         symbols = [c.strip() for c in symbols[0].split(",")]
         return await cpy.get(symbol=symbols)
+
+
+@alru_cache(maxsize=500)
+async def get_or_create_company(
+    symbol: str = None,
+    name: str = None,
+    industry_id: str = None,
+    ticker_type_id: str = None,
+):
+    cpy = dao_manager.get_dao("Company")
+    if not symbol and not name:
+        raise ValueError("Please provide either a symbol or a name.")
+    company = None
+    if symbol:
+        company = await cpy.get(symbol=symbol)
+    elif name:
+        company = await cpy.get(name=name)
+
+    # if not found, create a new company if symbol is provided
+    if (isinstance(company, pd.DataFrame) and company.empty) or company is None:
+        if symbol:
+            await cpy.insert(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "industry_id": industry_id,
+                    "ticker_type_id": ticker_type_id,
+                }
+            )
+            company = await cpy.get(symbol=symbol)
+        else:
+            raise ValueError(
+                "No company found, and no symbol provided to create new company."
+            )
+
+    return int(company.loc[0, "id"])
