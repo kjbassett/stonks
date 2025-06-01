@@ -1,7 +1,7 @@
 import asyncio
 
-from icecream import ic
 from data_access.dao_manager import dao_manager
+from icecream import ic
 from polygon.reference_apis.reference_api import AsyncReferenceClient
 from utils.project_utilities import get_key, call_limiter
 
@@ -15,6 +15,7 @@ def convert_result(result):
         "name": result["name"],
         "symbol": result["ticker"],
         "industry_id": sic_code,
+        "ticker_type_id": result["type"],
     }
     return result
 
@@ -22,6 +23,7 @@ def convert_result(result):
 async def handle_result(row, result):
     cpy = dao_manager.get_dao("Company")
     if result["status"] == "NOT_FOUND":
+        # TODO this should be logged, and deleting from the database should be reviewed
         await cpy.delete(row["id"])
     elif result["status"] != "OK":
         ic(result)
@@ -30,13 +32,12 @@ async def handle_result(row, result):
         await cpy.insert(result, on_conflict="UPDATE")
 
 
-
 async def fetch_and_update(client, row):
     async with call_limiter:
-        print('Starting ' + row['symbol'])
-        result = await client.get_ticker_details(row['symbol'])
+        print("Starting " + row["symbol"])
+        result = await client.get_ticker_details(row["symbol"])
         await handle_result(row, result)
-        print('Finished ' + row['symbol'])
+        print("Finished " + row["symbol"])
 
 
 @plugin()

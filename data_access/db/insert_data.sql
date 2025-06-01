@@ -458,4 +458,30 @@ INSERT INTO Industry (id, name, office_id) VALUES
     (9721, 'INTERNATIONAL AFFAIRS', (SELECT id from IndustryOffice WHERE name = 'International Corp Fin')),
     (9995, 'NON-OPERATING ESTABLISHMENTS', (SELECT id from IndustryOffice WHERE name = 'Real Estate & Construction'));
 
+INSERT INTO TickerType (id, name, gather_data) VALUES
+    ('CS', 'Common Stock', 1),
+    ('PFD', 'Preferred Stock', 0),
+    ('WARRANT', 'Warrant', 0),
+    ('RIGHT', 'Rights', 0),
+    ('BOND', 'Corporate Bond', 0),
+    ('ETF', 'Exchange Traded Fund', 1),
+    ('ETN', 'Exchange Traded Note', 0),
+    ('ETV', 'Exchange Traded Vehicle', 0),
+    ('SP', 'Structured Product', 0),
+    ('ADRC', 'American Depository Receipt Common', 1),
+    ('ADRP', 'American Depository Receipt Preferred', 0),
+    ('ADRW', 'American Depository Receipt Warrants', 0),
+    ('ADRR', 'American Depository Receipt Rights', 0),
+    ('FUND', 'Fund', 0),
+    ('BASKET', 'Basket', 0),
+    ('UNIT', 'Unit', 0),
+    ('LT', 'Liquidating Trust', 0),
+    ('OS', 'Ordinary Shares', 1),
+    ('GDR', 'Global Depository Receipts', 0),
+    ('OTHER', 'Other Security Type', 0),
+    ('NYRS', 'New York Registry Shares', 0),
+    ('AGEN', 'Agency Bond', 0),
+    ('EQLK', 'Equity Linked Bond', 0),
+    ('ETS', 'Single-security ETF', 0),
+    ('IX', 'Index', 0);
 

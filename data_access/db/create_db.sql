@@ -4,7 +4,9 @@ CREATE TABLE Company (
   name TEXT,
   symbol TEXT UNIQUE NOT NULL,
   industry_id INTEGER,
-  FOREIGN KEY(industry_id) REFERENCES Industry(id)
+  ticker_type_id TEXT,
+  FOREIGN KEY(industry_id) REFERENCES Industry(id),
+  FOREIGN KEY(ticker_type_id) REFERENCES TickerType(id)
 );
 
 CREATE TABLE Industry (
@@ -17,7 +19,13 @@ CREATE TABLE Industry (
 CREATE TABLE IndustryOffice (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
-)
+);
+
+CREATE TABLE TickerType (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    gather_data BIT
+);
 
 -- TradingData Table
 CREATE TABLE TradingData (
