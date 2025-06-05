@@ -101,7 +101,7 @@ CREATE TABLE News (
 CREATE TABLE NewsCompanyLink (
   company_id INTEGER,
   news_id TEXT,
-  sentiment INTEGER,
+  sentiment TEXT,
   sentiment_reasoning TEXT,
   FOREIGN KEY(company_id) REFERENCES Company(id),
   FOREIGN KEY(news_id) REFERENCES News(id),

@@ -59,11 +59,7 @@ async def save_data(company_id, data):
             # Polygon offers sentiment analysis (insights) per news article per ticker (for most tickers in article)
             for insight in d.get("insights", []):
                 if insight["ticker"] == ticker:
-                    link_data["sentiment"] = {
-                        "positive": 1,
-                        "neutral": 0,
-                        "negative": -1,
-                    }[insight["sentiment"]]
+                    link_data["sentiment"] = insight["sentiment"]
                     link_data["sentiment_reasoning"] = insight["sentiment_reasoning"]
                     break
             n_c_link_data.append(link_data)
