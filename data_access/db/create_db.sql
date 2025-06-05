@@ -24,7 +24,7 @@ CREATE TABLE IndustryOffice (
 CREATE TABLE TickerType (
     id TEXT PRIMARY KEY,
     name TEXT,
-    gather_data BIT
+    enabled BIT
 );
 
 -- TradingData Table

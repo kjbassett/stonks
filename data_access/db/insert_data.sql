@@ -458,7 +458,7 @@ INSERT INTO Industry (id, name, office_id) VALUES
     (9721, 'INTERNATIONAL AFFAIRS', (SELECT id from IndustryOffice WHERE name = 'International Corp Fin')),
     (9995, 'NON-OPERATING ESTABLISHMENTS', (SELECT id from IndustryOffice WHERE name = 'Real Estate & Construction'));
 
-INSERT INTO TickerType (id, name, gather_data) VALUES
+INSERT INTO TickerType (id, name, enabled) VALUES
     ('CS', 'Common Stock', 1),
     ('PFD', 'Preferred Stock', 0),
     ('WARRANT', 'Warrant', 0),
