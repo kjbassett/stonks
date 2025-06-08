@@ -13,6 +13,6 @@ class Company(BaseDAO):
     async def get(
         self, columns: list | tuple | str = "*", **kwargs
     ) -> Union[pd.DataFrame, List[Tuple]]:
-        if "enabled" not in kwargs:g
+        if "enabled" not in kwargs:
             kwargs["enabled"] = 1
         return await super().get(columns, **kwargs)

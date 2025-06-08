@@ -9,6 +9,8 @@ from utils.project_utilities import get_key, call_limiter
 
 from ..decorator import plugin
 
+cmp = dao_manager.get_dao("Company")
+
 
 def convert_result(result):
     result = result["results"]
@@ -43,8 +45,11 @@ async def fetch_and_update(client, row):
 
 
 @plugin()
-async def update_companies(symbols: str = "all"):
-    companies = await get_companies(symbols)
+async def update_companies(symbols: str = ""):
+    if symbols:
+        companies = await cmp.get(symbol=symbols)
+    else:
+        companies = await cmp.get()
     # filter out companies with no nans in any column
     companies = companies[companies.isnull().sum(axis=1) > 0]
     async with AsyncReferenceClient(get_key("polygon_io"), True) as client:
@@ -53,16 +58,6 @@ async def update_companies(symbols: str = "all"):
             tasks.append(asyncio.create_task(fetch_and_update(client, row)))
 
         await asyncio.gather(*tasks)
-
-
-@plugin()
-async def get_companies(symbols: str = "all"):
-    cpy = dao_manager.get_dao("Company")
-    if not symbols or symbols == "all":
-        return await cpy.get_all()
-    elif isinstance(symbols, str):
-        symbols = [c.strip() for c in symbols[0].split(",")]
-        return await cpy.get(symbol=symbols)
 
 
 @alru_cache(maxsize=500)

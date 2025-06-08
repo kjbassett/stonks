@@ -5,7 +5,6 @@ from functools import partial
 import pandas as pd
 from config import CONFIG
 from data_access.dao_manager import dao_manager
-from plugins.data_sources.tickers import get_companies
 from utils.market_calendar import (
     latest_market_time,
     market_date_delta,
@@ -165,6 +164,7 @@ async def fill_gap(
     if data:
         await save_data_func(cpy["id"], data)
 
+    # TODO should I save every attempted query or just the ones that returned no data? How much data do I expect to lose?
     ptq_table = table + "AttemptedQueries"
     await dao_manager.get_dao(ptq_table).insert((cpy["id"], start, end))
 
@@ -186,15 +186,19 @@ async def fill_gaps(
     load_data_func: callable,
     get_data_func: callable,
     save_data_func: callable,
-    companies: str,
+    companies: str = "",
     min_gap_size: int = 1800,
     max_gap_size: int = 0,
     adjust_for_market_hours=False,
 ):
-    companies = await get_companies(companies)
+    if companies:
+        companies = await cmp.get(symbols=companies)
+    else:
+        companies = await cmp.get()
     tasks = []
     n_cpy = len(companies)
     for c, cpy in companies.iterrows():
+        print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
         current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
         gaps = await filter_out_past_queries(table, gaps, cpy["id"])

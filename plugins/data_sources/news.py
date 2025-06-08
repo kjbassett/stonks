@@ -73,8 +73,7 @@ async def save_data(company_id, data):
 
 
 @plugin()
-async def fill_missing(companies: str = "all"):
-    print(companies)
+async def fill_missing(companies: str = ""):
     try:
         async with ReferenceClient(get_key("polygon_io"), True) as client:
             await fill_gaps(

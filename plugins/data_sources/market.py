@@ -23,26 +23,32 @@ async def _get_data(client: StocksClient, symbol: str, start: int, end: int):
 
 
 async def save_data(company_id, data):
-    data = [
-        {
-            "company_id": company_id,
-            "open": d["o"],
-            "high": d["h"],
-            "low": d["l"],
-            "close": d["c"],
-            "vw_average": d["vw"],
-            "volume": d["v"],
-            "timestamp": d["t"] // 1000,
-        }
-        for d in data
-    ]
+    try:
+        data = [
+            {
+                "company_id": company_id,
+                "open": d["o"],
+                "high": d["h"],
+                "low": d["l"],
+                "close": d["c"],
+                "vw_average": d["vw"],
+                "volume": d["v"],
+                "timestamp": d["t"] // 1000,
+            }
+            for d in data
+        ]
+    except KeyError as e:
+        print("MARKET DATA ERROR")
+        print(e)
+        print(data)
+        return 1
     n = await td.insert(data)
     print(f"{n} rows inserted into TradingData")
     return n
 
 
 @plugin()
-async def fill_missing(companies: str = "all"):
+async def fill_missing(companies: str = ""):
     try:
         async with StocksClient(get_key("polygon_io"), True) as client:
             await fill_gaps(
