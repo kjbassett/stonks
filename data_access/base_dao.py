@@ -54,7 +54,9 @@ class BaseDAO:
 
         for col, fltrs in kwargs.items():
             # standardize structure
-            if not isinstance(fltrs, (list, tuple)):
+            if isinstance(fltrs, str):
+                fltrs = fltrs.split(",")
+            elif not isinstance(fltrs, (list, tuple)):
                 fltrs = [fltrs]
 
             in_values = []
