@@ -49,37 +49,7 @@ class BaseDAO:
         if isinstance(columns, (tuple, list)):
             columns = ", ".join(columns)
         query = f"SELECT {columns} FROM {self.table_name}"
-        where_clause = []
-        params = []
-
-        for col, fltrs in kwargs.items():
-            # standardize structure
-            if isinstance(fltrs, str):
-                fltrs = fltrs.split(",")
-            elif not isinstance(fltrs, (list, tuple)):
-                fltrs = [fltrs]
-
-            in_values = []
-            for fltr in fltrs:
-                if isinstance(fltr, (int, float, bool, type(None))):
-                    in_values.append(fltr)
-
-                # Extract operator and actual value
-                elif isinstance(fltr, str):
-                    for op in [">=", "<=", "!=", "<>", ">", "<"]:
-                        if op in fltr:
-                            where_clause.append(f"{col} {op} ?")
-                            params.append(fltr.split(op)[1].strip())
-                            break
-                    else:
-                        # TODO should check column type and adjust accordingly
-                        in_values.append(fltr)
-            if in_values:
-                where_clause.append(
-                    "{} IN ({})".format(col, ", ".join("?" * len(in_values)))
-                )
-                params.extend(in_values)
-
+        params, where_clause = _create_filters(kwargs)
         query += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""
 
         return await self.db.execute_query(query, params, return_type="DataFrame")
@@ -197,3 +167,36 @@ def _construct_insert_query_dataframe(data):
     else:
         many = True
     return columns, placeholders, params, many
+
+
+def _create_filters(kwargs):
+    where_clause = []
+    params = []
+    for col, fltrs in kwargs.items():
+        # standardize structure
+        if isinstance(fltrs, str):
+            fltrs = fltrs.split(",")
+        elif not isinstance(fltrs, (list, tuple)):
+            fltrs = [fltrs]
+
+        in_values = []
+        for fltr in fltrs:
+            if isinstance(fltr, (int, float, bool, type(None))):
+                in_values.append(fltr)
+
+            # Extract operator and actual value
+            elif isinstance(fltr, str):
+                for op in [">=", "<=", "!=", "<>", ">", "<"]:
+                    if op in fltr:
+                        where_clause.append(f"{col} {op} ?")
+                        params.append(fltr.split(op)[1].strip())
+                        break
+                else:
+                    # TODO should check column type and adjust accordingly
+                    in_values.append(fltr)
+        if in_values:
+            where_clause.append(
+                "{} IN ({})".format(col, ", ".join("?" * len(in_values)))
+            )
+            params.extend(in_values)
+    return params, where_clause
