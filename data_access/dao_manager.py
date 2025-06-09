@@ -44,6 +44,11 @@ class DAOManager:
     def get_dao(self, dao_name):
         return self.daos.get(dao_name)
 
+    async def clean_data(self):
+        for table, dao in self.daos.items():
+            if hasattr(dao, "clean_data"):
+                await dao.clean_data()
+
 
 # Singleton instance
 dao_manager = DAOManager()

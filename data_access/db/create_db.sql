@@ -104,7 +104,7 @@ CREATE TABLE NewsCompanyLink (
   sentiment TEXT,
   sentiment_reasoning TEXT,
   FOREIGN KEY(company_id) REFERENCES Company(id),
-  FOREIGN KEY(news_id) REFERENCES News(id),
+  FOREIGN KEY(news_id) REFERENCES News(id) ON DELETE CASCADE,
   UNIQUE (company_id, news_id)
 );
 

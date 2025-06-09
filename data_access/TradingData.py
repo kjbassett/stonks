@@ -46,3 +46,31 @@ class TradingData(BaseDAO):
         return await self.db.execute_query(
             query, (company_id, min_timstamp), return_type="DataFrame"
         )
+
+    async def clean_data(self, min_timestamp: int) -> None:
+        # delete old data and data on companies with disabled ticker types
+        query = f"""
+        DELETE FROM {self.table_name} 
+          WHERE timestamp <=? 
+          OR company_id in (
+            SELECT id 
+            FROM Company 
+            LEFT JOIN TickerType
+            ON Company.ticker_type_id = TickerType.id
+            WHERE TickerType.enabled <> 1
+          );
+        """
+        await self.db.execute_query(query, (min_timestamp,))
+        # delete old attempted queries and queries on companies with disabled ticker types
+        query = f"""
+        DELETE FROM TradingDataAttemptedQueries 
+        WHERE end <=?
+        OR company_id in (
+            SELECT id 
+            FROM Company 
+            LEFT JOIN TickerType
+            ON Company.ticker_type_id = TickerType.id
+            WHERE TickerType.enabled <> 1
+          );
+        """
+        await self.db.execute_query(query, (min_timestamp,))

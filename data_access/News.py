@@ -22,3 +22,16 @@ class News(BaseDAO):
             query, (company_id, min_timestamp), return_type="DataFrame"
         )
         return data
+
+    async def clean_data(self, min_timestamp: int):
+        # Delete items from linking table for companies with ticker type having enabled = 0
+        query = "DELETE FROM NewsCompanyLink WHERE company_id IN (SELECT id FROM Companies WHERE ticker_type = <>1)"
+        await self.db.execute_query(query)
+        # Delete old news items and ones with no rows in NewsCompanyLink table
+        query = "DELETE FROM News WHERE timestamp < ? OR id NOT IN (SELECT news_id FROM NewsCompanyLink)"
+        await self.db.execute_query(query, (min_timestamp,))
+        query = f"""
+        DELETE FROM NewsAttemptedQueries 
+        WHERE company_id IN (SELECT id FROM Companies WHERE ticker_type = <>1)
+        OR end < ?"""
+        await self.db.execute_query(query, (min_timestamp,))
