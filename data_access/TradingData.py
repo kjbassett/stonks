@@ -53,24 +53,27 @@ class TradingData(BaseDAO):
         DELETE FROM {self.table_name} 
           WHERE timestamp <=? 
           OR company_id in (
-            SELECT id 
+            SELECT Company.
+            id 
             FROM Company 
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
             WHERE TickerType.enabled <> 1
           );
         """
+        print(query)
         await self.db.execute_query(query, (min_timestamp,))
         # delete old attempted queries and queries on companies with disabled ticker types
         query = f"""
         DELETE FROM TradingDataAttemptedQueries 
         WHERE end <=?
         OR company_id in (
-            SELECT id 
+            SELECT Company.id 
             FROM Company 
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
             WHERE TickerType.enabled <> 1
           );
         """
+        print(query)
         await self.db.execute_query(query, (min_timestamp,))
