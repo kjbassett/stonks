@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import time
 from typing import Tuple, Union, List
 
 import aiosqlite
@@ -136,21 +137,27 @@ class AsyncDatabase:
             print(
                 f'{now.strftime("%Y-%m-%d %H:%M:%S")} Backup waiting for all db operations to finish...'
             )
-            while True:
-                async with self.operation_lock:
+            t = time.time()
+            while time.time() - t < 3600 * 3:
+                async with self.operation_lock:  # lock to access self.active_operations
                     if self.active_operations == 0:
-                        now = datetime.datetime.now()
-                        print(
-                            f'{now.strftime("%Y-%m-%d %H:%M:%S")} All db operations finished. Starting backup...'
-                        )
-                        await self.close()
-                        await self._backup()
-                        await self.connect()
-                        duration = (datetime.datetime.now() - now).total_seconds()
-                        print(
-                            f'{now.strftime("%Y-%m-%d %H:%M:%S")} Backup completed after {duration} seconds.'
-                        )
-                await asyncio.sleep(1)
+                        break
+            else:
+                print(
+                    f'{now.strftime("%Y-%m-%d %H:%M:%S")} Waiting for all db operations to finish timed out.'
+                )
+                return
+            now = datetime.datetime.now()
+            print(
+                f'{now.strftime("%Y-%m-%d %H:%M:%S")} All db operations finished. Starting backup...'
+            )
+            await self.close()
+            await self._backup()
+            await self.connect()
+            duration = (datetime.datetime.now() - now).total_seconds()
+            print(
+                f'{now.strftime("%Y-%m-%d %H:%M:%S")} Backup completed after {duration} seconds.'
+            )
         finally:
             self.backup_in_progress.set()  # Allow operations after backup
 
