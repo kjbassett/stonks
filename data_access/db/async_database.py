@@ -15,6 +15,7 @@ class AsyncDatabase:
         self.conn = None
         self.query_limiter = asyncio.Semaphore(32)  # Limit concurrent tasks
         self.active_operations = 0
+        self.edit_lock = asyncio.Lock()  # Lock for transaction management
         self.operation_lock = (
             asyncio.Lock()
         )  # For when this object needs to do ONE thing
@@ -27,6 +28,8 @@ class AsyncDatabase:
 
     async def close(self):
         if self.conn is not None:
+            while self.active_operations > 0:  # Wait for all operations to finish
+                await asyncio.sleep(0.5)  # Allow other tasks to run
             await self.conn.close()
             self.conn = None
 
@@ -44,16 +47,30 @@ class AsyncDatabase:
         query_type="",
         print_query=False,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
-        async with self.query_limiter:
+        await self.connect()
+        async with self.query_limiter:  # Don't let the number of queries grow to infinity
             await self.backup_in_progress.wait()  # Wait if a backup is in progress
             async with self.operation_lock:  # Lock to prevent simultaneous incrementing of counter
-                self.active_operations += (
-                    1  # Count how many operations are currently active
-                )
+                # Count how many operations are currently active
+                self.active_operations += 1
             try:
-                return await self._execute(
-                    query, params, return_type, many, query_type, print_query
-                )
+                # Use transaction lock only for write operations
+                # TODO query type = read or write
+                if query_type.upper() in ("INSERT", "UPDATE", "DELETE"):
+                    async with self.edit_lock:
+                        result = await self._execute(
+                            query, params, return_type, many, query_type, print_query
+                        )
+                        await self.conn.commit()  # Commit only for write operations
+                else:
+                    result = await self._execute(
+                        query, params, return_type, many, query_type, print_query
+                    )
+                return result
+            except Exception as e:
+                if query_type.upper() in {"INSERT", "UPDATE", "DELETE"}:
+                    await self.conn.rollback()  # Rollback on error for write operations
+                raise e
             finally:
                 async with self.operation_lock:
                     self.active_operations -= 1
@@ -70,7 +87,7 @@ class AsyncDatabase:
         if print_query:
             print(f"Executing query:\n{query}")
             ic(params)
-        await self.connect()
+
         if many:  # TODO detect this automatically somehow
             cursor = await self.conn.executemany(query, params)
         else:
@@ -123,8 +140,10 @@ class AsyncDatabase:
             print(f"Original SQL: {sql}")
 
             try:
-                await self.execute_query(f"DROP INDEX IF EXISTS {name}")
-                await self.execute_query(sql)
+                await self.execute_query(
+                    f"DROP INDEX IF EXISTS {name}", query_type="DELETE"
+                )
+                await self.execute_query(sql, query_type="INSERT")
                 print("✅ Recreated successfully")
             except Exception as e:
                 print(f"❌ Failed to recreate index {name}: {e}")
