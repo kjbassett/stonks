@@ -15,3 +15,8 @@ async def clean_data():
 @plugin()
 async def backup_db():
     await dao_manager.db.backup()
+
+
+@plugin()
+async def recreate_indices():
+    await dao_manager.db.recreate_all_indices()
