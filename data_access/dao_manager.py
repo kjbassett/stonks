@@ -47,6 +47,7 @@ class DAOManager:
     async def clean_data(self, min_timestamp):
         for table, dao in self.daos.items():
             if hasattr(dao, "clean_data"):
+                print(f"Cleaning data from {table} dao...")
                 await dao.clean_data(min_timestamp)
 
 
