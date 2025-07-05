@@ -62,7 +62,7 @@ class TradingData(BaseDAO):
           );
         """
         print(query)
-        await self.db.execute_query(query, (min_timestamp,))
+        await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")
         # delete old attempted queries and queries on companies with disabled ticker types
         query = f"""
         DELETE FROM TradingDataAttemptedQueries 
@@ -76,4 +76,4 @@ class TradingData(BaseDAO):
           );
         """
         print(query)
-        await self.db.execute_query(query, (min_timestamp,))
+        await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")
