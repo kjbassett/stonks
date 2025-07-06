@@ -1,10 +1,10 @@
 import asyncio
 
 import polygon
+from webrock.decorator import plugin
+
 from src.data_access.Company import Company
 from src.utils.project_utilities import get_key
-
-from ..decorator import plugin
 
 
 # Async function for WebSocket client

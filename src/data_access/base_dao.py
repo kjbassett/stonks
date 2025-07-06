@@ -2,7 +2,8 @@ from typing import Any, Dict, List, Tuple, Union
 
 import pandas as pd
 from async_lru import alru_cache
-from db.async_database import AsyncDatabase
+
+from src.data_access.db.async_database import AsyncDatabase
 
 
 # Base Data Access Object (DAO) class.

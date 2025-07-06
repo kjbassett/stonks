@@ -2,12 +2,12 @@ import asyncio
 from datetime import datetime
 
 from polygon import ReferenceClient
+from webrock.decorator import plugin
+
 from src.data_access.dao_manager import dao_manager
+from src.data_sources.missing_data import fill_gaps
 from src.data_sources.tickers import get_or_create_company
 from src.utils.project_utilities import get_key
-
-from .helpers.missing_data import fill_gaps
-from ..decorator import plugin
 
 cmp = dao_manager.get_dao("Company")
 news = dao_manager.get_dao("News")

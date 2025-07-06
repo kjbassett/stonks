@@ -9,8 +9,9 @@ from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
+from webrock.decorator import plugin
+
 from src.data_access.dao_manager import dao_manager
-from src.decorator import plugin
 from src.prediction.create_model import create_combined_model
 from src.prediction.data_generator import create_generators
 

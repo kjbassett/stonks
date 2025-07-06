@@ -1,6 +1,6 @@
 import tensorflow as tf
-from src.decorator import plugin
 from transformers import TFBertModel
+from webrock.decorator import plugin
 
 
 # Define the text encoder using BERT

@@ -3,7 +3,8 @@ from functools import cache
 
 import pandas as pd
 import pandas_market_calendars
-from src.config import CONFIG
+
+from config import CONFIG
 
 
 def is_open(date):

@@ -1,8 +1,8 @@
 import asyncpraw
+from webrock.decorator import plugin
+
 from src.data_access.dao_manager import dao_manager
 from src.utils.project_utilities import get_key
-
-from ..decorator import plugin
 
 reddit_dao = dao_manager.get_dao("Reddit")
 

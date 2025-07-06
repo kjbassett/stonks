@@ -1,7 +1,7 @@
 import pandas as pd
 
-from .base_dao import BaseDAO
-from .db.async_database import AsyncDatabase
+from src.data_access.base_dao import BaseDAO
+from src.data_access.db.async_database import AsyncDatabase
 
 
 class News(BaseDAO):

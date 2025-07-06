@@ -3,6 +3,7 @@ import datetime
 from functools import partial
 
 import pandas as pd
+
 from config import CONFIG
 from src.data_access.dao_manager import dao_manager
 from src.utils.market_calendar import (

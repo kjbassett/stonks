@@ -2,8 +2,8 @@ from typing import List, Tuple, Union
 
 import pandas as pd
 
-from .base_dao import BaseDAO, _create_filters
-from .db.async_database import AsyncDatabase
+from src.data_access.base_dao import BaseDAO, _create_filters
+from src.data_access.db.async_database import AsyncDatabase
 
 
 class Company(BaseDAO):

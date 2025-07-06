@@ -1,8 +1,9 @@
 from datetime import datetime, time
 
+from webrock.decorator import plugin
+
 from config import CONFIG
 from src.data_access.dao_manager import dao_manager
-from src.decorator import plugin
 
 
 @plugin()
