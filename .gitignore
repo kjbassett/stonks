@@ -1,13 +1,12 @@
 organisms
 todo.txt
-config.py
+*/config.py
 models/*
 .idea/
 keys.txt
 *.log
 Archive/
 scratch.py
-config.py
 *.sqlite
 *.sqlite-journal
 
@@ -140,5 +139,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
-config.py

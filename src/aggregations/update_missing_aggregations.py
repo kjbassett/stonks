@@ -1,5 +1,5 @@
-from data_access.dao_manager import dao_manager
-from plugins.decorator import plugin
+from src.data_access.dao_manager import dao_manager
+from src.decorator import plugin
 
 
 @plugin()

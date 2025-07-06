@@ -1,7 +1,7 @@
 import unittest
 
 import pandas as pd
-from data_access.base_dao import construct_insert_query
+from src.data_access.base_dao import construct_insert_query
 
 
 class TestConstructInsertQuery(unittest.TestCase):

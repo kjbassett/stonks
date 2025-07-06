@@ -1,5 +1,5 @@
 import tensorflow as tf
-from plugins.decorator import plugin
+from src.decorator import plugin
 from transformers import TFBertModel
 
 
@@ -26,18 +26,26 @@ def create_combined_model(
     text_encoder.trainable = False  # freeze the pre-trained text encoder
 
     # Structured numerical input
-    structured_input = tf.keras.layers.Input(shape=(structured_input_dim,), name="structured_input")
+    structured_input = tf.keras.layers.Input(
+        shape=(structured_input_dim,), name="structured_input"
+    )
 
     # Textual inputs (input IDs and attention masks for each text)
     inputs = [structured_input]
     text_embeddings = []
     for i in range(num_texts):
-        text_input = tf.keras.layers.Input(shape=(512,), dtype=tf.int32, name=f"input_ids_{i + 1}")
-        attention_mask = tf.keras.layers.Input(shape=(512,), dtype=tf.int32, name=f"attention_mask_{i + 1}")
+        text_input = tf.keras.layers.Input(
+            shape=(512,), dtype=tf.int32, name=f"input_ids_{i + 1}"
+        )
+        attention_mask = tf.keras.layers.Input(
+            shape=(512,), dtype=tf.int32, name=f"attention_mask_{i + 1}"
+        )
         inputs.extend([text_input, attention_mask])
 
         # Get embedding for each text input
-        embedding = text_encoder(input_ids=text_input, attention_mask=attention_mask).last_hidden_state  # pooler_output
+        embedding = text_encoder(
+            input_ids=text_input, attention_mask=attention_mask
+        ).last_hidden_state  # pooler_output
         text_embeddings.append(tf.keras.layers.Flatten()(embedding))
 
     # combine all text embeddings and the structured input into a single input layer for the combined model
@@ -45,7 +53,9 @@ def create_combined_model(
 
     # Fully connected layers
     for _ in range(n_hidden_layers):
-        combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(combined)
+        combined = tf.keras.layers.Dense(combined_hidden_dim, activation="relu")(
+            combined
+        )
         combined = tf.keras.layers.Dropout(dropout_rate)(combined)
 
     output = tf.keras.layers.Dense(output_dim, activation=output_activation)(combined)
@@ -80,4 +90,7 @@ def smape(y_true, y_pred):
     - smape: tf.Tensor
         The sMAPE value.
     """
-    return tf.reduce_mean(2 * tf.abs(y_true - y_pred) / (tf.abs(y_true) + tf.abs(y_pred))) * 100
+    return (
+        tf.reduce_mean(2 * tf.abs(y_true - y_pred) / (tf.abs(y_true) + tf.abs(y_pred)))
+        * 100
+    )

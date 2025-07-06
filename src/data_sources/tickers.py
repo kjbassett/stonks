@@ -2,10 +2,10 @@ import asyncio
 
 import pandas as pd
 from async_lru import alru_cache
-from data_access.dao_manager import dao_manager
 from icecream import ic
 from polygon.reference_apis.reference_api import AsyncReferenceClient
-from utils.project_utilities import get_key, call_limiter
+from src.data_access.dao_manager import dao_manager
+from src.utils.project_utilities import get_key, call_limiter
 
 from ..decorator import plugin
 

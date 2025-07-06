@@ -1,8 +1,8 @@
 import asyncio
 
 import polygon
-from data_access.Company import Company
-from utils.project_utilities import get_key
+from src.data_access.Company import Company
+from src.utils.project_utilities import get_key
 
 from ..decorator import plugin
 
@@ -40,6 +40,7 @@ async def main(db, companies: list | None = None):
     finally:
         await stream_client.close_stream()
 
+
 # test function for all template input types
 @plugin(
     date={"ui_element": "date"},
@@ -49,9 +50,21 @@ async def main(db, companies: list | None = None):
     email={"ui_element": "email"},
     file={"ui_element": "file"},
     month={"ui_element": "month"},
-    password={"ui_element": "password"}
+    password={"ui_element": "password"},
 )
-async def test_ui_elements(text: str, check: bool, integer: int, date: str, slider: int, color: str, datetime_local: str, email: str, file: str, month: str, password: str):
+async def test_ui_elements(
+    text: str,
+    check: bool,
+    integer: int,
+    date: str,
+    slider: int,
+    color: str,
+    datetime_local: str,
+    email: str,
+    file: str,
+    month: str,
+    password: str,
+):
     print(f"text: {text}")
     print(f"check: {check}")
     print(f"integer: {integer}")

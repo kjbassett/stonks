@@ -1,6 +1,6 @@
 import asyncpraw
-from data_access.dao_manager import dao_manager
-from utils.project_utilities import get_key
+from src.data_access.dao_manager import dao_manager
+from src.utils.project_utilities import get_key
 
 from ..decorator import plugin
 

@@ -1,9 +1,9 @@
 import asyncio
 import datetime
 
-from data_access.dao_manager import dao_manager
 from polygon import StocksClient
-from utils.project_utilities import get_key
+from src.data_access.dao_manager import dao_manager
+from src.utils.project_utilities import get_key
 
 from .helpers.missing_data import fill_gaps
 from ..decorator import plugin

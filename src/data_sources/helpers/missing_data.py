@@ -4,13 +4,13 @@ from functools import partial
 
 import pandas as pd
 from config import CONFIG
-from data_access.dao_manager import dao_manager
-from utils.market_calendar import (
+from src.data_access.dao_manager import dao_manager
+from src.utils.market_calendar import (
     latest_market_time,
     market_date_delta,
     all_open_dates,
 )
-from utils.project_utilities import call_limiter
+from src.utils.project_utilities import call_limiter
 
 min_market_date = market_date_delta(CONFIG["min_date"])
 min_market_ts = int(

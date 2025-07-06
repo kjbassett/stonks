@@ -1,10 +1,10 @@
 import asyncio
 from datetime import datetime
 
-from data_access.dao_manager import dao_manager
-from plugins.data_sources.tickers import get_or_create_company
 from polygon import ReferenceClient
-from utils.project_utilities import get_key
+from src.data_access.dao_manager import dao_manager
+from src.data_sources.tickers import get_or_create_company
+from src.utils.project_utilities import get_key
 
 from .helpers.missing_data import fill_gaps
 from ..decorator import plugin

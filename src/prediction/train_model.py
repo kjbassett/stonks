@@ -5,14 +5,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from data_access.dao_manager import dao_manager
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from missforest import MissForest
-from plugins.decorator import plugin
-from plugins.prediction.create_model import create_combined_model
-from plugins.prediction.data_generator import create_generators
 from sklearn.preprocessing import OneHotEncoder
+from src.data_access.dao_manager import dao_manager
+from src.decorator import plugin
+from src.prediction.create_model import create_combined_model
+from src.prediction.data_generator import create_generators
 
 
 @plugin(model_name={"ui_element": "textbox"})
