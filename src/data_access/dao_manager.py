@@ -2,11 +2,10 @@
 import os
 from importlib import import_module
 
-from config import CONFIG
+from async_database import AsyncDatabase
+from base_dao import BaseDAO
 from icecream import ic
-
-from .base_dao import BaseDAO
-from .db.async_database import AsyncDatabase
+from src.config import CONFIG
 
 
 class DAOManager:
@@ -44,7 +43,11 @@ class DAOManager:
     def get_dao(self, dao_name):
         return self.daos.get(dao_name)
 
-    async def clean_data(self, min_timestamp):
+    @plugin()
+    async def clean_data(
+        self,
+        min_timestamp: int = datetime.combine(CONFIG["min_date"], time()).timestamp(),
+    ):
         for table, dao in self.daos.items():
             if hasattr(dao, "clean_data"):
                 print(f"Cleaning data from {table} dao...")
