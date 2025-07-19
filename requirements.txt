@@ -20,4 +20,4 @@ matplotlib
 aiosqlite
 MissForest
 lightgbm
-git+https://github.com/kjbassett/webrock@dev
+git+https://github.com/kjbassett/webrock@feature/init_code_handling
