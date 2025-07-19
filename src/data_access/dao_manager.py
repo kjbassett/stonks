@@ -7,7 +7,7 @@ from config import CONFIG
 from icecream import ic
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
-from webrock.decorator import plugin, init
+from webrock.decorator import plugin, init, shutdown
 
 
 class DAOManager:
@@ -28,8 +28,6 @@ class DAOManager:
         await self.load_custom_daos()
 
         ic(self.daos)
-        # TODO DELETE ME after webrock gets shutdown code functionality
-        await self.db.close()
 
     async def load_custom_daos(self):
         # Read in any custom data access objects, potentially overwriting the base ones
@@ -92,3 +90,8 @@ dao_manager = DAOManager()
 @init
 async def initialize_dao_manager():
     await dao_manager.initialize()
+
+
+@shutdown
+async def shutdown_dao_manager():
+    await dao_manager.db.close()
