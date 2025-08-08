@@ -1,7 +1,7 @@
 # dao_manager.py
+import importlib.util
 import os
 from datetime import datetime, time
-from importlib import import_module
 
 from config import CONFIG
 from icecream import ic
@@ -43,20 +43,28 @@ class DAOManager:
 
         # Check all files in dao_folder
         for dao_file in os.listdir(dao_folder):
-            dao_file = os.path.splitext(dao_file)[0]
-            if not dao_file.endswith(".py") or dao_file in [
+            if not dao_file.endswith(".py"):
+                continue
+            if dao_file in [
                 "__init__.py",
                 "base_dao.py",
                 "dao_manager.py",
             ]:
                 continue
-            dao_name = dao_file.split(".")[0]
-            import_path = f"{relative_path}.{dao_file}".strip(".")
 
-            print(f"Loading DAO: {import_path}")
+            # import_path = f"{relative_path}.{dao_file}".strip(".")
+            import_path = os.path.join(dao_folder, dao_file)
+            dao_name = os.path.splitext(dao_file)[0]
+
+            spec = importlib.util.spec_from_file_location(dao_name, import_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            print(f"Loading user-defined DAO: {dao_name}")
             try:
-                dao_class = getattr(import_module(import_path), dao_name)
+                dao_class = getattr(module, dao_name)
             except Exception as e:
+
                 print(f"Failed to import {dao_file}: {e}")
                 continue
             self.daos[dao_name] = dao_class(self.db)
