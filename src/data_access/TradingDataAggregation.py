@@ -1,36 +1,13 @@
-from datetime import datetime, time
-
-from config import CONFIG
 from src.data_access.base_dao import BaseDAO
-from src.data_access.dao_manager import dao_manager
 from src.data_access.db.async_database import AsyncDatabase
-
-cmp = dao_manager.get_dao("Company")
 
 
 class TradingDataAggregation(BaseDAO):
     def __init__(self, db: AsyncDatabase):
         super().__init__(db, "TradingDataAggregation")
 
-    async def update_missing_hourly_aggregations(
-        self, company_id, window: int = 3600 * 24
-    ):
-        earliest_timestamp = int(
-            datetime.combine(CONFIG["min_date"], time()).timestamp()
-        )  # midnight of earliest date in seconds since epoch
-        if companies:
-            companies = await cmp.get(symbols=companies)
-        else:
-            companies = await cmp.get()
-        tasks = []
-        n_cpy = len(companies)
-        for c, cpy in companies.iterrows():
-            print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
-            now = int(datetime.now().timestamp())
-            windows = range(earliest_timestamp, now, window)
-            num_windows = len(windows)
-            for i, t in enumerate(windows):
-                query = f"""
+    async def update_missing_hourly_aggregations(self, company_id, start, end):
+        query = f"""
     WITH RowCounts AS (
         SELECT
             td.company_id,
@@ -38,7 +15,9 @@ class TradingDataAggregation(BaseDAO):
             strftime('%H', td.timestamp, 'unixepoch') AS hour,
             COUNT(*) AS row_count
         FROM TradingData td
-        WHERE td.timestamp >= {t} AND td.timestamp < {t + window}
+        WHERE td.timestamp >= {start} 
+            AND td.timestamp < {end}
+            AND td.company_id = {company_id}
         GROUP BY td.company_id, DATE(td.timestamp, 'unixepoch'), strftime('%H', td.timestamp, 'unixepoch')
     ),
     -- Get trading data that has not been aggregated yet.
@@ -62,9 +41,11 @@ class TradingDataAggregation(BaseDAO):
         ON td.company_id = tda.company_id
         AND DATE(td.timestamp, 'unixepoch') = tda.date
         AND strftime('%H', td.timestamp, 'unixepoch') = tda.hour
-        WHERE (td.timestamp >= {t} AND td.timestamp < {t + window})
-        -- only include data if there is more data in the aggregation than the currently saved aggregation
-        AND (tda.row_count IS NULL or rc.row_count > tda.row_count)
+        WHERE 
+            (td.timestamp >= {start} AND td.timestamp < {end})
+            AND td.company_id = {company_id}
+            -- only include data if there is more data in the aggregation than the currently saved aggregation
+            AND (tda.row_count IS NULL or rc.row_count > tda.row_count)
     ),
     -- Group the filtered data by company, date, and hour.
     GroupedData AS (
@@ -111,26 +92,28 @@ class TradingDataAggregation(BaseDAO):
             ELSE 0 END) AS cv_volume
         FROM GroupedData gd
     )
-    -- Finally, insert the calculated metrics into the TradingDataAggregation table.
     INSERT INTO TradingDataAggregation (
         company_id, interval, date, hour, start, end, open, high, low, close, avg_close, cv_close, price_change, avg_volume, cv_volume, row_count
     )
     SELECT
         company_id, 'hour', date, hour, start, end, open, high, low, close, avg_close, cv_close, price_change, avg_volume, cv_volume, row_count
-    FROM CalculatedMetrics;
+    FROM CalculatedMetrics 
+    WHERE true -- sqlite needs a WHERE clause so it knows that the ON is part of the UPSERT and not part of a table join
+    ON CONFLICT (company_id, interval, date, hour) DO UPDATE SET
+        start = excluded.start,
+        end = excluded.end,
+        open = excluded.open,
+        high = excluded.high,
+        low = excluded.low,
+        close = excluded.close,
+        avg_close = excluded.avg_close,
+        cv_close = excluded.cv_close,
+        price_change = excluded.price_change,
+        avg_volume = excluded.avg_volume,
+        cv_volume = excluded.cv_volume,
+        row_count = excluded.row_count;
             """
-                print(query)
-                return
-                current_iter_start = datetime.now().timestamp()
-                print(
-                    f"Starting aggegation query {i+1}/{num_windows} from {t} to {t + window}, end at {now}"
-                )
-                n = await self.db.execute_query(query, query_type="INSERT")
-                print(
-                    f"Time to group data by hour: {int(datetime.now().timestamp() - current_iter_start)} seconds."
-                )
-                print(f"Updated or inserted {n} rows.")
-        print("Missing hourly aggregations updated.")
+        await self.db.execute_query(query, query_type="INSERT")
 
     async def clean_data(self, min_timestamp: int) -> None:
         # delete old data and data on companies with disabled ticker types
