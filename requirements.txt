@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
 pandas
 pandas_market_calendars
 icecream
@@ -12,7 +13,6 @@ python-dateutil
 asyncpraw
 async-lru
 websocket-client==1.2.0
-tensorflow<2.11
 transformers
 git+https://github.com/kjbassett/Genetic_Model_Tuner@dev
 scikit-learn
@@ -21,3 +21,5 @@ aiosqlite
 MissForest
 lightgbm
 git+https://github.com/kjbassett/webrock@dev
+torch
+torchvision
