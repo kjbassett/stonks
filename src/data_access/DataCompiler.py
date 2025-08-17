@@ -66,6 +66,7 @@ def construct_query(
     joins = []
     filters = []
     if aggregation_interval == "minute":
+        print("minute aggregations are untested!")
         start_col = "t.timestamp"
         end_col = "t.timestamp"
         columns += ["t.close", "t.vw_average", "i.name", "io.name"]
@@ -168,7 +169,7 @@ CAST(((
         # Would it be faster to use a window function here?
         return f"""
 CAST(((
-    SELECT AVG(close)
+    SELECT AVG(close) -- have to aggregate even though we use limit 1
     FROM (
         SELECT t2.close
         FROM TradingDataAggregation t2
@@ -176,9 +177,9 @@ CAST(((
             t2.company_id = t.company_id
             AND t2.interval = 'hour'
             AND (t2.date > t.date OR (t2.date = t.date AND t2.hour > t.hour))
-            AND t2.row_count > 5
+            AND t2.row_count > 5  -- number of rows that went into the aggregation
         ORDER BY t2.date, t2.hour
-        LIMIT 1 OFFSET {price_change_offset - 1}
+        LIMIT 1 OFFSET {price_change_offset - 1} -- by offsetting rows, we are essentially skipping closed market hours
     )
 ) - t.close) / t.close AS REAL) AS target"""
 
@@ -268,10 +269,13 @@ def construct_news_columns(
         if get_ids:
             columns.append(f"n{i}.news_id AS news{i}_id")
         else:
-            columns.append(f"c.symbol || ' ' || c.name || ' ' || n{i}.body as news{i}")
+            columns.append(
+                f"c.symbol || ' ' || c.name || ' ' || n{i}.body as news{i}"
+            )  # sqlite string concat
         joins.append(
             f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
         )
+        columns.append()
 
     return cte, columns, joins
 
@@ -290,6 +294,7 @@ def construct_calculated_columns(
         return []
 
     # determine settings
+    # choose timestamp column
     if aggregation_interval == "minute":
         ts_col = "t.timestamp"
         if include_cv_close_ratio:
@@ -297,7 +302,7 @@ def construct_calculated_columns(
                 "Coefficient of Variation calculation not supported for data by minute. Turning off cv flag"
             )
             include_cv_close_ratio = False
-    elif aggregation_interval in ("hour"):
+    elif aggregation_interval == "hour":
         ts_col = "t.end"
     else:
         raise ValueError("Unsupported aggregation interval")
@@ -311,15 +316,15 @@ def construct_calculated_columns(
     }
     # create each relative column for each window
     windows = np.linspace(0, max_window, num_windows + 1, dtype=int)[1:]
-    windows = set(
-        windows
-    )  # ensure we don't have duplicate window sizes. dtype=int could cause duplicates
+    # ensure we don't have duplicate window sizes. dtype=int could cause duplicates
+    windows = set(windows)
 
     # create columns which are comparisons between current data and past data
     calc_columns = []
     for offset in windows:
         for col, include in flag_columns.items():
             # current price / past price for current company in the past window
+            # "normalize" past data relative to current data
             calc_columns.append(
                 f"(t.{col} / LAG({col}, {offset}) OVER (PARTITION BY t.company_id ORDER BY {ts_col})) AS {col}_ratio_lag_{offset}"
             )
@@ -335,13 +340,13 @@ def construct_calculated_columns(
 Developer notes
 You can include the following data:
 data from current hour
-data from current hour standardized to current company
+data from current hour standardized relative to current company
 data from n hours ago
-data from n hours ago standardized to current company
+data from n hours ago standardized relative to current company
 data from n hours ago compared to current hour
 data from n hours ago compared to next offset
 
 You probably want data from now for the model to be able to compare the business to others. vertical
 Then the past data should be relative to itself currently. horizontal
-Current is always "in the middle" relative to past to maintain comparability.
+Current is always the "control group" relative to past to maintain comparability.
 """

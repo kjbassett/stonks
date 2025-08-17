@@ -9,25 +9,27 @@ from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
-from webrock.decorator import plugin
-
 from src.data_access.dao_manager import dao_manager
 from src.prediction.create_model import create_combined_model
 from src.prediction.data_generator import create_generators
+from webrock.decorator import plugin
 
 
 @plugin(model_name={"ui_element": "textbox"})
 async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
     min_timestamp = 1734757200  # TODO Delete this line later!
+    # define possible choices for all hyperparameters
     hyperparams, model_space = create_model_space(
         max_timestamp, min_timestamp, model_name
     )
+    # Run genetic algorithm to tune hyperparameters
     mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
     model = await mt.run()
     model.save(model_name)
 
 
 async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
+    # train from csv of saved data from some intermediate step
     hyperparams, model_space = create_model_space(
         max_timestamp, min_timestamp, model_name
     )
@@ -47,6 +49,7 @@ async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: in
 
 
 def load_short_data():
+    # load csv of saved data from some intermediate step
     structured_data = pd.read_csv("data6.csv", index_col=0).reset_index(drop=True)
     news_data = pd.read_csv("news_data.csv")
     return structured_data, news_data
@@ -54,21 +57,49 @@ def load_short_data():
 
 def create_model_space(max_timestamp, min_timestamp, model_name):
     hyperparams = {
-        "batch_size": DiscreteOrdinal([32]),
-        "max_text_length": DiscreteOrdinal([512]),
-        "price_change_offset": ContinuousRange(86400, 86400 * 10),
-        "max_window": DiscreteOrdinal([500, 1000, 1500, 2000, 2500, 3000, 4000, 5000]),
-        "num_windows": DiscreteOrdinal([3, 5, 10]),
-        "num_news": DiscreteOrdinal([1]),
-        "news_history_threshold": ContinuousRange(24 * 60 * 60, 5 * 24 * 60 * 60),
-        "include_close_ratio": DiscreteOrdinal([True, False]),
-        "include_cv_close_ratio": DiscreteOrdinal([True, False]),
-        "include_avg_volume_ratio": DiscreteOrdinal([True, False]),
-        "include_cv_volume_ratio": DiscreteOrdinal([True, False]),
-        "n_hidden_layers": DiscreteOrdinal([1, 2, 3, 4, 5, 6, 7]),
-        "hidden_layer_dim": DiscreteOrdinal([100, 250, 500, 750, 1000, 1500, 2000]),
-        "dropout_rate": ContinuousRange(0.3, 0.4),
-        "missing_data_%_threshold": ContinuousRange(0.2, 0.25),
+        "batch_size": DiscreteOrdinal([32]),  # neural net batch size
+        "max_text_length": DiscreteOrdinal([512]),  # text encoder length
+        # for price_change_offset...
+        # when aggregation is minutes, seconds ahead of current row for calculating percent changes
+        # when aggregation is hours, rows ahead of current row for calculating percent changes
+        # TODO fix this ^ nonsense. Go to rows only because it skips over closed market hours
+        "price_change_offset": DiscreteOrdinal([range(1, 9)]),
+        "max_window": DiscreteOrdinal(
+            range(500, 5001, 500)
+        ),  # maximum time behind current row to see trends
+        "num_windows": DiscreteOrdinal(
+            [3, 5, 10]
+        ),  # number of points in time behind current row to compare for trends
+        "num_news": DiscreteOrdinal(
+            [1]
+        ),  # number of news articles previous to the current row to include
+        "news_history_threshold": ContinuousRange(
+            24 * 60 * 60, 5 * 24 * 60 * 60
+        ),  # The oldest a news article could be
+        "include_close_ratio": DiscreteOrdinal(
+            [True, False]
+        ),  # include ratio of current close to past close
+        "include_cv_close_ratio": DiscreteOrdinal(
+            [True, False]
+        ),  # include coef var of close data from past to current
+        "include_avg_volume_ratio": DiscreteOrdinal(
+            [True, False]
+        ),  # include avg volume from past to current
+        "include_cv_volume_ratio": DiscreteOrdinal(
+            [True, False]
+        ),  # include coef car of volume from past to current
+        "n_hidden_layers": DiscreteOrdinal(
+            [1, 2, 3, 4, 5, 6, 7]
+        ),  # number of hidden layers in NN
+        "hidden_layer_dim": DiscreteOrdinal(
+            [100, 250, 500, 750, 1000, 1500, 2000]
+        ),  # number of nodes per hidden layer
+        "dropout_rate": ContinuousRange(
+            0.3, 0.4
+        ),  # chance of dropout per dropout layer in NN
+        "missing_data_%_threshold": ContinuousRange(
+            0.2, 0.25
+        ),  # threshold of % of missing data to remove pt.
     }
     model_space = [
         {
@@ -107,7 +138,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "inference": {
                 "func": standardize_data,
                 "args": ["structured_data", "means", "stds"],
-                "outputs": "structured_data",
+                "outputs": ["structured_data", "means", "stds"],
             },
         },
         {
