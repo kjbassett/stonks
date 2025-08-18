@@ -58,7 +58,8 @@ class StonksDataset(Dataset):
                     return_attention_mask=True,
                     return_tensors="pt",
                 )
-                input_ids = encoded["input_ids"].squeeze(0)  # (seq_len,) get rid of the batch dimension
+                # get rid of the batch dimension
+                input_ids = encoded["input_ids"].squeeze(0)  # (seq_len,)
                 attn_mask = encoded["attention_mask"].squeeze(0)  # (seq_len,)
 
             input_ids_list.append(input_ids)
@@ -79,3 +80,27 @@ class StonksDataset(Dataset):
             cols.append(col)
             i += 1
         return cols
+
+
+def shuffle(df):
+    # shuffle the dataframe in place, and reset index afterwards
+    return df.sample(frac=1, random_state=42)
+
+
+async def create_datasets(
+    structured_data,
+    news_data=None,
+    tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
+    max_text_length=512,
+) -> (StonksDataset, StonksDataset):
+    n_train = int(0.8 * len(structured_data))
+    structured_data = shuffle(structured_data)
+    train = structured_data.iloc[:n_train]
+    test = structured_data.iloc[n_train:]
+    train_dataset = StonksDataset(
+        train, news_data, tokenizer_name=tokenizer, max_text_length=max_text_length
+    )
+    test_dataset = StonksDataset(
+        test, news_data, tokenizer_name=tokenizer, max_text_length=max_text_length
+    )
+    return train_dataset, test_dataset
