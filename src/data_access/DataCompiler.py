@@ -275,8 +275,7 @@ def construct_news_columns(
         joins.append(
             f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
         )
-        columns.append()
-
+        columns.append(f"t.timestamp - n{i}.timestamp AS news{i}_age")
     return cte, columns, joins
 
 
