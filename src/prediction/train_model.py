@@ -1,17 +1,13 @@
-import datetime
-import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
 from src.data_access.dao_manager import dao_manager
-from src.prediction.create_model import create_combined_model
-from src.prediction.data_generator import create_generators
+from src.prediction.pytorch_dataset import create_datasets
+from src.prediction.pytorch_model import create_and_train
 from webrock.decorator import plugin
 
 
@@ -180,15 +176,14 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         {
             "name": "create_generators",
             "train": {
-                "func": create_generators,
+                "func": create_datasets,
                 "args": [
                     "structured_data",
                     "text_data",
-                    "batch_size",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
-                "outputs": ["train_generator", "test_generator"],
+                "outputs": ["train_dataset", "test_dataset"],
             },
         },
         {
@@ -205,13 +200,13 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "func": create_and_train,
                 "args": [
                     model_name,
-                    "num_news",
+                    "M-FAC/bert-tiny-finetuned-mrpc",
                     "structured_input_dim",
                     "n_hidden_layers",
                     "hidden_layer_dim",
                     "dropout_rate",
-                    "train_generator",
-                    "test_generator",
+                    "train_dataset",
+                    "test_dataset",
                     10,  # epochs
                 ],
                 "outputs": "score",
@@ -367,56 +362,6 @@ def save_data(structured_data, news_data):
     structured_data.to_csv("structured_data.csv", index=False)
     if news_data is not None:
         news_data.to_csv("news_data.csv", index=False)
-
-
-def create_and_train(
-    model_name,
-    num_news,
-    structured_input_dim,
-    n_hidden_layers,
-    hidden_layer_dim,
-    dropout_rate,
-    train_generator,
-    test_generator,
-    epochs,
-):
-    model = create_combined_model(
-        num_news,
-        structured_input_dim,
-        n_hidden_layers,
-        hidden_layer_dim,
-        1,
-        dropout_rate=dropout_rate,  # output dim
-    )
-
-    # Define the EarlyStopping callback
-    early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss",  # Monitor the validation loss
-        patience=3,  # Number of epochs with no improvement after which training will be stopped
-        verbose=1,  # Verbosity mode
-        restore_best_weights=True,  # Restore model weights from the epoch with the best value of the monitored quantity
-    )
-
-    history = model.fit(
-        train_generator,
-        epochs=epochs,
-        validation_data=test_generator,
-        callbacks=[early_stopping],
-    )
-    plot_moving_average(history, 10)
-    save_model(model, model_name=model_name)
-    avg_val_loss = np.mean(history.history["val_loss"][-10:])
-    return avg_val_loss
-
-
-def save_model(model, model_folder: str = "models", model_name: str = None):
-    if model_name is None:
-        pid = os.getpid()
-        dt = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        model_name = f"model_{dt}_{pid}.h5"
-    model_path = os.path.join(model_folder, model_name)
-    model.save(model_path)
-    return model_path
 
 
 def get_num_x_columns(structured_data):
