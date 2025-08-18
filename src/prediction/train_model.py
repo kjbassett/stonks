@@ -59,7 +59,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         # when aggregation is minutes, seconds ahead of current row for calculating percent changes
         # when aggregation is hours, rows ahead of current row for calculating percent changes
         # TODO fix this ^ nonsense. Go to rows only because it skips over closed market hours
-        "price_change_offset": DiscreteOrdinal([range(1, 9)]),
+        "price_change_offset": DiscreteOrdinal(range(1, 9)),
         "max_window": DiscreteOrdinal(
             range(500, 5001, 500)
         ),  # maximum time behind current row to see trends
@@ -232,6 +232,7 @@ async def load_data(
 ):
     structured_data_dao = dao_manager.get_dao("DataCompiler")
     structured_data = await structured_data_dao.get_data(
+        "hour",
         price_change_offset,
         min_timestamp,
         max_timestamp,
