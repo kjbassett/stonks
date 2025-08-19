@@ -61,8 +61,8 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         # TODO fix this ^ nonsense. Go to rows only because it skips over closed market hours
         "price_change_offset": DiscreteOrdinal(range(1, 9)),
         "max_window": DiscreteOrdinal(
-            range(500, 5001, 500)
-        ),  # maximum time behind current row to see trends
+            range(3, 11)
+        ),  # maximum row behind current row to see trends
         "num_windows": DiscreteOrdinal(
             [3, 5, 10]
         ),  # number of points in time behind current row to compare for trends
@@ -94,7 +94,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             0.3, 0.4
         ),  # chance of dropout per dropout layer in NN
         "missing_data_%_threshold": ContinuousRange(
-            0.2, 0.25
+            0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
     }
     model_space = [
@@ -116,6 +116,14 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
                 },
                 "outputs": ["structured_data", "text_data"],
+            },
+        },
+        {
+            "name": "save_data-2",
+            "train": {
+                "func": save_data,
+                "args": ["structured_data", "text_data"],
+                "outputs": [],
             },
         },
         {
