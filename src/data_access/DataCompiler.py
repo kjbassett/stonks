@@ -43,6 +43,7 @@ class DataCompiler(BaseDAO):
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
         data = data[~data["target"].isnull()]
+        data.to_csv("data.csv")
         print(data.dtypes)
         return data
 
@@ -275,7 +276,7 @@ def construct_news_columns(
         joins.append(
             f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
         )
-        columns.append(f"t.timestamp - n{i}.timestamp AS news{i}_age")
+        columns.append(f"{t_col} - n{i}.timestamp AS news{i}_age")
     return cte, columns, joins
 
 
