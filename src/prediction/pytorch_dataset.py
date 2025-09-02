@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 from transformers import BertTokenizer
 
 
-class StonksDataset(Dataset):
+class HybridDataset(Dataset):
     def __init__(
         self, data, news_data, tokenizer_name="bert-base-uncased", max_text_length=512
     ):
@@ -20,7 +20,7 @@ class StonksDataset(Dataset):
         self.news_columns = self._get_news_columns(self.data)
 
         # Which columns are numeric features?
-        self.num_columns = self.data.drop(
+        self.numerical_columns = self.data.drop(
             columns=self.news_columns + ["name", "symbol", "target"]
         ).columns
 
@@ -31,7 +31,7 @@ class StonksDataset(Dataset):
         row = self.data.iloc[idx]
 
         # --- Structured numeric features ---
-        x_structured = row[self.num_columns].fillna(0).values.astype(np.float32)
+        x_structured = row[self.numerical_columns].fillna(0).values.astype(np.float32)
         x_structured = torch.tensor(x_structured, dtype=torch.float)
 
         # --- News articles for this sample ---
@@ -82,6 +82,18 @@ class StonksDataset(Dataset):
         return cols
 
 
+class NumericalDataset(Dataset):
+    def __init__(self, data):
+        self.x = data.drop(columns=["name", "symbol", "target"])
+        self.y = data["target"]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.x[idx], self.y[idx]
+
+
 def shuffle(df):
     # shuffle the dataframe in place, and reset index afterwards
     return df.sample(frac=1, random_state=42)
@@ -92,15 +104,22 @@ async def create_datasets(
     news_data=None,
     tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
     max_text_length=512,
-) -> (StonksDataset, StonksDataset):
+) -> (HybridDataset, HybridDataset):
+    # split structured data (numerical data)
     n_train = int(0.8 * len(structured_data))
     structured_data = shuffle(structured_data)
     train = structured_data.iloc[:n_train]
     test = structured_data.iloc[n_train:]
-    train_dataset = StonksDataset(
-        train, news_data, tokenizer_name=tokenizer, max_text_length=max_text_length
-    )
-    test_dataset = StonksDataset(
-        test, news_data, tokenizer_name=tokenizer, max_text_length=max_text_length
-    )
+    if news_data is None:
+        train_dataset = NumericalDataset(train)
+        test_dataset = NumericalDataset(test)
+    else:
+        # We don't split news data because it has a one-to-many relationship with structured data.
+        # Later on, we retrieve correct news article(s) per row. This saves memory.
+        train_dataset = HybridDataset(
+            train, news_data, tokenizer_name=tokenizer, max_text_length=max_text_length
+        )
+        test_dataset = HybridDataset(
+            test, news_data, tokenizer_name=tokenizer, max_text_length=max_text_length
+        )
     return train_dataset, test_dataset
