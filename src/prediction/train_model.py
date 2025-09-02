@@ -67,7 +67,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             [3, 5, 10]
         ),  # number of points in time behind current row to compare for trends
         "num_news": DiscreteOrdinal(
-            [1]
+            [0]
         ),  # number of news articles previous to the current row to include
         "news_history_threshold": ContinuousRange(
             24 * 60 * 60, 5 * 24 * 60 * 60
@@ -87,7 +87,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         "n_hidden_layers": DiscreteOrdinal(
             [1, 2, 3, 4, 5, 6, 7]
         ),  # number of hidden layers in NN
-        "hidden_layer_dim": DiscreteOrdinal(
+        "hidden_dim": DiscreteOrdinal(
             [100, 250, 500, 750, 1000, 1500, 2000]
         ),  # number of nodes per hidden layer
         "dropout_rate": ContinuousRange(
@@ -182,7 +182,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             },
         },
         {
-            "name": "create_generators",
+            "name": "create_datasets",
             "train": {
                 "func": create_datasets,
                 "args": [
@@ -208,14 +208,15 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "func": create_and_train,
                 "args": [
                     model_name,
-                    "M-FAC/bert-tiny-finetuned-mrpc",
                     "structured_input_dim",
                     "n_hidden_layers",
-                    "hidden_layer_dim",
+                    "hidden_dim",
                     "dropout_rate",
                     "train_dataset",
                     "test_dataset",
                     10,  # epochs
+                    "n_news",
+                    "M-FAC/bert-tiny-finetuned-mrpc",
                 ],
                 "outputs": "score",
                 "gpu": True,
@@ -252,6 +253,7 @@ async def load_data(
         include_cv_close_ratio,
         include_avg_volume_ratio,
         include_cv_volume_ratio,
+        print_query=True,
     )
     if num_news > 0:
         news_data_dao = dao_manager.get_dao("News")
@@ -388,13 +390,12 @@ def get_score(history):
 
 
 # TODO
-#  Verify what format the bert encoder is expecting (tokens + input mask? standardized?)
+#  duplicate column names in the structured_data. column = 'name'
+#  Can't impute with a completely empty column
+#  Make sure num_news = 0 is handled properly
 #  OneHotEncoder has some nice options to limit the number of new columns (good for industry id)
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
-#  de-couple statistics and news data from initial data load
-#  OR
-#  make a separate query to get only the necessary info for new_data
 
 
 def plot_moving_average(history, window_size):
