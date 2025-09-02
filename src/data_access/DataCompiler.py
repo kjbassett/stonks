@@ -107,7 +107,7 @@ def construct_query(
         news_history_threshold,
         get_ids=aggregation_interval == "minute",
     )
-    ctes.append(news_cte)
+    ctes += news_cte
     columns += news_cols
     joins += news_joins
 
@@ -238,7 +238,7 @@ def construct_news_columns(
     get_ids=False,
 ):
     if num_news < 1:
-        return "", [], []
+        return [], [], []
 
     # define which tables and columns to use
     if aggregation_interval == "minute":
@@ -250,7 +250,8 @@ def construct_news_columns(
     else:
         raise ValueError("Unsupported aggregation interval")
 
-    cte = f"""
+    cte = [
+        f"""
     RankedNews AS (
     SELECT
         {'n.id AS news_id' if get_ids else 'n.body AS body'},
@@ -264,6 +265,7 @@ def construct_news_columns(
     WHERE n.timestamp <= {t_col} -- TODO might want to simulate the time between news and trading data irl
     AND n.timestamp >= {t_col} - {news_history_threshold}
     )"""
+    ]
     columns = []
     joins = []
     for i in range(1, num_news + 1):
