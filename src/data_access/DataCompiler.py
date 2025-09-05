@@ -70,7 +70,12 @@ def construct_query(
         print("minute aggregations are untested!")
         start_col = "t.timestamp"
         end_col = "t.timestamp"
-        columns += ["t.close", "t.vw_average", "i.name", "io.name"]
+        columns += [
+            "t.close",
+            "t.vw_average",
+            "i.name AS industry",
+            "io.name AS industry_office",
+        ]
     elif aggregation_interval == "hour":
         start_col = "t.start"
         end_col = "t.end"
@@ -84,8 +89,8 @@ def construct_query(
             "t.avg_volume",
             "t.cv_volume",
             "t.row_count",
-            "i.name",
-            "io.name",
+            "i.name AS industry",
+            "io.name AS industry_office",
         ]
         filters.append("t.row_count > 5")
     joins += [

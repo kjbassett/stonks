@@ -164,7 +164,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": one_hot_encode,
                 "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["news1_id", "symbol", "name"]},
+                "kwargs": {"ignore_cols": ["news1_id"]},
                 "outputs": ["structured_data", "one_hot_encoder"],
             },
             # "inference": {

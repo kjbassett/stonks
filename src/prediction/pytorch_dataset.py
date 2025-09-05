@@ -21,7 +21,7 @@ class HybridDataset(Dataset):
 
         # Which columns are numeric features?
         self.numerical_columns = self.data.drop(
-            columns=self.news_columns + ["name", "symbol", "target"]
+            columns=self.news_columns + ["name", "target"]
         ).columns
 
     def __len__(self):
@@ -84,7 +84,7 @@ class HybridDataset(Dataset):
 
 class NumericalDataset(Dataset):
     def __init__(self, data):
-        self.x = data.drop(columns=["name", "symbol", "target"])
+        self.x = data.drop(columns=["name", "target"])
         self.y = data["target"]
 
     def __len__(self):
