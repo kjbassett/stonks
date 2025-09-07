@@ -65,7 +65,7 @@ def construct_query(
     ctes = []  # common table expressions
     columns = []
     joins = []
-    filters = []
+    filters = ["t.company_id = 1"]  # TODO Remove this filter!
     if aggregation_interval == "minute":
         print("minute aggregations are untested!")
         start_col = "t.timestamp"
@@ -355,5 +355,5 @@ data from n hours ago compared to next offset
 
 You probably want data from now for the model to be able to compare the business to others. vertical
 Then the past data should be relative to itself currently. horizontal
-Current is always the "control group" relative to past to maintain comparability.
+Current is always the "control group" (=1) relative to past to maintain comparability.
 """
