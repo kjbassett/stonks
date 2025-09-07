@@ -84,8 +84,8 @@ class HybridDataset(Dataset):
 
 class NumericalDataset(Dataset):
     def __init__(self, data):
-        self.x = data.drop(columns=["target"])
-        self.y = data["target"]
+        self.x = torch.tensor(data.drop(columns=["target"]).values, dtype=torch.float32)
+        self.y = torch.tensor(data["target"].values, dtype=torch.float32)
 
     def __len__(self):
         return len(self.x)
