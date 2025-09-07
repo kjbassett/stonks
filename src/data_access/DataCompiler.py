@@ -65,7 +65,7 @@ def construct_query(
     ctes = []  # common table expressions
     columns = []
     joins = []
-    filters = ["t.company_id = 1"]  # TODO Remove this filter!
+    filters = []
     if aggregation_interval == "minute":
         print("minute aggregations are untested!")
         start_col = "t.timestamp"
