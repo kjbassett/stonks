@@ -119,14 +119,6 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             },
         },
         {
-            "name": "save_data-2",
-            "train": {
-                "func": save_data,
-                "args": ["structured_data", "text_data"],
-                "outputs": [],
-            },
-        },
-        {
             "name": "filter_out_missing_data",
             "func": filter_out_missing_data,
             "args": ["structured_data", "missing_data_%_threshold"],
@@ -215,7 +207,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "train_dataset",
                     "test_dataset",
                     10,  # epochs
-                    "n_news",
+                    "num_news",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                 ],
                 "outputs": "score",
@@ -265,8 +257,11 @@ async def load_data(
 
 def filter_out_missing_data(structured_data, missing_data_threshold):
     # filter out rows with  the number of missing values is above the threshold
+    n = len(structured_data)
     missing_data_ratio = structured_data.isnull().sum(axis=1) / structured_data.shape[1]
-    return structured_data[missing_data_ratio <= missing_data_threshold]
+    structured_data = structured_data[missing_data_ratio <= missing_data_threshold]
+    print(f"Removed {n - len(structured_data)} rows")
+    return structured_data
 
 
 def standardize_data(dataframe, means=None, stds=None):
@@ -296,10 +291,9 @@ def standardize_data(dataframe, means=None, stds=None):
     if stds is None:
         stds = dataframe[numeric_cols].std()
 
-    standardized_df = dataframe.copy()
-    standardized_df[numeric_cols] = (dataframe[numeric_cols] - means) / stds
+    dataframe[numeric_cols] = (dataframe[numeric_cols] - means) / stds
 
-    return standardized_df, means, stds
+    return dataframe, means, stds
 
 
 def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = None):
@@ -369,10 +363,10 @@ def impute(dataframe, imputer=None, ignore_cols=None):
     return dataframe, imputer
 
 
-def save_data(structured_data, news_data):
-    structured_data.to_csv("structured_data.csv", index=False)
+def save_data(structured_data, news_data, suffix=""):
+    structured_data.to_csv(f"structured_data{suffix}.csv", index=False)
     if news_data is not None:
-        news_data.to_csv("news_data.csv", index=False)
+        news_data.to_csv("news_data{suffix}.csv", index=False)
 
 
 def get_num_x_columns(structured_data):
