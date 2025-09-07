@@ -6,8 +6,8 @@ from ezmt.model_tuner import ModelTuner
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
 from src.data_access.dao_manager import dao_manager
-from src.prediction.pytorch_dataset import create_datasets
-from src.prediction.pytorch_model import create_and_train
+from src.prediction.dataset import create_datasets
+from src.prediction.nn_model import create_and_train
 from webrock.decorator import plugin
 
 
