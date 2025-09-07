@@ -322,9 +322,11 @@ def construct_calculated_columns(
         "cv_volume": include_cv_volume_ratio,
     }
     # create each relative column for each window
-    windows = np.linspace(0, max_window, num_windows + 1, dtype=int)[1:]
+    windows = np.linspace(0, max_window, num_windows + 1, dtype=int)
     # ensure we don't have duplicate window sizes. dtype=int could cause duplicates
-    windows = set(windows)
+    windows = list(dict.fromkeys(windows))
+    # first window is always 0, which is just the current row
+    windows = windows[1:]
 
     # create columns which are comparisons between current data and past data
     calc_columns = []
