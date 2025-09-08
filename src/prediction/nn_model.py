@@ -105,10 +105,9 @@ class NumericalModel(nn.Module):
         self,
         input_dim: int,
         hidden_dim: int,
-        output_dim: int,
+        output_dim: int = 1,  # output dim PER HEAD
         n_hidden_layers: int = 2,
         dropout_rate: float = 0.3,
-        output_activation: str = "linear",
     ):
         super().__init__()
         layers = []
@@ -119,29 +118,20 @@ class NumericalModel(nn.Module):
             layers.append(nn.Dropout(dropout_rate))
         self.fc = nn.Sequential(*layers)
 
-        # --- Output layer ---
-        self.output_layer = nn.Linear(hidden_dim, output_dim)
-        if output_activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif output_activation == "tanh":
-            self.activation = nn.Tanh()
-        elif output_activation == "relu":
-            self.activation = nn.ReLU()
-        else:
-            self.activation = nn.Identity()  # linear
+        # Two separate heads: mean and log variance
+        self.mean_head = nn.Linear(hidden_dim, output_dim)
+        self.logvar_head = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
-        y_pred = self.fc(x)
-        y_pred = self.output_layer(y_pred)
-        y_pred = self.activation(y_pred)
-        return y_pred
+        h = self.fc(x)
+        mu = self.mean_head(h)
+        log_var = self.logvar_head(h)  # variance in log-space
+        return mu, log_var
 
 
-def smape_loss(y_pred, y_true):
-    # Symmetric Mean Absolute Percentage Error (SMAPE)
-    return 100 * torch.mean(
-        2 * torch.abs(y_true - y_pred) / (torch.abs(y_true) + torch.abs(y_pred) + 1e-8)
-    )
+def gaussian_nll(mu, log_var, y):
+    # log_var is log(σ²)
+    return 0.5 * (log_var + (y - mu) ** 2 / log_var.exp()).mean()
 
 
 # --- Training loop for numerical-only model ---
@@ -151,30 +141,30 @@ def train_numerical_model(
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
-        for structured, y in tqdm(train_loader, desc=f"Epoch {epoch+1} [train]"):
-            structured = structured.to(device)
-            y = y.to(device).unsqueeze(1)
+        for x_batch, y_batch in tqdm(train_loader, desc=f"Epoch {epoch+1} [train]"):
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device).unsqueeze(1)
 
             optimizer.zero_grad()
-            y_pred = model(structured)
-            loss = loss_fn(y_pred, y)
+            mu, log_var = model(x_batch)
+            loss = gaussian_nll(mu, log_var, y_batch)
             loss.backward()
             optimizer.step()
 
-            train_loss += loss.item() * structured.size(0)
+            train_loss += loss.item() * x_batch.size(0)
         train_loss /= len(train_loader.dataset)
 
         # --- Validation ---
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for structured, y in tqdm(test_loader, desc=f"Epoch {epoch+1} [val]"):
-                structured = structured.to(device)
-                y = y.to(device).unsqueeze(1)
+            for x_batch, y_batch in tqdm(test_loader, desc=f"Epoch {epoch+1} [val]"):
+                x_batch = x_batch.to(device)
+                y_batch = y_batch.to(device).unsqueeze(1)
 
-                y_pred = model(structured)
-                loss = loss_fn(y_pred, y)
-                val_loss += loss.item() * structured.size(0)
+                mu, log_var = model(x_batch)
+                loss = gaussian_nll(mu, log_var, y_batch)
+                val_loss += loss.item() * x_batch.size(0)
         val_loss /= len(test_loader.dataset)
 
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
@@ -250,7 +240,7 @@ def create_and_train(
     epochs,
     n_news=0,
     text_model_name=None,
-    loss_fn=smape_loss,
+    loss_fn=gaussian_nll,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
