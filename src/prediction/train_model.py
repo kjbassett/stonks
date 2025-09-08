@@ -38,7 +38,7 @@ async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: in
                 "outputs": ["structured_data", "text_data"],
             },
         }
-    ] + model_space[6:]
+    ] + model_space[7:]
 
     mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
     model = await mt.run()
@@ -130,6 +130,14 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "outputs": "structured_data",
         },
         {
+            "name": "clip_values",
+            "train": {
+                "func": clip_values,
+                "args": "structured_data",
+                "outputs": "structured_data",
+            },
+        },
+        {
             "name": "standardize_data",
             "train": {
                 "func": standardize_data,
@@ -214,7 +222,8 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "dropout_rate",
                     "train_dataset",
                     "test_dataset",
-                    10,  # epochs
+                    "batch_size",
+                    10,
                     "num_news",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                 ],
@@ -264,12 +273,21 @@ async def load_data(
 
 
 def filter_out_missing_data(structured_data, missing_data_threshold):
-    # filter out rows with  the number of missing values is above the threshold
+    # filter out rows with the number of missing values is above the threshold
     n = len(structured_data)
     missing_data_ratio = structured_data.isnull().sum(axis=1) / structured_data.shape[1]
-    structured_data = structured_data[missing_data_ratio <= missing_data_threshold]
+    structured_data = structured_data[missing_data_ratio < missing_data_threshold]
     print(f"Removed {n - len(structured_data)} rows")
     return structured_data
+
+
+def clip_values(df):
+    for col in df.select_dtypes(include=[float, int]).columns:
+        df[col] = df[col].clip(
+            lower=df[col].quantile(0.01), upper=df[col].quantile(0.99)
+        )
+    df.to_csv("clipped_data")
+    return df
 
 
 def standardize_data(dataframe, means=None, stds=None):
@@ -406,10 +424,8 @@ def get_score(history):
 
 
 # TODO
-#  duplicate column names in the structured_data. column = 'name'
-#  Can't impute with a completely empty column
-#  Make sure num_news = 0 is handled properly
 #  OneHotEncoder has some nice options to limit the number of new columns (good for industry id)
+#  Fix flow when num_news > 0
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
 

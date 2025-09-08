@@ -341,9 +341,7 @@ def construct_calculated_columns(
 
 
 # TODO
-#  Get diff of current timestamp and news timestamps
 #  Verify hour is correct (and day of week and month with same fix if needed). Just put timestamp into data and convert it online.
-#  How to tokenize company in text?
 
 """
 Developer notes
