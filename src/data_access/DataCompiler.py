@@ -43,7 +43,7 @@ class DataCompiler(BaseDAO):
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
         data = data[~data["target"].isnull()]
-        data.to_csv("data.csv")
+        data.to_csv("data.csv", index=False)
         print(data.dtypes)
         return data
 
