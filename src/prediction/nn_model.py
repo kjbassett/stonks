@@ -1,6 +1,7 @@
 import datetime
 import os
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -118,33 +119,30 @@ class NumericalModel(nn.Module):
             layers.append(nn.Dropout(dropout_rate))
         self.fc = nn.Sequential(*layers)
 
-        # Two separate heads: mean and log variance
+        # Two separate heads: mean and variance
         self.mean_head = nn.Linear(hidden_dim, output_dim)
-        self.logvar_head = nn.Linear(hidden_dim, output_dim)
+        self.uncertainty_head = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
         h = self.fc(x)
         mu = self.mean_head(h)
-        log_var = self.logvar_head(h)  # variance in log-space
-        return mu, log_var
-
-
-def gaussian_nll(mu, log_var, y_true):
-    """
-    Gaussian negative log-likelihood.
-
-    Args:
-        mu: (batch, output_dim) predicted mean
-        log_var: (batch, output_dim) predicted log variance, log(σ²)
-        y_true: (batch, output_dim) true values
-    """
-    return 0.5 * (log_var + (y_true - mu) ** 2 / log_var.exp()).mean()
+        var = self.uncertainty_head(h)  # variance (pre-softplus)
+        var = nn.functional.softplus(var)  # enforce that variance must be positive
+        return mu, var
 
 
 # --- Training loop for numerical-only model ---
 def train_numerical_model(
     model, train_loader, test_loader, device, epochs, optimizer, loss_fn
 ):
+    # set inital value for uncertainty head, so the model starts close to reality
+    # Without this, it might start witha  tiny or huge variance, causing unstable gradients.
+    # compute training target variance
+    y_all = np.concatenate([y.numpy() for _, y in train_loader], axis=0)
+    init_var = np.var(y_all) + 1e-6
+    with torch.no_grad():
+        model.uncertainty_head.bias.data.fill_(init_var)
+
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
@@ -153,8 +151,8 @@ def train_numerical_model(
             y_batch = y_batch.to(device).unsqueeze(1)
 
             optimizer.zero_grad()
-            mu, log_var = model(x_batch)
-            loss = gaussian_nll(mu, log_var, y_batch)
+            mu, var = model(x_batch)
+            loss = loss_fn(mu, y_batch, var)
             loss.backward()
             optimizer.step()
 
@@ -169,8 +167,8 @@ def train_numerical_model(
                 x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device).unsqueeze(1)
 
-                mu, log_var = model(x_batch)
-                loss = gaussian_nll(mu, log_var, y_batch)
+                mu, var = model(x_batch)
+                loss = loss_fn(mu, y_batch, var)
                 val_loss += loss.item() * x_batch.size(0)
         val_loss /= len(test_loader.dataset)
 
@@ -244,14 +242,15 @@ def create_and_train(
     dropout_rate,
     train_dataset,
     test_dataset,
-    epochs,
+    batch_size=32,
+    epochs=10,
     n_news=0,
     text_model_name=None,
-    loss_fn=gaussian_nll,
+    loss_fn=nn.GaussianNLLLoss(),
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     if n_news > 0:  # --- Hybrid ---
         model = HybridModel(
@@ -262,7 +261,7 @@ def create_and_train(
             text_model_name=text_model_name,
             dropout_rate=dropout_rate,
         ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
         final_val_loss = train_hybrid_model(
             model, train_loader, test_loader, device, epochs, optimizer, loss_fn
         )
@@ -275,7 +274,7 @@ def create_and_train(
             n_hidden_layers,
             dropout_rate=dropout_rate,
         ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
         final_val_loss = train_numerical_model(
             model, train_loader, test_loader, device, epochs, optimizer, loss_fn
         )
