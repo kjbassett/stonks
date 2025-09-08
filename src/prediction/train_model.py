@@ -24,6 +24,7 @@ async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: in
     model.save(model_name)
 
 
+@plugin()
 async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
     # train from csv of saved data from some intermediate step
     hyperparams, model_space = create_model_space(
@@ -37,7 +38,7 @@ async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: in
                 "outputs": ["structured_data", "text_data"],
             },
         }
-    ] + model_space[-3:]
+    ] + model_space[6:]
 
     mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
     model = await mt.run()
@@ -46,14 +47,15 @@ async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: in
 
 def load_short_data():
     # load csv of saved data from some intermediate step
-    structured_data = pd.read_csv("data6.csv", index_col=0).reset_index(drop=True)
-    news_data = pd.read_csv("news_data.csv")
-    return structured_data, news_data
+    structured_data = pd.read_csv("structured_data.csv", index_col=None).reset_index(
+        drop=True
+    )
+    return structured_data, None
 
 
 def create_model_space(max_timestamp, min_timestamp, model_name):
     hyperparams = {
-        "batch_size": DiscreteOrdinal([32]),  # neural net batch size
+        "batch_size": DiscreteOrdinal([64]),  # neural net batch size
         "max_text_length": DiscreteOrdinal([512]),  # text encoder length
         # for price_change_offset...
         # when aggregation is minutes, seconds ahead of current row for calculating percent changes
@@ -84,6 +86,9 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         "include_cv_volume_ratio": DiscreteOrdinal(
             [True, False]
         ),  # include coef car of volume from past to current
+        "max_one_hot_categories": DiscreteOrdinal(
+            [20]
+        ),  # maximum number of categories/columns will be created per original column when one-hot encoding
         "n_hidden_layers": DiscreteOrdinal(
             [1, 2, 3, 4, 5, 6, 7]
         ),  # number of hidden layers in NN
@@ -156,7 +161,10 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": one_hot_encode,
                 "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["news1_id"]},
+                "kwargs": {
+                    "ignore_cols": ["news1_id"],
+                    "max_categories": "max_one_hot_categories",
+                },
                 "outputs": ["structured_data", "one_hot_encoder"],
             },
             # "inference": {
@@ -296,7 +304,12 @@ def standardize_data(dataframe, means=None, stds=None):
     return dataframe, means, stds
 
 
-def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = None):
+def one_hot_encode(
+    dataframe: pd.DataFrame,
+    encoder=None,
+    ignore_cols: list = None,
+    max_categories: int = None,
+):
     """
     Fit and transform the DataFrame using one-hot encoding for all object dtype columns.
     If an encoder is provided, it will be used to transform the data.
@@ -308,6 +321,9 @@ def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = No
         A pre-fitted OneHotEncoder. If None, a new encoder will be fitted.
     - ignore_cols: list, optional
         List of columns to ignore for encoding.
+    - max_categories: int, optional
+        If provided, limits the number of categories per feature.
+        Rare categories are grouped into 'infrequent' bucket.
 
     Returns:
     - encoder: OneHotEncoder
@@ -323,16 +339,22 @@ def one_hot_encode(dataframe: pd.DataFrame, encoder=None, ignore_cols: list = No
         ignore_cols
     )
     if encoder is None:
-        encoder = OneHotEncoder(handle_unknown="ignore")
-        encoded_data = encoder.fit_transform(dataframe[cols_to_encode]).toarray()
+        encoder = OneHotEncoder(
+            handle_unknown="ignore",
+            max_categories=max_categories,  # <-- controls category cap
+        )
+        encoded_data = encoder.fit_transform(dataframe[cols_to_encode])
     else:
-        encoded_data = encoder.transform(dataframe[cols_to_encode]).toarray()
+        encoded_data = encoder.transform(dataframe[cols_to_encode])
 
     encoded_df = pd.DataFrame(
-        encoded_data, columns=encoder.get_feature_names_out(cols_to_encode)
-    ).reset_index(drop=True)
+        encoded_data.toarray(), columns=encoder.get_feature_names_out(cols_to_encode)
+    )
     dataframe = pd.concat(
-        [dataframe.drop(columns=cols_to_encode).reset_index(drop=True), encoded_df],
+        [
+            dataframe.drop(columns=cols_to_encode).reset_index(drop=True),
+            encoded_df.reset_index(drop=True),
+        ],
         axis=1,
     )
 
