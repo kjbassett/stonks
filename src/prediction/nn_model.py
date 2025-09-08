@@ -129,9 +129,16 @@ class NumericalModel(nn.Module):
         return mu, log_var
 
 
-def gaussian_nll(mu, log_var, y):
-    # log_var is log(σ²)
-    return 0.5 * (log_var + (y - mu) ** 2 / log_var.exp()).mean()
+def gaussian_nll(mu, log_var, y_true):
+    """
+    Gaussian negative log-likelihood.
+
+    Args:
+        mu: (batch, output_dim) predicted mean
+        log_var: (batch, output_dim) predicted log variance, log(σ²)
+        y_true: (batch, output_dim) true values
+    """
+    return 0.5 * (log_var + (y_true - mu) ** 2 / log_var.exp()).mean()
 
 
 # --- Training loop for numerical-only model ---
