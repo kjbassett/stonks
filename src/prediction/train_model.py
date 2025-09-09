@@ -13,7 +13,6 @@ from webrock.decorator import plugin
 
 @plugin(model_name={"ui_element": "textbox"})
 async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
-    min_timestamp = 1734757200  # TODO Delete this line later!
     # define possible choices for all hyperparameters
     hyperparams, model_space = create_model_space(
         max_timestamp, min_timestamp, model_name
@@ -286,7 +285,7 @@ def clip_values(df):
         df[col] = df[col].clip(
             lower=df[col].quantile(0.01), upper=df[col].quantile(0.99)
         )
-    df.to_csv("clipped_data")
+    df.to_csv("clipped_data.csv")
     return df
 
 
@@ -297,27 +296,30 @@ def standardize_data(dataframe, means=None, stds=None):
     Parameters:
     - dataframe: pd.DataFrame
         The input DataFrame to be standardized.
-    - means: pd.Series, optional
-        Precomputed means of the numeric columns. If None, means will be computed from the DataFrame.
-    - stds: pd.Series, optional
-        Precomputed standard deviations of the numeric columns. If None, stds will be computed from the DataFrame.
+    - means: dict, optional
+        Precomputed means of the numeric columns. If None, means will be computed.
+    - stds: dict, optional
+        Precomputed stds of the numeric columns. If None, stds will be computed.
 
     Returns:
     - standardized_df: pd.DataFrame
-        The DataFrame with standardized numeric columns.
-    - means: pd.Series
-        The means of the numeric columns.
-    - stds: pd.Series
-        The standard deviations of the numeric columns.
+        The standardized DataFrame.
+    - means: dict
+        Means of the numeric columns (JSON-serializable).
+    - stds: dict
+        Stds of the numeric columns (JSON-serializable).
     """
     numeric_cols = dataframe.select_dtypes(include=[np.number]).columns
 
     if means is None:
-        means = dataframe[numeric_cols].mean()
+        means = dataframe[numeric_cols].mean().to_dict()
     if stds is None:
-        stds = dataframe[numeric_cols].std()
+        stds = dataframe[numeric_cols].std().to_dict()
 
-    dataframe[numeric_cols] = (dataframe[numeric_cols] - means) / stds
+    # Use .loc to avoid SettingWithCopyWarning
+    dataframe.loc[:, numeric_cols] = (
+        dataframe[numeric_cols] - pd.Series(means)
+    ) / pd.Series(stds)
 
     return dataframe, means, stds
 
