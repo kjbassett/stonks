@@ -21,13 +21,19 @@ def filter_out_missing_data(structured_data, missing_data_threshold):
     return structured_data
 
 
-def clip_values(df):
+def clip_values(df, column_limits=None):
+    if not column_limits:
+        column_limits = {}
     for col in df.select_dtypes(include=[float, int]).columns:
-        df[col] = df[col].clip(
-            lower=df[col].quantile(0.01), upper=df[col].quantile(0.99)
-        )
-    df.to_csv("clipped_data.csv")
-    return df
+        if col not in column_limits:
+            column_limits[col] = {
+                "lower": df[col].quantile(0.01),
+                "upper": df[col].quantile(0.99),
+            }
+        lower = column_limits[col]["lower"]
+        upper = column_limits[col]["upper"]
+        df[col] = df[col].clip(lower=lower, upper=upper)
+    return df, column_limits
 
 
 def standardize_data(dataframe, means=None, stds=None):

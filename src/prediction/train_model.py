@@ -120,7 +120,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 },
                 "outputs": ["structured_data", "text_data"],
             },
-        },
+        },  # TODO Should infer function allow supplying data or should we just grab the latest data?
         {
             "name": "filter_out_missing_data",
             "func": filter_out_missing_data,
@@ -132,7 +132,13 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": clip_values,
                 "args": "structured_data",
-                "outputs": "structured_data",
+                "outputs": ["structured_data", "column_limits"],
+            },
+            "inference": {
+                "func": clip_values,
+                "args": "structured_data",
+                "kwargs": "column_limits",
+                "outputs": ["structured_data", "column_limits"],
             },
         },
         {
@@ -271,7 +277,6 @@ async def load_data(
 
 
 # TODO
-#  OneHotEncoder has some nice options to limit the number of new columns (good for industry id)
 #  Fix flow when num_news > 0
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
