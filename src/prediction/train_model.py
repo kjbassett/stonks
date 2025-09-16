@@ -1,10 +1,12 @@
+import time
+
 import matplotlib.pyplot as plt
 import pandas as pd
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from src.data_access.dao_manager import dao_manager
 from src.prediction.dataset import create_datasets
-from src.prediction.nn_model import create_and_train
+from src.prediction.nn_model import create_and_train, load_model
 from src.prediction.pipeline_components import (
     load_short_data,
     filter_out_missing_data,
@@ -120,7 +122,23 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 },
                 "outputs": ["structured_data", "text_data"],
             },
-        },  # TODO Should infer function allow supplying data or should we just grab the latest data?
+            "inference": {
+                "func": load_data,
+                "kwargs": {
+                    "price_change_offset": "price_change_offset",
+                    "min_timestamp": -3600 * 24,  # TODO find a better way to do this
+                    "max_window": "max_window",
+                    "num_windows": "num_windows",
+                    "num_news": "num_news",
+                    "news_history_threshold": "news_history_threshold",
+                    "include_close_ratio": "include_close_ratio",
+                    "include_cv_close_ratio": "include_cv_close_ratio",
+                    "include_avg_volume_ratio": "include_avg_volume_ratio",
+                    "include_cv_volume_ratio": "include_cv_volume_ratio",
+                },
+                "outputs": ["structured_data", "text_data"],
+            },
+        },
         {
             "name": "filter_out_missing_data",
             "func": filter_out_missing_data,
@@ -137,7 +155,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "inference": {
                 "func": clip_values,
                 "args": "structured_data",
-                "kwargs": "column_limits",
+                "kwargs": {"column_limits": "column_limits"},
                 "outputs": ["structured_data", "column_limits"],
             },
         },
@@ -162,11 +180,11 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "kwargs": {"ignore_cols": ["target"]},
                 "outputs": ["structured_data", "imputer"],
             },
-            # "inference": {
-            #     "func": impute,
-            #     "args": ["structured_data", "imputer"],
-            #     "outputs": "structured_data",
-            # }
+            "inference": {
+                "func": impute,
+                "args": ["structured_data", "imputer"],
+                "outputs": ["structured_data", "imputer"],
+            },
         },
         {
             "name": "one_hot_encode",
@@ -174,16 +192,18 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "func": one_hot_encode,
                 "args": ["structured_data"],
                 "kwargs": {
-                    "ignore_cols": ["news1_id"],
                     "max_categories": "max_one_hot_categories",
                 },
                 "outputs": ["structured_data", "one_hot_encoder"],
             },
-            # "inference": {
-            #     "func": one_hot_encode,
-            #     "args": ["structured_data", "one_hot_encoder"],
-            #     "outputs": "structured_data",
-            # }
+            "inference": {
+                "func": one_hot_encode,
+                "args": ["structured_data", "one_hot_encoder"],
+                "kwargs": {
+                    "max_categories": "max_one_hot_categories",
+                },
+                "outputs": ["structured_data", "one_hot_encoder"],
+            },
         },
         {
             "name": "save_data",
@@ -205,6 +225,16 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 ],
                 "outputs": ["train_dataset", "test_dataset"],
             },
+            "inference": {
+                "func": create_dataset,
+                "args": [
+                    "structured_data",
+                    "text_data",
+                    "M-FAC/bert-tiny-finetuned-mrpc",
+                    "max_text_length",
+                ],
+                "outputs": ["inference_dataset"],
+            },
         },
         {
             "name": "get_structured_input_dim",
@@ -219,7 +249,6 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "train": {
                 "func": create_and_train,
                 "args": [
-                    model_name,
                     "structured_input_dim",
                     "n_hidden_layers",
                     "hidden_dim",
@@ -234,6 +263,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "outputs": "score",
                 "gpu": True,
             },
+            "inference": load_model,
         },
     ]
     return hyperparams, model_space
@@ -252,6 +282,8 @@ async def load_data(
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
 ):
+    if min_timestamp < 0:
+        min_timestamp = time.time() - min_timestamp
     structured_data_dao = dao_manager.get_dao("DataCompiler")
     structured_data = await structured_data_dao.get_data(
         "hour",
@@ -277,9 +309,19 @@ async def load_data(
 
 
 # TODO
+#  separate validation from the end of the dataset to simulate *new* data (don't shuffle?)
+#  inference flow
+#  Problem: inference flow loads and recreates model every time
+#   Solution A: let it do that. data loading probably takes the most time anyway
+#   Solution B: disable certain parts of the inference dna after first run, disable load of model. store model in memory
+#   Solution C: In addition to B, split organism. One handles data loading, the other handles loading and running the model. Good for a distributed architecture, but would need highly performant databases. idk if that would even help unles multiple DBs
+#  Keep symbol and timestamp
+#  Add step to pipeline: undo_transformations
+#  Add filter to latest timestamp (and age cutoff) by symbol step to inference pipeline until a better solution is found
 #  Fix flow when num_news > 0
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
+#  keep best version of nn based on val loss
 
 
 def plot_moving_average(loss_history, window_size):

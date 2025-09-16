@@ -2,6 +2,7 @@ import datetime
 import os
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -162,6 +163,7 @@ def train_numerical_model(
         # --- Validation ---
         model.eval()
         val_loss = 0.0
+        preds, uncertainies, targets = [], [], []
         with torch.no_grad():
             for x_batch, y_batch in tqdm(test_loader, desc=f"Epoch {epoch+1} [val]"):
                 x_batch = x_batch.to(device)
@@ -170,7 +172,18 @@ def train_numerical_model(
                 mu, var = model(x_batch)
                 loss = loss_fn(mu, y_batch, var)
                 val_loss += loss.item() * x_batch.size(0)
+
+                preds.extend(mu.cpu().numpy().flatten())
+                uncertainies.extend(var.cpu().numpy().flatten())
+                targets.extend(y_batch.cpu().numpy().flatten())
+
         val_loss /= len(test_loader.dataset)
+
+        # save predictions + targets
+        df = pd.DataFrame(
+            {"target": targets, "prediction": preds, "uncertainty": uncertainies}
+        )
+        df.to_csv(f"validation_{epoch}.csv", index=False)
 
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
     return val_loss
@@ -233,9 +246,38 @@ def save_model(model, model_folder: str = "models", model_name: str = None):
     return model_path
 
 
-# --- Factory function ---
+def create_model(
+    structured_input_dim,
+    n_hidden_layers,
+    hidden_dim,
+    dropout_rate,
+    n_news,
+    text_model_name=None,
+):
+    """
+    creates the right type of model based on the specified arguments.
+    Current: if news articles -> hybrid model, otherwise -> numerical
+    """
+    if n_news > 0:  # --- Hybrid ---
+        return HybridModel(
+            structured_input_dim,
+            hidden_dim,
+            1,
+            n_hidden_layers,
+            text_model_name=text_model_name,
+            dropout_rate=dropout_rate,
+        )
+    else:
+        return NumericalModel(
+            structured_input_dim,
+            hidden_dim,
+            1,
+            n_hidden_layers,
+            dropout_rate=dropout_rate,
+        )
+
+
 def create_and_train(
-    model_name,
     structured_input_dim,
     n_hidden_layers,
     hidden_dim,
@@ -248,36 +290,51 @@ def create_and_train(
     text_model_name=None,
     loss_fn=nn.GaussianNLLLoss(),
 ):
+    # This is one function because the model tuner may want to run the creation / training in another process
+    # TODO there are better ways around ^. in ezmt parent_process=True, save model and return path, etc
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    if n_news > 0:  # --- Hybrid ---
-        model = HybridModel(
-            structured_input_dim,
-            hidden_dim,
-            1,
-            n_hidden_layers,
-            text_model_name=text_model_name,
-            dropout_rate=dropout_rate,
-        ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        final_val_loss = train_hybrid_model(
-            model, train_loader, test_loader, device, epochs, optimizer, loss_fn
-        )
+    model = create_model(
+        structured_input_dim,
+        n_hidden_layers,
+        hidden_dim,
+        dropout_rate,
+        n_news,
+        text_model_name=text_model_name,
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    else:  # --- Numerical-only ---
-        model = NumericalModel(
-            structured_input_dim,
-            hidden_dim,
-            1,
-            n_hidden_layers,
-            dropout_rate=dropout_rate,
-        ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        final_val_loss = train_numerical_model(
-            model, train_loader, test_loader, device, epochs, optimizer, loss_fn
-        )
+    train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
 
-    save_model(model)
-    return final_val_loss
+    final_val_loss = train_fn(
+        model, train_loader, test_loader, device, epochs, optimizer, loss_fn
+    )
+    model_path = save_model(model)
+    return model_path, final_val_loss
+
+
+def load_model(
+    model_path,
+    structured_input_dim,
+    n_hidden_layers,
+    hidden_dim,
+    dropout_rate,
+    n_news,
+    text_model_name=None,
+):
+    # recreate architecture
+    model = create_model(
+        structured_input_dim,
+        n_hidden_layers,
+        hidden_dim,
+        dropout_rate,
+        n_news,
+        text_model_name=text_model_name,
+    )
+    # load and apply state
+    model.load_state_dict(torch.load(model_path))
+
+# TODO split create_and_train up into two separate steps with parent_process = True
+#  Infer function
