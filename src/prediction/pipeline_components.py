@@ -1,3 +1,5 @@
+import datetime
+
 import numpy as np
 import pandas as pd
 from missforest import MissForest
@@ -69,6 +71,22 @@ def standardize_data(dataframe, means=None, stds=None):
     ) / pd.Series(stds)
 
     return dataframe, means, stds
+
+
+def unstandardize(predictions, uncertainties, means, stds):
+    mean, std = means["target"], stds["target"]
+
+    uncertainties = np.sqrt(uncertainties)  # variance to standard deviation
+
+    # unscale prediction
+    predictions = predictions * std + mean
+    # scale factor is std. predictions scale with a factor of std, and so do standard deviations
+    uncertainties = uncertainties * std
+
+    df = pd.DataFrame({"prediction": predictions, "uncertainty": uncertainties})
+    dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    df.to_csv(f"predictions_{dt}.csv", index=False)
+    return df
 
 
 def one_hot_encode(

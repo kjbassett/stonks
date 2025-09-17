@@ -6,7 +6,7 @@ from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from src.data_access.dao_manager import dao_manager
 from src.prediction.dataset import create_datasets
-from src.prediction.nn_model import create_and_train, load_model
+from src.prediction.nn_model import create_and_train, load_model, infer
 from src.prediction.pipeline_components import (
     load_short_data,
     filter_out_missing_data,
@@ -16,6 +16,7 @@ from src.prediction.pipeline_components import (
     impute,
     save_data,
     get_num_x_columns,
+    unstandardize,
 )
 from webrock.decorator import plugin
 
@@ -260,10 +261,37 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "num_news",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                 ],
-                "outputs": "score",
+                "outputs": ["model_path", "score"],
                 "gpu": True,
             },
-            "inference": load_model,
+            "inference": {
+                "func": load_model,
+                "args": [
+                    "model_path",
+                    "structured_input_dim",
+                    "n_hidden_layers",
+                    "hidden_dim",
+                    "dropout_rate",
+                    "num_news",
+                    "text_model_name",
+                ],
+                "output": "model",
+            },
+        },
+        {
+            "name": "predict",
+            # "train": {
+            # },
+            "inference": {
+                "func": infer,
+                "args": ["model", "inference_dataset"],
+                "outputs": ["predictions", "uncertainties"],
+            },
+        },
+        {
+            "name": "unstandardize",
+            "func": unstandardize,
+            "args": ["predictions", "uncertainties", "means", "stds"],
         },
     ]
     return hyperparams, model_space

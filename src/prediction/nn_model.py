@@ -163,7 +163,7 @@ def train_numerical_model(
         # --- Validation ---
         model.eval()
         val_loss = 0.0
-        preds, uncertainies, targets = [], [], []
+        preds, uncertainties, targets = [], [], []
         with torch.no_grad():
             for x_batch, y_batch in tqdm(test_loader, desc=f"Epoch {epoch+1} [val]"):
                 x_batch = x_batch.to(device)
@@ -174,14 +174,14 @@ def train_numerical_model(
                 val_loss += loss.item() * x_batch.size(0)
 
                 preds.extend(mu.cpu().numpy().flatten())
-                uncertainies.extend(var.cpu().numpy().flatten())
+                uncertainties.extend(var.cpu().numpy().flatten())
                 targets.extend(y_batch.cpu().numpy().flatten())
 
         val_loss /= len(test_loader.dataset)
 
         # save predictions + targets
         df = pd.DataFrame(
-            {"target": targets, "prediction": preds, "uncertainty": uncertainies}
+            {"target": targets, "prediction": preds, "uncertainty": uncertainties}
         )
         df.to_csv(f"validation_{epoch}.csv", index=False)
 
@@ -335,6 +335,27 @@ def load_model(
     )
     # load and apply state
     model.load_state_dict(torch.load(model_path))
+    return model
 
-# TODO split create_and_train up into two separate steps with parent_process = True
-#  Infer function
+
+def infer(model, dataset):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    model.eval()  # singal to layers like dropout to act differently
+
+    data_loader = DataLoader(
+        dataset, batch_size=32, shuffle=False
+    )  # TODO should determine max possible batch_size
+
+    preds = []
+    uncertainties = []
+    with torch.no_grad():  # no backward passes
+        for x_batch in tqdm(data_loader, desc=f"Running inference"):
+            x_batch = x_batch.to(device)
+            mu, var = model(x_batch)
+
+            preds.extend(mu.cpu().numpy().flatten())
+            uncertainties.extend(var.cpu().numpy().flatten())
+
+    return preds, uncertainties
+
