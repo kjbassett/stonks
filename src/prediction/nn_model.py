@@ -345,12 +345,12 @@ def infer(model, dataset):
 
     data_loader = DataLoader(
         dataset, batch_size=32, shuffle=False
-    )  # TODO should determine max possible batch_size
+    )  # TODO should determine max possible batch_size.
 
     preds = []
     uncertainties = []
     with torch.no_grad():  # no backward passes
-        for x_batch in tqdm(data_loader, desc=f"Running inference"):
+        for x_batch, _ in tqdm(data_loader, desc=f"Running inference"):
             x_batch = x_batch.to(device)
             mu, var = model(x_batch)
 
@@ -358,4 +358,3 @@ def infer(model, dataset):
             uncertainties.extend(var.cpu().numpy().flatten())
 
     return preds, uncertainties
-
