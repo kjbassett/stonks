@@ -109,12 +109,14 @@ async def create_datasets(
 ) -> (Dataset, Dataset):
     datasets = []
     # split structured data (numerical data)
+    if shuffle_rows:
+        structured_data = shuffle(structured_data)
     if split:
         n_train = int(split * len(structured_data))
         datasets.append(structured_data.iloc[:n_train])
         datasets.append(structured_data.iloc[n_train:])
-    if shuffle_rows:
-        structured_data = shuffle(structured_data)
+    else:
+        datasets = [structured_data]
     if news_data is None:
         datasets = [NumericalDataset(dataset) for dataset in datasets]
     else:

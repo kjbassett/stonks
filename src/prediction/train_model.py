@@ -224,16 +224,23 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
+                "kwargs": {
+                    "split": 0.8,
+                    "shuffle_rows": False
+                },
                 "outputs": ["train_dataset", "test_dataset"],
             },
             "inference": {
-                "func": create_dataset,
+                "func": create_datasets,
                 "args": [
                     "structured_data",
                     "text_data",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
+                "kwargs": {
+                    "shuffle_rows": False
+                },
                 "outputs": ["inference_dataset"],
             },
         },
