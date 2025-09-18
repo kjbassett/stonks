@@ -14,12 +14,28 @@ def load_short_data():
     return structured_data, None
 
 
-def filter_out_missing_data(structured_data, missing_data_threshold):
+def filter_out_missing_data(structured_data, missing_data_threshold, ignore_cols=None, no_tolerance_cols=None):
     # filter out rows with the number of missing values is above the threshold
+    ignore_df = None
+    if ignore_cols:
+        ignore_df = structured_data[ignore_cols]
+        structured_data = structured_data[
+            structured_data.columns.difference(ignore_cols)
+        ]
     n = len(structured_data)
     missing_data_ratio = structured_data.isnull().sum(axis=1) / structured_data.shape[1]
-    structured_data = structured_data[missing_data_ratio < missing_data_threshold]
+    filt = missing_data_ratio < missing_data_threshold
+    structured_data = structured_data[filt]
+    if ignore_df:
+        ignore_df = ignore_df[filt]
+        structured_data = pd.concat([structured_data, ignore_df], axis=1)
     print(f"Removed {n - len(structured_data)} rows")
+
+    # filter out no_tolerance columns if any value is null in them.
+    # For example, filter out rows with a null target column
+    if no_tolerance_cols:
+        structured_data = structured_data[~structured_data[no_tolerance_cols].isnull().any(axis=1)]
+
     return structured_data
 
 

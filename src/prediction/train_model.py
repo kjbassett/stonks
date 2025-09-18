@@ -142,9 +142,18 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         },
         {
             "name": "filter_out_missing_data",
-            "func": filter_out_missing_data,
-            "args": ["structured_data", "missing_data_%_threshold"],
-            "outputs": "structured_data",
+            "train": {
+                "func": filter_out_missing_data,
+                "args": ["structured_data", "missing_data_%_threshold"],
+                "kwargs": {"no_tolerance_cols": "target"},
+                "outputs": "structured_data",
+            },
+            "inference": {
+                "func": filter_out_missing_data,
+                "args": ["structured_data", "missing_data_%_threshold"],
+                "kwargs": {"ignore_cols": "target"},
+                "outputs": "structured_data",
+            },
         },
         {
             "name": "clip_values",
@@ -224,10 +233,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
-                "kwargs": {
-                    "split": 0.8,
-                    "shuffle_rows": False
-                },
+                "kwargs": {"split": 0.8, "shuffle_rows": False},
                 "outputs": ["train_dataset", "test_dataset"],
             },
             "inference": {
@@ -238,9 +244,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
-                "kwargs": {
-                    "shuffle_rows": False
-                },
+                "kwargs": {"shuffle_rows": False},
                 "outputs": ["inference_dataset"],
             },
         },
