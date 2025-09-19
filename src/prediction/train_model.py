@@ -6,7 +6,7 @@ from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from src.data_access.dao_manager import dao_manager
 from src.prediction.dataset import create_datasets
-from src.prediction.nn_model import create_and_train, load_model, infer
+from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (
     load_short_data,
     filter_out_missing_data,
@@ -22,7 +22,9 @@ from webrock.decorator import plugin
 
 
 @plugin(model_name={"ui_element": "textbox"})
-async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
+async def run_genetic_algorithm(
+    model_name: str, min_timestamp: int = 0, max_timestamp: int = 0
+):
     # define possible choices for all hyperparameters
     hyperparams, model_space = create_model_space(
         max_timestamp, min_timestamp, model_name
@@ -34,7 +36,9 @@ async def train_model(model_name: str, min_timestamp: int = 0, max_timestamp: in
 
 
 @plugin()
-async def train_short(model_name: str, min_timestamp: int = 0, max_timestamp: int = 0):
+async def run_short_genetic_algorithm(
+    model_name: str, min_timestamp: int = 0, max_timestamp: int = 0
+):
     # train from csv of saved data from some intermediate step
     hyperparams, model_space = create_model_space(
         max_timestamp, min_timestamp, model_name
@@ -259,21 +263,17 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
         {
             "name": "create_and_train",
             "train": {
-                "func": create_and_train,
+                "func": create_model,
                 "args": [
                     "structured_input_dim",
                     "n_hidden_layers",
                     "hidden_dim",
                     "dropout_rate",
-                    "train_dataset",
-                    "test_dataset",
-                    "batch_size",
-                    10,
                     "num_news",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                 ],
-                "outputs": ["model_path", "score"],
-                "gpu": True,
+                "outputs": ["model"],
+                "run_in_parent_process": True,  # model is not pickleable
             },
             "inference": {
                 "func": load_model,
@@ -290,9 +290,20 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             },
         },
         {
-            "name": "predict",
-            # "train": {
-            # },
+            "name": "train/predict",
+            "train": {
+                "func": train_model,
+                "args": [
+                    "model",
+                    "train_dataset",
+                    "test_dataset",
+                    "batch_size",
+                    10,
+                    "num_news",
+                ],
+                "outputs": ["model_path", "score", "predictions", "uncertainties"],
+                "gpu": True,
+            },
             "inference": {
                 "func": infer,
                 "args": ["model", "inference_dataset"],

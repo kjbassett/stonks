@@ -173,20 +173,24 @@ def train_numerical_model(
                 loss = loss_fn(mu, y_batch, var)
                 val_loss += loss.item() * x_batch.size(0)
 
-                preds.extend(mu.cpu().numpy().flatten())
-                uncertainties.extend(var.cpu().numpy().flatten())
-                targets.extend(y_batch.cpu().numpy().flatten())
+                # save output of last validation epoch
+                # TODO choose epoch with the best validation loss?
+                if epoch == epochs - 1:
+                    preds.extend(mu.cpu().numpy().flatten())
+                    uncertainties.extend(var.cpu().numpy().flatten())
+                    targets.extend(y_batch.cpu().numpy().flatten())
 
         val_loss /= len(test_loader.dataset)
 
-        # save predictions + targets
-        df = pd.DataFrame(
-            {"target": targets, "prediction": preds, "uncertainty": uncertainties}
-        )
-        df.to_csv(f"validation_{epoch}.csv", index=False)
-
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
-    return val_loss
+
+    # save predictions + targets
+    df = pd.DataFrame(
+        {"target": targets, "prediction": preds, "uncertainty": uncertainties}
+    )
+    df.to_csv(f"validation_{epoch}.csv", index=False)
+
+    return val_loss, preds, uncertainties
 
 
 # --- Training loop for hybrid model (numerical + text) ---
@@ -277,17 +281,13 @@ def create_model(
         )
 
 
-def create_and_train(
-    structured_input_dim,
-    n_hidden_layers,
-    hidden_dim,
-    dropout_rate,
+def train_model(
+    model,
     train_dataset,
     test_dataset,
     batch_size=32,
     epochs=10,
     n_news=0,
-    text_model_name=None,
     loss_fn=nn.GaussianNLLLoss(),
 ):
     # This is one function because the model tuner may want to run the creation / training in another process
@@ -296,23 +296,16 @@ def create_and_train(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    model = create_model(
-        structured_input_dim,
-        n_hidden_layers,
-        hidden_dim,
-        dropout_rate,
-        n_news,
-        text_model_name=text_model_name,
-    ).to(device)
+    model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
 
-    final_val_loss = train_fn(
+    final_val_loss, predictions, uncertainties = train_fn(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn
     )
     model_path = save_model(model)
-    return model_path, final_val_loss
+    return model_path, final_val_loss, predictions, uncertainties
 
 
 def load_model(
