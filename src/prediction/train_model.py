@@ -98,7 +98,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             [1, 2, 3, 4, 5, 6, 7]
         ),  # number of hidden layers in NN
         "hidden_dim": DiscreteOrdinal(
-            [100, 250, 500, 750, 1000, 1500, 2000]
+            [100, 250, 500, 750, 1000]
         ),  # number of nodes per hidden layer
         "dropout_rate": ContinuousRange(
             0.3, 0.4
@@ -261,7 +261,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             },
         },
         {
-            "name": "create_and_train",
+            "name": "create/load_model",
             "train": {
                 "func": create_model,
                 "args": [
@@ -298,22 +298,23 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "train_dataset",
                     "test_dataset",
                     "batch_size",
-                    10,
+                    1,  # epochs
                     "num_news",
                 ],
-                "outputs": ["model_path", "score", "predictions", "uncertainties"],
+                "outputs": ["model_path", "score", "predictions"],
                 "gpu": True,
             },
             "inference": {
                 "func": infer,
                 "args": ["model", "inference_dataset"],
-                "outputs": ["predictions", "uncertainties"],
+                "outputs": "predictions",
             },
         },
         {
             "name": "unstandardize",
             "func": unstandardize,
-            "args": ["predictions", "uncertainties", "means", "stds"],
+            "args": ["predictions", "means", "stds"],
+            "run_in_parent_process": True,  # TODO this step should not have to pickle model and pass to another process
         },
     ]
     return hyperparams, model_space

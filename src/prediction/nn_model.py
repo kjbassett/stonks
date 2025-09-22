@@ -185,12 +185,12 @@ def train_numerical_model(
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
 
     # save predictions + targets
-    df = pd.DataFrame(
+    predictions = pd.DataFrame(
         {"target": targets, "prediction": preds, "uncertainty": uncertainties}
     )
-    df.to_csv(f"validation_{epoch}.csv", index=False)
+    predictions.to_csv(f"validation_{epoch}.csv", index=False)
 
-    return val_loss, preds, uncertainties
+    return val_loss, predictions
 
 
 # --- Training loop for hybrid model (numerical + text) ---
@@ -301,11 +301,11 @@ def train_model(
 
     train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
 
-    final_val_loss, predictions, uncertainties = train_fn(
+    final_val_loss, predictions = train_fn(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn
     )
     model_path = save_model(model)
-    return model_path, final_val_loss, predictions, uncertainties
+    return model_path, final_val_loss, predictions
 
 
 def load_model(
@@ -350,4 +350,6 @@ def infer(model, dataset):
             preds.extend(mu.cpu().numpy().flatten())
             uncertainties.extend(var.cpu().numpy().flatten())
 
-    return preds, uncertainties
+    predictions = pd.DataFrame({"prediction": preds, "uncertainty": uncertainties})
+
+    return predictions

@@ -14,7 +14,14 @@ def load_short_data():
     return structured_data, None
 
 
-def filter_out_missing_data(structured_data, missing_data_threshold, ignore_cols=None, no_tolerance_cols=None):
+def filter_out_missing_data(
+    structured_data, missing_data_threshold, ignore_cols=None, no_tolerance_cols=None
+):
+    if isinstance(ignore_cols, str):
+        ignore_cols = [ignore_cols]
+    if isinstance(no_tolerance_cols, str):
+        no_tolerance_cols = [no_tolerance_cols]
+
     # filter out rows with the number of missing values is above the threshold
     ignore_df = None
     if ignore_cols:
@@ -34,7 +41,9 @@ def filter_out_missing_data(structured_data, missing_data_threshold, ignore_cols
     # filter out no_tolerance columns if any value is null in them.
     # For example, filter out rows with a null target column
     if no_tolerance_cols:
-        structured_data = structured_data[~structured_data[no_tolerance_cols].isnull().any(axis=1)]
+        structured_data = structured_data[
+            ~structured_data[no_tolerance_cols].isnull().any(axis=1)
+        ]
 
     return structured_data
 
@@ -89,20 +98,24 @@ def standardize_data(dataframe, means=None, stds=None):
     return dataframe, means, stds
 
 
-def unstandardize(predictions, uncertainties, means, stds):
+def unstandardize(predictions, means, stds):
     mean, std = means["target"], stds["target"]
 
-    uncertainties = np.sqrt(uncertainties)  # variance to standard deviation
+    predictions["uncertainty"] = np.sqrt(
+        predictions["uncertainty"]
+    )  # variance to standard deviation
 
+    # unscale target
+    if "target" in predictions.columns:
+        predictions["target"] = predictions["target"] * std + mean
     # unscale prediction
-    predictions = predictions * std + mean
-    # scale factor is std. predictions scale with a factor of std, and so do standard deviations
-    uncertainties = uncertainties * std
+    predictions["prediction"] = predictions["prediction"] * std + mean
+    # scale factor is std. std dev (aka uncertainty) scales linearly with scale factor
+    predictions["uncertainty"] = predictions["uncertainty"] * std
 
-    df = pd.DataFrame({"prediction": predictions, "uncertainty": uncertainties})
     dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    df.to_csv(f"predictions_{dt}.csv", index=False)
-    return df
+    predictions.to_csv(f"predictions_{dt}.csv", index=False)
+    return predictions
 
 
 def one_hot_encode(
