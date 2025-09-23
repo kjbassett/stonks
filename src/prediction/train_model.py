@@ -1,10 +1,7 @@
-import time
-
 import matplotlib.pyplot as plt
 import pandas as pd
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
-from src.data_access.dao_manager import dao_manager
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (
@@ -17,6 +14,7 @@ from src.prediction.pipeline_components import (
     save_data,
     get_num_x_columns,
     unstandardize,
+    load_data,
 )
 from webrock.decorator import plugin
 
@@ -131,7 +129,9 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                 "func": load_data,
                 "kwargs": {
                     "price_change_offset": "price_change_offset",
-                    "min_timestamp": -3600 * 24,  # TODO find a better way to do this
+                    "min_timestamp": -3600
+                    * 24
+                    * 30,  # TODO find a better way to do this
                     "max_window": "max_window",
                     "num_windows": "num_windows",
                     "num_news": "num_news",
@@ -320,59 +320,19 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
     return hyperparams, model_space
 
 
-async def load_data(
-    price_change_offset: int = 86400,
-    min_timestamp: int = 0,
-    max_timestamp: int = 0,
-    max_window: int = 0,
-    num_windows: int = 0,
-    num_news: int = 0,
-    news_history_threshold: int = 24 * 60 * 60,
-    include_close_ratio: bool = True,
-    include_cv_close_ratio: bool = True,
-    include_avg_volume_ratio: bool = True,
-    include_cv_volume_ratio: bool = True,
-):
-    if min_timestamp < 0:
-        min_timestamp = time.time() - min_timestamp
-    structured_data_dao = dao_manager.get_dao("DataCompiler")
-    structured_data = await structured_data_dao.get_data(
-        "hour",
-        price_change_offset,
-        min_timestamp,
-        max_timestamp,
-        max_window,
-        num_windows,
-        num_news,
-        news_history_threshold,
-        include_close_ratio,
-        include_cv_close_ratio,
-        include_avg_volume_ratio,
-        include_cv_volume_ratio,
-        print_query=True,
-    )
-    if num_news > 0:
-        news_data_dao = dao_manager.get_dao("News")
-        news_data = await news_data_dao.get_all()
-    else:
-        news_data = None
-    return structured_data, news_data
-
-
 # TODO
-#  separate validation from the end of the dataset to simulate *new* data (don't shuffle?)
 #  inference flow
 #  Problem: inference flow loads and recreates model every time
 #   Solution A: let it do that. data loading probably takes the most time anyway
 #   Solution B: disable certain parts of the inference dna after first run, disable load of model. store model in memory
 #   Solution C: In addition to B, split organism. One handles data loading, the other handles loading and running the model. Good for a distributed architecture, but would need highly performant databases. idk if that would even help unles multiple DBs
 #  Keep symbol and timestamp
-#  Add step to pipeline: undo_transformations
 #  Add filter to latest timestamp (and age cutoff) by symbol step to inference pipeline until a better solution is found
 #  Fix flow when num_news > 0
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
 #  keep best version of nn based on val loss
+#  pytorch model should not be pickled after training because it an inference function creates it
 
 
 def plot_moving_average(loss_history, window_size):

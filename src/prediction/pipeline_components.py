@@ -1,9 +1,50 @@
 import datetime
+import time
 
 import numpy as np
 import pandas as pd
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
+from src.data_access.dao_manager import dao_manager
+
+
+async def load_data(
+    price_change_offset: int = 86400,
+    min_timestamp: int = 0,
+    max_timestamp: int = 0,
+    max_window: int = 0,
+    num_windows: int = 0,
+    num_news: int = 0,
+    news_history_threshold: int = 24 * 60 * 60,
+    include_close_ratio: bool = True,
+    include_cv_close_ratio: bool = True,
+    include_avg_volume_ratio: bool = True,
+    include_cv_volume_ratio: bool = True,
+):
+    if min_timestamp < 0:
+        min_timestamp = time.time() - min_timestamp
+    structured_data_dao = dao_manager.get_dao("DataCompiler")
+    structured_data = await structured_data_dao.get_data(
+        "hour",
+        price_change_offset,
+        min_timestamp,
+        max_timestamp,
+        max_window,
+        num_windows,
+        num_news,
+        news_history_threshold,
+        include_close_ratio,
+        include_cv_close_ratio,
+        include_avg_volume_ratio,
+        include_cv_volume_ratio,
+        print_query=True,
+    )
+    if num_news > 0:
+        news_data_dao = dao_manager.get_dao("News")
+        news_data = await news_data_dao.get_all()
+    else:
+        news_data = None
+    return structured_data, news_data
 
 
 def load_short_data():
