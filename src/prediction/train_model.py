@@ -131,7 +131,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "price_change_offset": "price_change_offset",
                     "min_timestamp": -3600
                     * 24
-                    * 30,  # TODO find a better way to do this
+                    * 5,  # TODO find a better way to do this
                     "max_window": "max_window",
                     "num_windows": "num_windows",
                     "num_news": "num_news",
@@ -197,6 +197,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "inference": {
                 "func": impute,
                 "args": ["structured_data", "imputer"],
+                "kwargs": {"ignore_cols": ["target"]},
                 "outputs": ["structured_data", "imputer"],
             },
         },
@@ -315,6 +316,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
             "func": unstandardize,
             "args": ["predictions", "means", "stds"],
             "run_in_parent_process": True,  # TODO this step should not have to pickle model and pass to another process
+            # TODO Also model shouldn't be pickled in the first place
         },
     ]
     return hyperparams, model_space

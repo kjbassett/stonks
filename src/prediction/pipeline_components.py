@@ -22,7 +22,7 @@ async def load_data(
     include_cv_volume_ratio: bool = True,
 ):
     if min_timestamp < 0:
-        min_timestamp = time.time() - min_timestamp
+        min_timestamp = time.time() + min_timestamp
     structured_data_dao = dao_manager.get_dao("DataCompiler")
     structured_data = await structured_data_dao.get_data(
         "hour",
@@ -219,23 +219,24 @@ def one_hot_encode(
 def impute(dataframe, imputer=None, ignore_cols=None):
     if ignore_cols is None:
         ignore_cols = []
+    # add object cols to ignore_cols if object col is not already in ignore cols
     ignore_cols += (
         dataframe.select_dtypes(include=["object"])
         .columns.difference(ignore_cols)
         .tolist()
     )
-    df_to_impute = dataframe.drop(columns=ignore_cols)
-    if df_to_impute.isnull().sum().sum() == 0:
+    impute_df = dataframe.drop(columns=ignore_cols)
+    ignore_df = dataframe[ignore_cols]
+    columns = impute_df.columns
+    if impute_df.isnull().sum().sum() == 0:
         return dataframe, None
     if imputer is None:
         imputer = MissForest()
-        imputer.fit(df_to_impute)
-    imputed_array = imputer.transform(df_to_impute)
-    imputed_data = pd.DataFrame(
-        imputed_array, columns=df_to_impute.columns
-    ).reset_index(drop=True)
+        imputer.fit(impute_df)
+    impute_df = imputer.transform(impute_df)
+    impute_df = pd.DataFrame(impute_df, columns=columns)
     dataframe = pd.concat(
-        [imputed_data, dataframe[ignore_cols].reset_index(drop=True)], axis=1
+        [impute_df.reset_index(drop=True), ignore_df.reset_index(drop=True)], axis=1
     )
     return dataframe, imputer
 
