@@ -3,7 +3,6 @@ import datetime
 from functools import partial
 
 import pandas as pd
-
 from config import CONFIG
 from src.data_access.dao_manager import dao_manager
 from src.utils.market_calendar import (
@@ -31,6 +30,7 @@ async def find_gaps(
 
     # Previous timestamp
     current_data["previous"] = current_data["timestamp"].shift(1)
+    current_data = current_data.iloc[1:,]
 
     # Convert timestamp and previous to datetime columns
     current_data["date"] = (
@@ -39,29 +39,31 @@ async def find_gaps(
         .dt.normalize()
     )
 
+    try:
+        prev = pd.to_datetime(current_data.previous, unit="s", utc=True)
+    except FloatingPointError as e:
+        current_data.to_csv("to_datetime_bad_data.csv")
+        print(f"ERROR: {e}")
+        print(current_data)
+        return pd.DataFrame({"start": [], "end": []})
+
     # these two columns are needed for the adjust gap function
-    current_data["prev_date"] = (
-        pd.to_datetime(current_data.previous, unit="s", utc=True)
-        .dt.tz_convert("US/Eastern")
-        .dt.normalize()
-    )
+    current_data["prev_date"] = prev.dt.tz_convert("US/Eastern").dt.normalize()
     current_data["days_apart"] = (
         current_data["date"] - current_data["prev_date"]
     ).dt.days
 
     current_data["gap"] = current_data["timestamp"] - current_data["previous"]
-    current_data = current_data.iloc[1:,]
 
     # We filter out gaps before and after adjusting because adjusting can only make it smaller and is an expensive operation
     current_data = current_data[current_data["gap"] > min_gap_size]
     if adjust_for_market_hours:
         current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
 
-    # We choose to save a previously fetched time range in TradingDataGaps and NewsDataGaps table IF there were NO
-    # results in the time range, so we can't include any row from current_data because we know there is data.
-    # In other words, we might query the API and get no data BETWEEN t1 and t2, but we got data at timestamps t1 and t2.
-    # So the gap isn't saved when it should have been.
-    # ^ To fix this, we want to query for a time range of (t1 + 60, t2 - 60) unless either t1 or t2 are dummy timestamps
+    # We are trying to find gaps in the data. Our "endpoints" for our gaps are places where THERE IS DATA.
+    # Therefore we add 60s to the beginning and subtract 60s from the end of each gap.
+    # (smallest granularity of data is 1min)
+    # unless either t1 or t2 are dummy timestamps that were added to make gaps at the ends detectable
 
     current_data.reset_index(drop=True, inplace=True)
     current_data.loc[1:, "previous"] += 60  # see comments above
