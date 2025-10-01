@@ -103,3 +103,10 @@ async def initialize_dao_manager():
 @shutdown
 async def shutdown_dao_manager():
     await dao_manager.db.close()
+
+
+@plugin()
+async def query_db(sql: str):
+    result = await dao_manager.db.execute_query(sql)
+    print(result)
+    return result
