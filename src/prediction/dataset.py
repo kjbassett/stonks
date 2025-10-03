@@ -104,31 +104,32 @@ async def create_datasets(
     news_data=None,
     tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
     max_text_length=512,
-    split=0,
+    n_datasets=1,
     shuffle_rows=False,
-) -> (Dataset, Dataset):
+) -> list | Dataset:
     datasets = []
     # split structured data (numerical data)
     if shuffle_rows:
         structured_data = shuffle(structured_data)
-    if split:
-        n_train = int(split * len(structured_data))
-        datasets.append(structured_data.iloc[:n_train])
-        datasets.append(structured_data.iloc[n_train:])
-    else:
-        datasets = [structured_data]
-    if news_data is None:
-        datasets = [NumericalDataset(dataset) for dataset in datasets]
-    else:
-        # We don't split news data because it has a one-to-many relationship with structured data.
-        # Later on, we retrieve correct news article(s) as needed. This saves memory.
-        datasets = [
-            HybridDataset(
+    datasets = []
+    data_len = len(structured_data)
+    for n in range(min(1, n_datasets)):
+        start_index = int(n / n_datasets * data_len)
+        end_index = int((n + 1) / n_datasets * len(structured_data))
+        dataset = structured_data.iloc[start_index:end_index]
+        if news_data is None:
+            dataset = NumericalDataset(dataset)
+        else:
+            # We don't split news data because it has a one-to-many relationship with structured data.
+            # Later on, we retrieve correct news article(s) as needed. This saves memory.
+            dataset = HybridDataset(
                 dataset,
                 news_data,
                 tokenizer_name=tokenizer,
                 max_text_length=max_text_length,
             )
-            for dataset in datasets
-        ]
+        if n_datasets == 1:
+            return dataset
+        else:
+            datasets.append(dataset)
     return datasets
