@@ -219,22 +219,33 @@ def one_hot_encode(
 def impute(dataframe, imputer=None, ignore_cols=None):
     if ignore_cols is None:
         ignore_cols = []
+    # We can only impute numerical columns
     # add object cols to ignore_cols if object col is not already in ignore cols
     ignore_cols += (
         dataframe.select_dtypes(include=["object"])
         .columns.difference(ignore_cols)
         .tolist()
     )
+
+    # split data into imputable and non-imputable
     impute_df = dataframe.drop(columns=ignore_cols)
     ignore_df = dataframe[ignore_cols]
     columns = impute_df.columns
+
+    # check if there are any missing values before doing expensive impute operation
     if impute_df.isnull().sum().sum() == 0:
         return dataframe, None
+
+    # if an imputer was not supplied, create one and fit it to data
     if imputer is None:
         imputer = MissForest()
         imputer.fit(impute_df)
+
+    # impute data
     impute_df = imputer.transform(impute_df)
     impute_df = pd.DataFrame(impute_df, columns=columns)
+
+    # recombine with non-imputable data
     dataframe = pd.concat(
         [impute_df.reset_index(drop=True), ignore_df.reset_index(drop=True)], axis=1
     )
