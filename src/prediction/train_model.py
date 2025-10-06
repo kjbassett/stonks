@@ -21,26 +21,22 @@ from webrock.decorator import plugin
 
 @plugin(model_name={"ui_element": "textbox"})
 async def run_genetic_algorithm(
-    model_name: str, min_timestamp: int = 0, max_timestamp: int = 0
+    run_name: str, min_timestamp: int = 0, max_timestamp: int = 0
 ):
     # define possible choices for all hyperparameters
-    hyperparams, model_space = create_model_space(
-        max_timestamp, min_timestamp, model_name
-    )
+    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp)
     # Run genetic algorithm to tune hyperparameters
     mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
-    model = await mt.run()
-    model.save(model_name)
+    model = await mt.run(run_name)
+    model.save()
 
 
 @plugin()
 async def run_short_genetic_algorithm(
-    model_name: str, min_timestamp: int = 0, max_timestamp: int = 0
+    run_name: str, min_timestamp: int = 0, max_timestamp: int = 0
 ):
     # train from csv of saved data from some intermediate step
-    hyperparams, model_space = create_model_space(
-        max_timestamp, min_timestamp, model_name
-    )
+    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp)
     model_space = [
         {
             "name": "load_data",
@@ -52,11 +48,11 @@ async def run_short_genetic_algorithm(
     ] + model_space[7:]
 
     mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
-    model = await mt.run()
-    model.save(model_name)
+    model = await mt.run(run_name)
+    model.save()
 
 
-def create_model_space(max_timestamp, min_timestamp, model_name):
+def create_model_space(max_timestamp, min_timestamp):
     hyperparams = {
         "batch_size": DiscreteOrdinal([64]),  # neural net batch size
         "max_text_length": DiscreteOrdinal([512]),  # text encoder length
@@ -131,7 +127,7 @@ def create_model_space(max_timestamp, min_timestamp, model_name):
                     "price_change_offset": "price_change_offset",
                     "min_timestamp": -3600
                     * 24
-                    * 5,  # TODO find a better way to do this
+                    * 9,  # TODO find a better way to do this
                     "max_window": "max_window",
                     "num_windows": "num_windows",
                     "num_news": "num_news",

@@ -3,6 +3,6 @@ from webrock.decorator import plugin
 
 
 @plugin()
-async def predict_latest_data(model_folder: str):
-    model = Organism.load(model_folder)
-    await model.predict()
+async def predict_latest_data(name: str, version: str):
+    model = Organism.load(name, version)
+    await model.predict(log_state=True)
