@@ -58,10 +58,8 @@ def load_short_data():
 def filter_out_missing_data(
     structured_data, missing_data_threshold, ignore_cols=None, no_tolerance_cols=None
 ):
-    if isinstance(ignore_cols, str):
-        ignore_cols = [ignore_cols]
-    if isinstance(no_tolerance_cols, str):
-        no_tolerance_cols = [no_tolerance_cols]
+    ignore_cols = format_ignore_cols(ignore_cols)
+    no_tolerance_cols = format_ignore_cols(no_tolerance_cols)
 
     # filter out rows with the number of missing values is above the threshold
     ignore_df = None
@@ -89,10 +87,11 @@ def filter_out_missing_data(
     return structured_data
 
 
-def clip_values(df, column_limits=None):
+def clip_values(df, ignore_cols=None, column_limits=None):
+    ignore_cols = format_ignore_cols(ignore_cols)
     if not column_limits:
         column_limits = {}
-    for col in df.select_dtypes(include=[float, int]).columns:
+    for col in df.select_dtypes(include=[float, int]).columns.difference(ignore_cols):
         if col not in column_limits:
             column_limits[col] = {
                 "lower": df[col].quantile(0.01),
@@ -104,7 +103,7 @@ def clip_values(df, column_limits=None):
     return df, column_limits
 
 
-def standardize_data(dataframe, means=None, stds=None):
+def standardize_data(dataframe, ignore_cols=None, means=None, stds=None):
     """
     Standardize the numeric columns of the DataFrame, ignoring object dtype columns.
 
@@ -124,7 +123,10 @@ def standardize_data(dataframe, means=None, stds=None):
     - stds: dict
         Stds of the numeric columns (JSON-serializable).
     """
-    numeric_cols = dataframe.select_dtypes(include=[np.number]).columns
+    ignore_cols = format_ignore_cols(ignore_cols)
+    numeric_cols = dataframe.select_dtypes(include=[np.number]).columns.difference(
+        ignore_cols
+    )
 
     if means is None:
         means = dataframe[numeric_cols].mean().to_dict()
@@ -188,8 +190,7 @@ def one_hot_encode(
     - transformed_df: pd.DataFrame
         The DataFrame with one-hot encoded columns.
     """
-    if ignore_cols is None:
-        ignore_cols = []
+    ignore_cols = format_ignore_cols(ignore_cols)
     cols_to_encode = dataframe.select_dtypes(include=["object"]).columns.difference(
         ignore_cols
     )
@@ -217,8 +218,7 @@ def one_hot_encode(
 
 
 def impute(dataframe, imputer=None, ignore_cols=None):
-    if ignore_cols is None:
-        ignore_cols = []
+    ignore_cols = format_ignore_cols(ignore_cols)
     # We can only impute numerical columns
     # add object cols to ignore_cols if object col is not already in ignore cols
     ignore_cols += (
@@ -266,6 +266,14 @@ def get_num_x_columns(structured_data):
     if "target" in structured_data.columns:
         n_cols -= 1
     return n_cols
+
+
+def format_ignore_cols(ignore_cols):
+    if ignore_cols is None:
+        ignore_cols = []
+    if not isinstance(ignore_cols, (list, tuple, set)):
+        ignore_cols = [ignore_cols]
+    return ignore_cols
 
 
 def get_score(history):

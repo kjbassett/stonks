@@ -63,7 +63,7 @@ def construct_query(
     include_cv_volume_ratio: bool = True,
 ) -> str:
     ctes = []  # common table expressions
-    columns = []
+    columns = ["t.symbol", "t.timestamp"]
     joins = []
     filters = []
     if aggregation_interval == "minute":

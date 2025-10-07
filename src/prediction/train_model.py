@@ -127,7 +127,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "price_change_offset": "price_change_offset",
                     "min_timestamp": -3600
                     * 24
-                    * 9,  # TODO find a better way to do this
+                    * 14,  # TODO find a better way to do this
                     "max_window": "max_window",
                     "num_windows": "num_windows",
                     "num_news": "num_news",
@@ -145,13 +145,19 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": filter_out_missing_data,
                 "args": ["structured_data", "missing_data_%_threshold"],
-                "kwargs": {"no_tolerance_cols": "target"},
+                "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp"],
+                    "no_tolerance_cols": ["symbol", "timestamp", "target"],
+                },
                 "outputs": "structured_data",
             },
             "inference": {
                 "func": filter_out_missing_data,
                 "args": ["structured_data", "missing_data_%_threshold"],
-                "kwargs": {"ignore_cols": "target"},
+                "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp", "target"],
+                    "no_tolerance_cols": ["symbol", "timestamp"],
+                },
                 "outputs": "structured_data",
             },
         },
@@ -160,12 +166,16 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": clip_values,
                 "args": "structured_data",
+                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
                 "outputs": ["structured_data", "column_limits"],
             },
             "inference": {
                 "func": clip_values,
                 "args": "structured_data",
-                "kwargs": {"column_limits": "column_limits"},
+                "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp"],
+                    "column_limits": "column_limits",
+                },
                 "outputs": ["structured_data", "column_limits"],
             },
         },
@@ -174,11 +184,13 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": standardize_data,
                 "args": ["structured_data"],
+                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
                 "outputs": ["structured_data", "means", "stds"],
             },
             "inference": {
                 "func": standardize_data,
                 "args": ["structured_data", "means", "stds"],
+                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
                 "outputs": ["structured_data", "means", "stds"],
             },
         },
@@ -187,13 +199,13 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": impute,
                 "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["target"]},
+                "kwargs": {"ignore_cols": ["target", "symbol", "timestamp"]},
                 "outputs": ["structured_data", "imputer"],
             },
             "inference": {
                 "func": impute,
                 "args": ["structured_data", "imputer"],
-                "kwargs": {"ignore_cols": ["target"]},
+                "kwargs": {"ignore_cols": ["target", "symbol", "timestamp"]},
                 "outputs": ["structured_data", "imputer"],
             },
         },
@@ -203,6 +215,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": one_hot_encode,
                 "args": ["structured_data"],
                 "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp"],
                     "max_categories": "max_one_hot_categories",
                 },
                 "outputs": ["structured_data", "one_hot_encoder"],
@@ -211,6 +224,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": one_hot_encode,
                 "args": ["structured_data", "one_hot_encoder"],
                 "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp"],
                     "max_categories": "max_one_hot_categories",
                 },
                 "outputs": ["structured_data", "one_hot_encoder"],
