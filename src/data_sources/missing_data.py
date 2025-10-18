@@ -4,6 +4,7 @@ from functools import partial
 
 import pandas as pd
 from config import CONFIG
+from httpcore import ReadTimeout
 from src.data_access.dao_manager import dao_manager
 from src.utils.market_calendar import (
     latest_market_time,
@@ -160,7 +161,11 @@ async def fill_gap(
     latest_api_ts = int(now - now % 60) - 60 * 15  # API is 15 minutes behind real time
     start = int(gap["start"])
     end = min(latest_api_ts, int(gap["end"]))
-    data = await get_data_func(client, cpy["symbol"], int(start), int(end))
+    try:
+        data = await get_data_func(client, cpy["symbol"], int(start), int(end))
+    except ReadTimeout:
+        print("Getting data timed out")
+        return
 
     # save_new_data returns the number of rows inserted, so if it's 0,
     #   we don't want to try this gap again. We save the record of our attempt here
