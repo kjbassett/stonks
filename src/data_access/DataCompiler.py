@@ -63,15 +63,15 @@ def construct_query(
     include_cv_volume_ratio: bool = True,
 ) -> str:
     ctes = []  # common table expressions
-    columns = ["t.symbol", "t.timestamp"]
-    joins = []
+    columns = ["c.symbol"]
+    joins = ["JOIN Company c ON t.company_id = c.id"]
     filters = []
     if aggregation_interval == "minute":
         print("minute aggregations are untested!")
-        start_col = "t.timestamp"
-        end_col = "t.timestamp"
+        start_col = end_col = "t.timestamp"
+
         columns += [
-            "t.close",
+            start_col,
             "t.vw_average",
             "i.name AS industry",
             "io.name AS industry_office",
@@ -80,6 +80,7 @@ def construct_query(
         start_col = "t.start"
         end_col = "t.end"
         columns += [
+            f"{start_col} AS timestamp",  # pipeline expects column called timestamp
             "t.open",
             "t.low",
             "t.close",
@@ -94,7 +95,6 @@ def construct_query(
         ]
         filters.append("t.row_count > 5")
     joins += [
-        "JOIN Company c ON t.company_id = c.id",
         "JOIN Industry i ON c.industry_id = i.id",
         "JOIN IndustryOffice io ON i.office_id = io.id",
     ]
