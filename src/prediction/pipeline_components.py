@@ -62,17 +62,13 @@ def filter_out_missing_data(
     no_tolerance_cols = format_ignore_cols(no_tolerance_cols)
 
     # filter out rows with the number of missing values is above the threshold
-    ignore_df = None
-    if ignore_cols:
-        ignore_df = structured_data[ignore_cols]
-        structured_data = structured_data[
-            structured_data.columns.difference(ignore_cols)
-        ]
+    ignore_df = structured_data[ignore_cols]
+    structured_data = structured_data[structured_data.columns.difference(ignore_cols)]
     n = len(structured_data)
     missing_data_ratio = structured_data.isnull().sum(axis=1) / structured_data.shape[1]
     filt = missing_data_ratio < missing_data_threshold
     structured_data = structured_data[filt]
-    if ignore_df:
+    if not ignore_df.empty:
         ignore_df = ignore_df[filt]
         structured_data = pd.concat([structured_data, ignore_df], axis=1)
     print(f"Removed {n - len(structured_data)} rows")
@@ -258,13 +254,14 @@ def save_data(structured_data, news_data, suffix=""):
         news_data.to_csv("news_data{suffix}.csv", index=False)
 
 
-def get_num_x_columns(structured_data):
-    n_cols = (
-        structured_data.shape[1]
-        - structured_data.select_dtypes(include="object").shape[1]
-    )
-    if "target" in structured_data.columns:
-        n_cols -= 1
+def get_num_x_columns(structured_data, ignore_cols=None):
+    ignore_cols = format_ignore_cols(ignore_cols)
+    non_x_cols = [
+        *ignore_cols,
+        *structured_data.select_dtypes(include="object").columns,
+    ]
+    non_x_cols = set(non_x_cols)
+    n_cols = structured_data.shape[1] - len(non_x_cols)
     return n_cols
 
 
