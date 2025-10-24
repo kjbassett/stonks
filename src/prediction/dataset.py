@@ -84,14 +84,20 @@ class HybridDataset(Dataset):
 
 class NumericalDataset(Dataset):
     def __init__(self, data):
-        self.x = torch.tensor(data.drop(columns=["target"]).values, dtype=torch.float32)
+        self.symbols = data["symbol"].values
+        self.timestamps = data["timestamp"].values
+        self.x = torch.tensor(
+            data.drop(columns=["target", "symbol", "timestamp"]).values,
+            dtype=torch.float32,
+        )
         self.y = torch.tensor(data["target"].values, dtype=torch.float32)
 
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx]
+        meta = {"symbol": self.symbols[idx], "timestamp": self.timestamps[idx]}
+        return self.x[idx], self.y[idx], meta
 
 
 def shuffle(df):
@@ -104,32 +110,40 @@ async def create_datasets(
     news_data=None,
     tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
     max_text_length=512,
-    n_datasets=1,
+    split=0,
     shuffle_rows=False,
 ) -> list | Dataset:
-    datasets = []
+    news_args = (news_data, tokenizer, max_text_length)
+
     # split structured data (numerical data)
-    if shuffle_rows:
-        structured_data = shuffle(structured_data)
-    datasets = []
-    data_len = len(structured_data)
-    for n in range(min(1, n_datasets)):
-        start_index = int(n / n_datasets * data_len)
-        end_index = int((n + 1) / n_datasets * len(structured_data))
-        dataset = structured_data.iloc[start_index:end_index]
-        if news_data is None:
-            dataset = NumericalDataset(dataset)
-        else:
-            # We don't split news data because it has a one-to-many relationship with structured data.
-            # Later on, we retrieve correct news article(s) as needed. This saves memory.
-            dataset = HybridDataset(
-                dataset,
-                news_data,
-                tokenizer_name=tokenizer,
-                max_text_length=max_text_length,
-            )
-        if n_datasets == 1:
-            return dataset
-        else:
-            datasets.append(dataset)
-    return datasets
+    if split:
+        # We don't split news data because it has a one-to-many relationship with structured data.
+        # Later on, we retrieve correct news article(s) as needed. This saves memory.
+        n_train = int(split * len(structured_data))
+        train, test = structured_data.iloc[:n_train], structured_data.iloc[n_train:]
+        if shuffle_rows:
+            # we only shuffle training data because shuffling test in with train would be different
+            # from inference, which will be done on a batch of the newest data.
+            train = shuffle(train)
+        return [
+            create_dataset(train, *news_args),
+            create_dataset(test, *news_args),
+        ]
+    return create_dataset(structured_data, *news_args)
+
+
+def create_dataset(
+    data,
+    news_data=None,
+    tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
+    max_text_length=None,
+):
+    if news_data is None:
+        return NumericalDataset(data)
+    else:
+        return HybridDataset(
+            data,
+            news_data,
+            tokenizer_name=tokenizer,
+            max_text_length=max_text_length,
+        )

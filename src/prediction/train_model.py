@@ -15,6 +15,8 @@ from src.prediction.pipeline_components import (
     get_num_x_columns,
     unstandardize,
     load_data,
+    save_torch_state,
+    load_torch_state,
 )
 from webrock.decorator import plugin
 
@@ -24,9 +26,13 @@ async def run_genetic_algorithm(
     run_name: str, min_timestamp: int = 0, max_timestamp: int = 0
 ):
     # define possible choices for all hyperparameters
-    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp)
+    model_space, hyperparam_space, save_load_funcs = create_model_space(
+        max_timestamp, min_timestamp
+    )
     # Run genetic algorithm to tune hyperparameters
-    mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
+    mt = ModelTuner(
+        model_space, hyperparam_space, save_load_funcs, None, "target", 1, 1
+    )
     model = await mt.run(run_name)
     model.save()
 
@@ -36,7 +42,9 @@ async def run_short_genetic_algorithm(
     run_name: str, min_timestamp: int = 0, max_timestamp: int = 0
 ):
     # train from csv of saved data from some intermediate step
-    hyperparams, model_space = create_model_space(max_timestamp, min_timestamp)
+    model_space, hyperparam_space, save_load_funcs = create_model_space(
+        max_timestamp, min_timestamp
+    )
     model_space = [
         {
             "name": "load_data",
@@ -47,13 +55,15 @@ async def run_short_genetic_algorithm(
         }
     ] + model_space[7:]
 
-    mt = ModelTuner(model_space, hyperparams, None, "target", 1, 1)
+    mt = ModelTuner(
+        model_space, hyperparam_space, save_load_funcs, None, "target", 1, 1
+    )
     model = await mt.run(run_name)
     model.save()
 
 
 def create_model_space(max_timestamp, min_timestamp):
-    hyperparams = {
+    hyperparam_space = {
         "batch_size": DiscreteOrdinal([64]),  # neural net batch size
         "max_text_length": DiscreteOrdinal([512]),  # text encoder length
         # for price_change_offset...
@@ -100,6 +110,10 @@ def create_model_space(max_timestamp, min_timestamp):
         "missing_data_%_threshold": ContinuousRange(
             0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
+    }
+    save_load_funcs = {
+        "model_state_dict": {"save": save_torch_state, "load": load_torch_state},
+        "optimizer_state_dict": {"save": save_torch_state, "load": load_torch_state},
     }
     model_space = [
         {
@@ -268,6 +282,7 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": get_num_x_columns,
                 "args": ["structured_data"],
+                "kwargs": {"ignore_cols": ["symbol", "timestamp", "target"]},
                 "outputs": "structured_input_dim",
             },
         },
@@ -289,7 +304,8 @@ def create_model_space(max_timestamp, min_timestamp):
             "inference": {
                 "func": load_model,
                 "args": [
-                    "model_path",
+                    "model_state_dict",
+                    "optimizer_state_dict",
                     "structured_input_dim",
                     "n_hidden_layers",
                     "hidden_dim",
@@ -297,7 +313,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "num_news",
                     "text_model_name",
                 ],
-                "output": "model",
+                "output": ["model", "optimizer", "epoch"],
             },
         },
         {
@@ -312,7 +328,13 @@ def create_model_space(max_timestamp, min_timestamp):
                     1,  # epochs
                     "num_news",
                 ],
-                "outputs": ["model_path", "score", "predictions"],
+                "outputs": [
+                    "model_state_dict",
+                    "optimizer_state_dict",
+                    "epoch",
+                    "val_loss",
+                    "predictions",
+                ],
                 "gpu": True,
             },
             "inference": {
@@ -329,16 +351,12 @@ def create_model_space(max_timestamp, min_timestamp):
             # TODO Also model shouldn't be pickled in the first place
         },
     ]
-    return hyperparams, model_space
+    return model_space, hyperparam_space, save_load_funcs
 
 
 # TODO
-#  inference flow
-#  Problem: inference flow loads and recreates model every time
-#   Solution A: let it do that. data loading probably takes the most time anyway
-#   Solution B: disable certain parts of the inference dna after first run, disable load of model. store model in memory
-#   Solution C: In addition to B, split organism. One handles data loading, the other handles loading and running the model. Good for a distributed architecture, but would need highly performant databases. idk if that would even help unles multiple DBs
-#  Keep symbol and timestamp
+#  save state dict of model as .pth file (would normally get treated as a dict. it's actually on ordered dict)
+#  Keep symbol and timestamp (fix dataset and training logic)
 #  Add filter to latest timestamp (and age cutoff) by symbol step to inference pipeline until a better solution is found
 #  Fix flow when num_news > 0
 #  Hyperparams for imputation

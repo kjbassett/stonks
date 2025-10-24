@@ -1,8 +1,10 @@
 import datetime
+import os
 import time
 
 import numpy as np
 import pandas as pd
+import torch
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
 from src.data_access.dao_manager import dao_manager
@@ -61,7 +63,7 @@ def filter_out_missing_data(
     ignore_cols = format_ignore_cols(ignore_cols)
     no_tolerance_cols = format_ignore_cols(no_tolerance_cols)
 
-    # filter out rows with the number of missing values is above the threshold
+    # filter out rows if the percentage of missing values is above the threshold
     ignore_df = structured_data[ignore_cols]
     structured_data = structured_data[structured_data.columns.difference(ignore_cols)]
     n = len(structured_data)
@@ -71,7 +73,6 @@ def filter_out_missing_data(
     if not ignore_df.empty:
         ignore_df = ignore_df[filt]
         structured_data = pd.concat([structured_data, ignore_df], axis=1)
-    print(f"Removed {n - len(structured_data)} rows")
 
     # filter out no_tolerance columns if any value is null in them.
     # For example, filter out rows with a null target column
@@ -79,7 +80,7 @@ def filter_out_missing_data(
         structured_data = structured_data[
             ~structured_data[no_tolerance_cols].isnull().any(axis=1)
         ]
-
+    print(f"Removed {n - len(structured_data)} rows")
     return structured_data
 
 
@@ -150,7 +151,7 @@ def unstandardize(predictions, means, stds):
     # unscale prediction
     predictions["prediction"] = predictions["prediction"] * std + mean
     # scale factor is std. std dev (aka uncertainty) scales linearly with scale factor
-    predictions["uncertainty"] = predictions["uncertainty"] * std
+    predictions["uncertainty"] = predictions["uncertainty"] * std**2
 
     dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     predictions.to_csv(f"predictions_{dt}.csv", index=False)
@@ -273,5 +274,13 @@ def format_ignore_cols(ignore_cols):
     return ignore_cols
 
 
-def get_score(history):
-    return history.history["val_loss"][-1]
+def save_torch_state(folder, name, state):
+    file_name = name + ".pt"
+    path = os.path.join(folder, file_name)
+    torch.save(state, path)
+    return file_name
+
+
+def load_torch_state(folder, file_name):
+    path = os.path.join(folder, file_name)
+    return torch.load(path)

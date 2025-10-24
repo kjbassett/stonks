@@ -1,3 +1,4 @@
+import copy
 import datetime
 import os
 
@@ -136,18 +137,23 @@ class NumericalModel(nn.Module):
 def train_numerical_model(
     model, train_loader, test_loader, device, epochs, optimizer, loss_fn
 ):
-    # set inital value for uncertainty head, so the model starts close to reality
-    # Without this, it might start witha  tiny or huge variance, causing unstable gradients.
-    # compute training target variance
-    y_all = np.concatenate([y.numpy() for _, y in train_loader], axis=0)
+    # --- Initialization of uncertainty head ---
+    y_all = np.concatenate([y.numpy() for _, y, _ in train_loader], axis=0)
     init_var = np.var(y_all) + 1e-6
     with torch.no_grad():
         model.uncertainty_head.bias.data.fill_(init_var)
 
+    best_val_loss = float("inf")
+    best_state_dict = None
+    best_optimizer_state_dict = None
+    best_epoch = None
+    best_predictions = None
+
     for epoch in range(epochs):
-        model.train()
+        # --- Training ---
+        model.train()  # signal to layers like dropout to act differently
         train_loss = 0.0
-        for x_batch, y_batch in tqdm(train_loader, desc=f"Epoch {epoch+1} [train]"):
+        for x_batch, y_batch, _ in tqdm(train_loader, desc=f"Epoch {epoch+1} [train]"):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device).unsqueeze(1)
 
@@ -161,11 +167,13 @@ def train_numerical_model(
         train_loss /= len(train_loader.dataset)
 
         # --- Validation ---
-        model.eval()
+        model.eval()  # signal to layers like dropout to act differently
         val_loss = 0.0
-        preds, uncertainties, targets = [], [], []
-        with torch.no_grad():
-            for x_batch, y_batch in tqdm(test_loader, desc=f"Epoch {epoch+1} [val]"):
+        preds, uncertainties, targets, symbols, timestamps = [], [], [], [], []
+        with torch.no_grad():  # no backward passes
+            for x_batch, y_batch, meta in tqdm(
+                test_loader, desc=f"Epoch {epoch+1} [val]"
+            ):
                 x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device).unsqueeze(1)
 
@@ -173,24 +181,46 @@ def train_numerical_model(
                 loss = loss_fn(mu, y_batch, var)
                 val_loss += loss.item() * x_batch.size(0)
 
-                # save output of last validation epoch
-                # TODO choose epoch with the best validation loss?
-                if epoch == epochs - 1:
-                    preds.extend(mu.cpu().numpy().flatten())
-                    uncertainties.extend(var.cpu().numpy().flatten())
-                    targets.extend(y_batch.cpu().numpy().flatten())
+                preds.extend(mu.cpu().numpy().flatten())
+                uncertainties.extend(var.cpu().numpy().flatten())
+                targets.extend(y_batch.cpu().numpy().flatten())
+                symbols.extend(meta["symbol"])
+                timestamps.extend(meta["timestamp"])
 
         val_loss /= len(test_loader.dataset)
-
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
 
-    # save predictions + targets
-    predictions = pd.DataFrame(
-        {"target": targets, "prediction": preds, "uncertainty": uncertainties}
-    )
-    predictions.to_csv(f"validation_{epoch}.csv", index=False)
+        # --- Save best model + optimizer ---
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state_dict = copy.deepcopy(model.state_dict())
+            best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
+            best_epoch = epoch
+            best_predictions = pd.DataFrame(
+                {
+                    "symbol": symbols,
+                    "timestamp": timestamps,
+                    "target": targets,
+                    "prediction": preds,
+                    "uncertainty": uncertainties,
+                }
+            )
 
-    return val_loss, predictions
+    # restore best weights + optimizer state
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+        optimizer.load_state_dict(best_optimizer_state_dict)
+
+    # write CSV for the best epoch
+    best_predictions.to_csv("validation_best.csv", index=False)
+
+    return (
+        best_state_dict,
+        best_optimizer_state_dict,
+        best_epoch,
+        best_val_loss,
+        best_predictions,
+    )
 
 
 # --- Training loop for hybrid model (numerical + text) ---
@@ -289,33 +319,34 @@ def train_model(
     epochs=10,
     n_news=0,
     loss_fn=nn.GaussianNLLLoss(),
+    lr=1e-4,
 ):
-    # This is one function because the model tuner may want to run the creation / training in another process
-    # TODO there are better ways around ^. in ezmt parent_process=True, save model and return path, etc
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
 
-    final_val_loss, predictions = train_fn(
+    model_state_dict, optimizer_state_dict, epoch, val_loss, predictions = train_fn(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn
     )
-    model_path = save_model(model)
-    return model_path, final_val_loss, predictions
+
+    return model_state_dict, optimizer_state_dict, epoch, val_loss, predictions
 
 
 def load_model(
-    model_path,
+    model_state,
     structured_input_dim,
     n_hidden_layers,
     hidden_dim,
     dropout_rate,
     n_news,
     text_model_name=None,
+    lr=1e-4,
 ):
     # recreate architecture
     model = create_model(
@@ -326,30 +357,41 @@ def load_model(
         n_news,
         text_model_name=text_model_name,
     )
+
     # load and apply state
-    model.load_state_dict(torch.load(model_path))
-    return model
+    model.load_state_dict(model_state["model"])
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer.load_state_dict(model_state.get("optimizer", {}))
+    epoch = model_state.get("epoch", 0)
+
+    return model, optimizer, epoch
 
 
 def infer(model, dataset):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    model.eval()  # singal to layers like dropout to act differently
+    model.eval()
 
-    data_loader = DataLoader(
-        dataset, batch_size=32, shuffle=False
-    )  # TODO should determine max possible batch_size.
+    data_loader = DataLoader(dataset, batch_size=32, shuffle=False)
 
-    preds = []
-    uncertainties = []
-    with torch.no_grad():  # no backward passes
-        for x_batch, _ in tqdm(data_loader, desc=f"Running inference"):
+    preds, uncertainties, symbols, timestamps = [], [], [], []
+    with torch.no_grad():
+        for x_batch, _, meta in tqdm(data_loader, desc="Running inference"):
             x_batch = x_batch.to(device)
             mu, var = model(x_batch)
 
             preds.extend(mu.cpu().numpy().flatten())
             uncertainties.extend(var.cpu().numpy().flatten())
+            symbols.extend(meta["symbol"])
+            timestamps.extend(meta["timestamp"])
 
-    predictions = pd.DataFrame({"prediction": preds, "uncertainty": uncertainties})
+    predictions = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "timestamp": timestamps,
+            "prediction": preds,
+            "uncertainty": uncertainties,
+        }
+    )
 
     return predictions
