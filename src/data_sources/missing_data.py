@@ -200,7 +200,7 @@ async def fill_gaps(
     adjust_for_market_hours=False,
 ):
     if companies:
-        companies = await cmp.get(symbols=companies)
+        companies = await cmp.get(symbol=companies)
     else:
         companies = await cmp.get()
     tasks = []
