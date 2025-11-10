@@ -100,7 +100,7 @@ def clip_values(df, ignore_cols=None, column_limits=None):
     return df, column_limits
 
 
-def standardize_data(dataframe, ignore_cols=None, means=None, stds=None):
+def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
     """
     Standardize the numeric columns of the DataFrame, ignoring object dtype columns.
 
@@ -140,7 +140,6 @@ def standardize_data(dataframe, ignore_cols=None, means=None, stds=None):
 
 def unstandardize(predictions, means, stds):
     mean, std = means["target"], stds["target"]
-
     predictions["uncertainty"] = np.sqrt(
         predictions["uncertainty"]
     )  # variance to standard deviation
@@ -152,7 +151,6 @@ def unstandardize(predictions, means, stds):
     predictions["prediction"] = predictions["prediction"] * std + mean
     # scale factor is std. std dev (aka uncertainty) scales linearly with scale factor
     predictions["uncertainty"] = predictions["uncertainty"] * std**2
-
     dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     predictions.to_csv(f"predictions_{dt}.csv", index=False)
     return predictions
