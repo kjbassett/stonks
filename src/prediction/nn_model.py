@@ -340,6 +340,8 @@ def train_model(
 
 def load_model(
     model_state,
+    optimizer_state,
+    epoch,
     structured_input_dim,
     n_hidden_layers,
     hidden_dim,
@@ -359,10 +361,9 @@ def load_model(
     )
 
     # load and apply state
-    model.load_state_dict(model_state["model"])
+    model.load_state_dict(model_state)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    optimizer.load_state_dict(model_state.get("optimizer", {}))
-    epoch = model_state.get("epoch", 0)
+    optimizer.load_state_dict(optimizer_state)
 
     return model, optimizer, epoch
 
