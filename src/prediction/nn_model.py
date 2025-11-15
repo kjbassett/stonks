@@ -185,7 +185,7 @@ def train_numerical_model(
                 uncertainties.extend(var.cpu().numpy().flatten())
                 targets.extend(y_batch.cpu().numpy().flatten())
                 symbols.extend(meta["symbol"])
-                timestamps.extend(meta["timestamp"])
+                timestamps.extend(meta["timestamp"].numpy())
 
         val_loss /= len(test_loader.dataset)
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
@@ -324,6 +324,7 @@ def train_model(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    # TODO already shuffling here. Remove shuffling from create_datasets
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     model = model.to(device)
@@ -379,12 +380,16 @@ def infer(model, dataset):
     with torch.no_grad():
         for x_batch, _, meta in tqdm(data_loader, desc="Running inference"):
             x_batch = x_batch.to(device)
+            meta = {
+                k: v.numpy() if isinstance(v, torch.Tensor) else v
+                for k, v in meta.items()
+            }
             mu, var = model(x_batch)
 
             preds.extend(mu.cpu().numpy().flatten())
             uncertainties.extend(var.cpu().numpy().flatten())
             symbols.extend(meta["symbol"])
-            timestamps.extend(meta["timestamp"])
+            timestamps.extend(meta["timestamp"].numpy())
 
     predictions = pd.DataFrame(
         {

@@ -122,8 +122,8 @@ async def create_datasets(
         n_train = int(split * len(structured_data))
         train, test = structured_data.iloc[:n_train], structured_data.iloc[n_train:]
         if shuffle_rows:
-            # we only shuffle training data because shuffling test in with train would be different
-            # from inference, which will be done on a batch of the newest data.
+            # we shuffle after splitting because we don't want to mix in the test data with our train data.
+            # timestamps close to our test timestamps are likely to have similar data, so this prevents overfitting
             train = shuffle(train)
         return [
             create_dataset(train, *news_args),
