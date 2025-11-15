@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+from webrock.decorator import plugin
 
 
 def simulate_long_only(df, ratio_cutoff, capital=1.0, transaction_cost=0.0):
@@ -14,19 +16,21 @@ def simulate_long_only(df, ratio_cutoff, capital=1.0, transaction_cost=0.0):
         transaction_cost (float): per-trade round-trip cost expressed as fraction of capital per trade (optional).
     """
     assert {"prediction", "uncertainty", "target", "timestamp"}.issubset(df.columns)
+    print("Simulating")
     df2 = df.copy()
     # ratio only for positive prediction (long-only)
     df2["ratio"] = df2["prediction"] / (df2["uncertainty"] + 1e-9)
 
     # group by timestamp and compute per-timestamp portfolio return
     timestamps = sorted(df2["timestamp"].unique())
+    print(f"{len(timestamps)} timestamps to simulate")
     port_returns = []
     capital_now = float(capital)
 
     # ensure ordering by timestamp
     grouped = df2.groupby("timestamp")
 
-    for t in timestamps:
+    for t in tqdm(timestamps, desc=f"Ratio_cutoff {ratio_cutoff}, {capital_now}"):
         group = grouped.get_group(t)
         # select long candidates
         selected = group[(group["prediction"] > 0) & (group["ratio"] >= ratio_cutoff)]
@@ -51,20 +55,22 @@ def simulate_long_only(df, ratio_cutoff, capital=1.0, transaction_cost=0.0):
 
         r = round(r, 6)
         capital_now = capital_now * (1.0 + r)
-        port_returns.append(
-            {
-                "timestamp": t,
-                "percentage_change": r,
-                "n_selected": m,
-                "new_capital": capital_now,
-            }
-        )
-
-    port_returns = pd.DataFrame(port_returns).set_index("timestamp")
+        if r > 0:
+            print(r, capital_now)
+    #     port_returns.append(
+    #         {
+    #             "timestamp": t,
+    #             "percentage_change": r,
+    #             "n_selected": m,
+    #             "new_capital": capital_now,
+    #         }
+    #     )
+    #
+    # port_returns = pd.DataFrame(port_returns).set_index("timestamp")
 
     total_return_pct = capital_now / capital - 1.0
 
-    return total_return_pct, port_returns
+    return total_return_pct
 
 
 def tune_ratio_cutoff(
@@ -105,6 +111,7 @@ def tune_ratio_cutoff(
     best_cutoff = np.inf
     best_returns = 0
     for cutoff in candidate_cutoffs:
+        print(f"testing cutoff {cutoff}")
         returns = simulate_long_only(
             dfc, ratio_cutoff=cutoff, capital=capital, transaction_cost=transaction_cost
         )
@@ -113,3 +120,27 @@ def tune_ratio_cutoff(
             best_returns = returns
 
     return best_cutoff, best_returns
+
+
+def apply_ratio_cutoff(df, ratio_cutoff):
+    return df[df["prediction"] / df["uncertainty"] > ratio_cutoff]
+
+
+@plugin()
+def temp_tune_ratio_cutoff(
+    df_path: str,
+    n_candidates: int = 50,
+    capital: float = 1.0,
+    transaction_cost: float = 0.0,
+    min_ratio_percentile: int = 50,
+):
+    df = pd.read_csv(df_path)
+    cutoff, returns = tune_ratio_cutoff(
+        df,
+        candidate_cutoffs=None,
+        n_candidates=n_candidates,
+        capital=capital,
+        transaction_cost=transaction_cost,
+        min_ratio_percentile=min_ratio_percentile,
+    )
+    print(cutoff, returns)

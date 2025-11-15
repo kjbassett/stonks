@@ -11,19 +11,22 @@ from src.prediction.pipeline_components import (
     standardize_data,
     one_hot_encode,
     impute,
-    save_data,
     get_num_x_columns,
     unstandardize,
     load_data,
     save_torch_state,
     load_torch_state,
 )
+from src.prediction.trading_strategy import tune_ratio_cutoff, apply_ratio_cutoff
 from webrock.decorator import plugin
 
 
-@plugin(model_name={"ui_element": "textbox"})
+@plugin()
 async def run_genetic_algorithm(
-    run_name: str, min_timestamp: int = 0, max_timestamp: int = 0
+    run_name: str,
+    min_timestamp: int = 0,
+    max_timestamp: int = 0,
+    log_states: bool = False,
 ):
     # define possible choices for all hyperparameters
     model_space, hyperparam_space, save_load_funcs = create_model_space(
@@ -33,7 +36,7 @@ async def run_genetic_algorithm(
     mt = ModelTuner(
         model_space, hyperparam_space, save_load_funcs, None, "target", 1, 1
     )
-    model = await mt.run(run_name)
+    model = await mt.run(run_name, log_states=log_states)
     model.save()
 
 
@@ -245,14 +248,6 @@ def create_model_space(max_timestamp, min_timestamp):
             },
         },
         {
-            "name": "save_data",
-            "train": {
-                "func": save_data,
-                "args": ["structured_data", "text_data"],
-                "outputs": [],
-            },
-        },
-        {
             "name": "create_datasets",
             "train": {
                 "func": create_datasets,
@@ -306,6 +301,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "args": [
                     "model_state_dict",
                     "optimizer_state_dict",
+                    "epoch",
                     "structured_input_dim",
                     "n_hidden_layers",
                     "hidden_dim",
@@ -347,8 +343,24 @@ def create_model_space(max_timestamp, min_timestamp):
             "name": "unstandardize",
             "func": unstandardize,
             "args": ["predictions", "means", "stds"],
+            "outputs": "predictions",
             "run_in_parent_process": True,  # TODO this step should not have to pickle model and pass to another process
             # TODO Also model shouldn't be pickled in the first place
+        },
+        {
+            "name": "trading_strategy",
+            "train": {
+                "func": tune_ratio_cutoff,
+                "args": "predictions",
+                "outputs": ["ratio_cutoff", "score"],
+                "run_in_parent_process": True,
+            },
+            "inference": {
+                "func": apply_ratio_cutoff,
+                "args": ["predictions", "ratio_cutoff"],
+                "outputs": ["recommendations"],
+                "run_in_parent_process": True,
+            },
         },
     ]
     return model_space, hyperparam_space, save_load_funcs
