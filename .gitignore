@@ -1,6 +1,7 @@
 organisms
 todo.txt
 config.py
+config.txt
 models/*
 .idea/
 keys.txt
