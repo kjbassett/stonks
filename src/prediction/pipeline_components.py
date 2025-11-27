@@ -22,6 +22,7 @@ async def load_data(
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
+    keep_latest_only: bool = False,
 ):
     if min_timestamp < 0:
         min_timestamp = time.time() + min_timestamp
@@ -39,6 +40,7 @@ async def load_data(
         include_cv_close_ratio,
         include_avg_volume_ratio,
         include_cv_volume_ratio,
+        keep_latest_only,
         print_query=True,
     )
     if num_news > 0:

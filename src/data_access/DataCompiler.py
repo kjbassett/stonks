@@ -23,6 +23,7 @@ class DataCompiler(BaseDAO):
         include_cv_close_ratio: bool = True,
         include_avg_volume_ratio: bool = True,
         include_cv_volume_ratio: bool = True,
+        keep_latest_only: bool = False,
         print_query: bool = False,
     ) -> pd.DataFrame:
         query = construct_query(
@@ -38,6 +39,7 @@ class DataCompiler(BaseDAO):
             include_cv_close_ratio,
             include_avg_volume_ratio,
             include_cv_volume_ratio,
+            keep_latest_only=keep_latest_only,
         )
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
@@ -61,22 +63,24 @@ def construct_query(
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
+    keep_latest_only: bool = False,
 ) -> str:
     ctes = []  # common table expressions
     columns = ["c.symbol"]
     joins = ["JOIN Company c ON t.company_id = c.id"]
     filters = []
     if aggregation_interval == "minute":
+        table = "TradingData"
         print("minute aggregations are untested!")
         start_col = end_col = "t.timestamp"
-
         columns += [
             start_col,
             "t.vw_average",
             "i.name AS industry",
             "io.name AS industry_office",
         ]
-    elif aggregation_interval == "hour":
+    else:
+        table = "TradingDataAggregations"
         start_col = "t.start"
         end_col = "t.end"
         columns += [
@@ -98,6 +102,26 @@ def construct_query(
         "JOIN Industry i ON c.industry_id = i.id",
         "JOIN IndustryOffice io ON i.office_id = io.id",
     ]
+
+    # keep latest timestamp per company
+    if keep_latest_only:
+        if max_timestamp:
+            max_ts_filter = f"WHERE {end_col} <= {max_timestamp}"
+        else:
+            max_ts_filter = ""
+        joins.append(
+            f"""
+            -- keep latest timestamp only
+            INNER JOIN (
+                SELECT company_id, MAX({end_col}) as max_ts 
+                FROM {table}
+                {max_ts_filter}
+                GROUP BY company_id
+            ) latest
+            ON t.company_id = latest.company_id
+            AND t.{end_col} = latest.max_ts
+            """
+        )
 
     # target column
     columns.append(construct_target_column(aggregation_interval, price_change_offset))
@@ -145,7 +169,7 @@ def construct_query(
     query = f"""
 {ctes} 
 SELECT {columns}
-FROM TradingData{"Aggregation" if aggregation_interval != "minute" else ""} t
+FROM {table} t
 {joins}
 {filters}
 ORDER BY {end_col}

@@ -153,6 +153,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_cv_close_ratio": "include_cv_close_ratio",
                     "include_avg_volume_ratio": "include_avg_volume_ratio",
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
+                    "keep_latest_only": True,
                 },
                 "outputs": ["structured_data", "text_data"],
             },

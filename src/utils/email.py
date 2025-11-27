@@ -7,6 +7,8 @@ from webrock.decorator import plugin
 
 @plugin()
 def send_email(subject: str, body: str, recipient: str):
+    print(f"Sending message to {recipient}")
+    print(f"Subject: {subject} Body: {body}")
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = CONFIG["gmail_address"]
