@@ -92,7 +92,7 @@ def adjust_gap(row):
     i2 = all_open_dates.searchsorted(d2)
     if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
         raise ValueError(f"{d1} is not in {all_open_dates}")
-    if i2 == len(all_open_dates) or all_open_dates[i2] != d2:
+    if all_open_dates[i2] != d2:
         raise ValueError(f"{d2} is not in {all_open_dates}")
     open_days = i2 - i1
     closed = row["days_apart"] - open_days
@@ -180,11 +180,10 @@ async def fill_gap(
 def break_large_gaps(gaps, max_gap_size):
     new_gaps = []
     for gap in gaps:
-        if gap["end"] - gap["start"] > max_gap_size:
-            s = gap["start"]
-            while s < gap["end"]:
-                new_gaps.append({"start": s, "end": min(s + max_gap_size, gap["end"])})
-                s += max_gap_size
+        s = gap["start"]
+        while s < gap["end"]:
+            new_gaps.append({"start": s, "end": min(s + max_gap_size, gap["end"])})
+            s += max_gap_size
     return new_gaps
 
 
