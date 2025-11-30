@@ -19,6 +19,7 @@ class DataCompiler(BaseDAO):
         num_windows: int = 0,
         num_news: int = 0,
         news_history_threshold: int = 24 * 60 * 60,
+        include_target: bool = True,
         include_close_ratio: bool = True,
         include_cv_close_ratio: bool = True,
         include_avg_volume_ratio: bool = True,
@@ -35,6 +36,7 @@ class DataCompiler(BaseDAO):
             num_windows,
             num_news,
             news_history_threshold,
+            include_target,
             include_close_ratio,
             include_cv_close_ratio,
             include_avg_volume_ratio,
@@ -44,7 +46,8 @@ class DataCompiler(BaseDAO):
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
-        data = data[~data["target"].isnull()]
+        if "rn" in data.columns:
+            data = data.drop(columns=["rn"])
         data.to_csv("data.csv", index=False)
         print(data.dtypes)
         return data
@@ -59,16 +62,52 @@ def construct_query(
     num_windows: int = 0,
     num_news: int = 0,
     news_history_threshold: int = 86400,
+    include_target: bool = True,
     include_close_ratio: bool = True,
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
     keep_latest_only: bool = False,
 ) -> str:
+    inner_query = construct_inner_query(
+        aggregation_interval,
+        price_change_offset,  # 1 day in seconds x 5
+        min_timestamp,
+        max_timestamp,
+        max_window,
+        num_windows,
+        num_news,
+        news_history_threshold,
+        include_target,
+        include_close_ratio,
+        include_cv_close_ratio,
+        include_avg_volume_ratio,
+        include_cv_volume_ratio,
+    )
+    query = construct_full_query(inner_query, keep_latest_only)
+    return query
+
+
+def construct_inner_query(
+    aggregation_interval: str,
+    price_change_offset: int = 86400 * 5,  # 1 day in seconds x 5
+    min_timestamp: int = 0,
+    max_timestamp: int = 0,
+    max_window: int = 0,
+    num_windows: int = 0,
+    num_news: int = 0,
+    news_history_threshold: int = 86400,
+    include_target: bool = True,
+    include_close_ratio: bool = True,
+    include_cv_close_ratio: bool = True,
+    include_avg_volume_ratio: bool = True,
+    include_cv_volume_ratio: bool = True,
+) -> str:
     ctes = []  # common table expressions
     columns = ["c.symbol"]
     joins = ["JOIN Company c ON t.company_id = c.id"]
     filters = []
+
     if aggregation_interval == "minute":
         table = "TradingData"
         print("minute aggregations are untested!")
@@ -80,7 +119,7 @@ def construct_query(
             "io.name AS industry_office",
         ]
     else:
-        table = "TradingDataAggregations"
+        table = "TradingDataAggregation"
         start_col = "t.start"
         end_col = "t.end"
         columns += [
@@ -103,28 +142,11 @@ def construct_query(
         "JOIN IndustryOffice io ON i.office_id = io.id",
     ]
 
-    # keep latest timestamp per company
-    if keep_latest_only:
-        if max_timestamp:
-            max_ts_filter = f"WHERE {end_col} <= {max_timestamp}"
-        else:
-            max_ts_filter = ""
-        joins.append(
-            f"""
-            -- keep latest timestamp only
-            INNER JOIN (
-                SELECT company_id, MAX({end_col}) as max_ts 
-                FROM {table}
-                {max_ts_filter}
-                GROUP BY company_id
-            ) latest
-            ON t.company_id = latest.company_id
-            AND t.{end_col} = latest.max_ts
-            """
-        )
-
     # target column
-    columns.append(construct_target_column(aggregation_interval, price_change_offset))
+    if include_target:
+        columns.append(
+            construct_target_column(aggregation_interval, price_change_offset)
+        )
 
     # hour, day of week, and month of year
     columns += construct_dt_columns(aggregation_interval)
@@ -362,6 +384,24 @@ def construct_calculated_columns(
                 f"(t.{col} / LAG({col}, {offset}) OVER (PARTITION BY t.company_id ORDER BY {ts_col})) AS {col}_ratio_lag_{offset}"
             )
     return calc_columns
+
+
+def construct_full_query(inner_query, keep_latest_only):
+    if not keep_latest_only:
+        return inner_query
+    query = f"""
+    SELECT *
+    FROM (
+        SELECT *,
+               ROW_NUMBER() OVER (
+                   PARTITION BY symbol
+                   ORDER BY timestamp DESC
+               ) AS rn
+        FROM ({inner_query})
+    )
+    WHERE rn = 1;
+    """
+    return query
 
 
 # TODO
