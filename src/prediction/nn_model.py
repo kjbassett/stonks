@@ -389,7 +389,7 @@ def infer(model, dataset):
             preds.extend(mu.cpu().numpy().flatten())
             uncertainties.extend(var.cpu().numpy().flatten())
             symbols.extend(meta["symbol"])
-            timestamps.extend(meta["timestamp"].numpy())
+            timestamps.extend(meta["timestamp"])
 
     predictions = pd.DataFrame(
         {
