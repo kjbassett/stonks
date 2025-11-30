@@ -18,6 +18,7 @@ async def load_data(
     num_windows: int = 0,
     num_news: int = 0,
     news_history_threshold: int = 24 * 60 * 60,
+    include_target: bool = True,
     include_close_ratio: bool = True,
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
@@ -36,6 +37,7 @@ async def load_data(
         num_windows,
         num_news,
         news_history_threshold,
+        include_target,
         include_close_ratio,
         include_cv_close_ratio,
         include_avg_volume_ratio,
@@ -132,10 +134,14 @@ def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
     if stds is None:
         stds = dataframe[numeric_cols].std().to_dict()
 
+    # inference doesn't have the target column
+    _means = {k: v for k, v in means.items() if k in numeric_cols}
+    _stds = {k: v for k, v in stds.items() if k in numeric_cols}
+
     # Use .loc to avoid SettingWithCopyWarning
     dataframe.loc[:, numeric_cols] = (
-        dataframe[numeric_cols] - pd.Series(means)
-    ) / pd.Series(stds)
+        dataframe[numeric_cols] - pd.Series(_means)
+    ) / pd.Series(_stds)
 
     return dataframe, means, stds
 

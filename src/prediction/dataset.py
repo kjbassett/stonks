@@ -83,14 +83,17 @@ class HybridDataset(Dataset):
 
 
 class NumericalDataset(Dataset):
-    def __init__(self, data):
+    def __init__(self, data: pd.DataFrame):
         self.symbols = data["symbol"].values
         self.timestamps = data["timestamp"].values
         self.x = torch.tensor(
-            data.drop(columns=["target", "symbol", "timestamp"]).values,
+            data[data.columns.difference(["target", "symbol", "timestamp"])].values,
             dtype=torch.float32,
         )
-        self.y = torch.tensor(data["target"].values, dtype=torch.float32)
+        if "target" in data.columns:
+            self.y = torch.tensor(data["target"].values, dtype=torch.float32)
+        else:
+            self.y = torch.full((len(data),), float("nan"), dtype=torch.float32)
 
     def __len__(self):
         return len(self.x)

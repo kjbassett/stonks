@@ -149,6 +149,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "num_windows": "num_windows",
                     "num_news": "num_news",
                     "news_history_threshold": "news_history_threshold",
+                    "include_target": False,
                     "include_close_ratio": "include_close_ratio",
                     "include_cv_close_ratio": "include_cv_close_ratio",
                     "include_avg_volume_ratio": "include_avg_volume_ratio",
@@ -173,7 +174,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": filter_out_missing_data,
                 "args": ["structured_data", "missing_data_%_threshold"],
                 "kwargs": {
-                    "ignore_cols": ["symbol", "timestamp", "target"],
+                    "ignore_cols": ["symbol", "timestamp"],
                     "no_tolerance_cols": ["symbol", "timestamp"],
                 },
                 "outputs": "structured_data",
@@ -223,7 +224,7 @@ def create_model_space(max_timestamp, min_timestamp):
             "inference": {
                 "func": impute,
                 "args": ["structured_data", "imputer"],
-                "kwargs": {"ignore_cols": ["target", "symbol", "timestamp"]},
+                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
                 "outputs": ["structured_data", "imputer"],
             },
         },
@@ -233,7 +234,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": one_hot_encode,
                 "args": ["structured_data"],
                 "kwargs": {
-                    "ignore_cols": ["symbol", "timestamp"],
+                    "ignore_cols": ["target", "symbol", "timestamp"],
                     "max_categories": "max_one_hot_categories",
                 },
                 "outputs": ["structured_data", "one_hot_encoder"],
