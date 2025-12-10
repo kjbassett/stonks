@@ -4,7 +4,7 @@ from functools import partial
 
 import pandas as pd
 from config import CONFIG
-from httpcore import ReadTimeout
+from httpx import ReadTimeout
 from src.data_access.dao_manager import dao_manager
 from src.utils.market_calendar import (
     latest_market_time,
@@ -92,8 +92,6 @@ def adjust_gap(row):
     i2 = all_open_dates.searchsorted(d2)
     if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
         raise ValueError(f"{d1} is not in {all_open_dates}")
-    if all_open_dates[i2] != d2:
-        raise ValueError(f"{d2} is not in {all_open_dates}")
     open_days = i2 - i1
     closed = row["days_apart"] - open_days
     # 28800 is the time between the end of one market day and the start of another. 8pm to 4am = 8 hours * 3600 = 28800
@@ -157,24 +155,27 @@ async def fill_gap(
     cpy: pd.Series,
     gap: dict,
 ):
-    now = datetime.datetime.now().timestamp()
-    latest_api_ts = int(now - now % 60) - 60 * 15  # API is 15 minutes behind real time
-    start = int(gap["start"])
-    end = min(latest_api_ts, int(gap["end"]))
-    try:
-        data = await get_data_func(client, cpy["symbol"], int(start), int(end))
-    except ReadTimeout:
-        print("Getting data timed out")
-        return
+    async with call_limiter:
+        now = datetime.datetime.now().timestamp()
+        latest_api_ts = (
+            int(now - now % 60) - 60 * 15
+        )  # API is 15 minutes behind real time
+        start = int(gap["start"])
+        end = min(latest_api_ts, int(gap["end"]))
+        try:
+            data = await get_data_func(client, cpy["symbol"], int(start), int(end))
+        except ReadTimeout:
+            print("Getting data timed out")
+            return
 
-    # save_new_data returns the number of rows inserted, so if it's 0,
-    #   we don't want to try this gap again. We save the record of our attempt here
-    if data:
-        await save_data_func(cpy["id"], data)
+        # save_new_data returns the number of rows inserted, so if it's 0,
+        #   we don't want to try this gap again. We save the record of our attempt here
+        if data:
+            await save_data_func(cpy["id"], data)
 
-    # TODO should I save every attempted query or just the ones that returned no data? How much data do I expect to lose?
-    ptq_table = table + "AttemptedQueries"
-    await dao_manager.get_dao(ptq_table).insert((cpy["id"], start, end))
+        # TODO should I save every attempted query or just the ones that returned no data? How much data do I expect to lose?
+        ptq_table = table + "AttemptedQueries"
+        await dao_manager.get_dao(ptq_table).insert((cpy["id"], start, end))
 
 
 def break_large_gaps(gaps, max_gap_size):
@@ -218,12 +219,12 @@ async def fill_gaps(
                 f"Gap {g + 1}/{n_gaps}, {gap['start']} - {gap['end']}, {gap['end'] - gap['start']} seconds"
             )
             # Create a task for each gap handling
-            async with call_limiter:
-                task = asyncio.create_task(
-                    fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
-                )
+            task = asyncio.create_task(
+                fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
+            )
             tasks.append(task)
     # Wait for all tasks to complete
     print("WAITING FOR TASKS")
     await asyncio.gather(*tasks)
     print("TASKS COMPLETE")
+    tasks = []
