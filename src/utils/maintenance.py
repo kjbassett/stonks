@@ -1,16 +1,11 @@
-from datetime import datetime, time
-
-from webrock.decorator import plugin
-
-from config import CONFIG
 from src.data_access.dao_manager import dao_manager
+from src.utils.market_calendar import earliest_market_time
+from webrock.decorator import plugin
 
 
 @plugin()
 async def clean_data():
-    await dao_manager.clean_data(
-        datetime.combine(CONFIG["min_date"], time()).timestamp()
-    )
+    await dao_manager.clean_data(earliest_market_time())
 
 
 @plugin()

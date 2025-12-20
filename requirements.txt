@@ -7,7 +7,7 @@ requests
 sanic
 websockets
 sanic_jinja2
-numpy==1.26.4
+numpy
 urllib3
 python-dateutil
 asyncpraw
@@ -20,6 +20,8 @@ matplotlib
 aiosqlite
 MissForest
 lightgbm
-git+https://github.com/kjbassett/webrock@dev
+git+https://github.com/kjbassett/webrock@feature/scheduler
 torch
 torchvision
+tqdm
+httpx

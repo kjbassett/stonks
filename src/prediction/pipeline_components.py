@@ -157,7 +157,8 @@ def unstandardize(predictions, means, stds):
         predictions["target"] = predictions["target"] * std + mean
     # unscale prediction
     predictions["prediction"] = predictions["prediction"] * std + mean
-    # scale factor is std. std dev (aka uncertainty) scales linearly with scale factor
+    # scale factor is std. std dev scales linearly with scale factor.
+    # So variance (std dev squared) scales with scale factor squard
     predictions["uncertainty"] = predictions["uncertainty"] * std**2
     dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     predictions.to_csv(f"predictions_{dt}.csv", index=False)

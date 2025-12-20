@@ -1,10 +1,9 @@
 import asyncio
 
 import polygon
-from webrock.decorator import plugin
-
 from src.data_access.Company import Company
-from src.utils.project_utilities import get_key
+from src.utils.project_utilities import config
+from webrock.decorator import plugin
 
 
 # Async function for WebSocket client
@@ -28,7 +27,7 @@ async def main(db, companies: list | None = None):
         ]
         await db.insert("TradingData", data)
 
-    api_key = get_key("polygon_io")
+    api_key = config["polygon_io"]
     stream_client = polygon.AsyncStreamClient(api_key, "stocks")
 
     try:

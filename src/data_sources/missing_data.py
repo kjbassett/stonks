@@ -3,20 +3,16 @@ import datetime
 from functools import partial
 
 import pandas as pd
-from config import CONFIG
 from httpx import ReadTimeout
 from src.data_access.dao_manager import dao_manager
 from src.utils.market_calendar import (
+    earliest_market_time,
     latest_market_time,
-    market_date_delta,
-    all_open_dates,
+    get_open_dates,
+    get_min_date,
 )
 from src.utils.project_utilities import call_limiter
 
-min_market_date = market_date_delta(CONFIG["min_date"])
-min_market_ts = int(
-    datetime.datetime.combine(min_market_date, datetime.time(4)).timestamp()
-)
 cmp = dao_manager.get_dao("Company")
 
 
@@ -24,7 +20,7 @@ async def find_gaps(
     current_data: pd.DataFrame, min_gap_size: int, adjust_for_market_hours: bool
 ):
     # add dummy timestamps and end of time range to get all gaps
-    ends = [min_market_ts, latest_market_time()]
+    ends = [earliest_market_time(), latest_market_time()]
     # TODO is it faster to test if there are gaps on the ends before concat?
     current_data = pd.concat([current_data, pd.DataFrame({"timestamp": ends})])
     current_data = current_data.sort_values(by="timestamp")
@@ -56,13 +52,20 @@ async def find_gaps(
 
     current_data["gap"] = current_data["timestamp"] - current_data["previous"]
 
-    # We filter out gaps before and after adjusting because adjusting can only make it smaller and is an expensive operation
+    # We filter out gaps that are already too small before adjusting because
+    # adjusting can only make it smaller and is an expensive operation.
+    # We also filter out after adjusting
     current_data = current_data[current_data["gap"] > min_gap_size]
+
     if adjust_for_market_hours:
-        current_data["gap"] = current_data.apply(partial(adjust_gap), axis=1)
+        all_open_dates = get_open_dates(get_min_date(), datetime.datetime.today())
+        current_data["gap"] = current_data.apply(
+            partial(adjust_gap, all_open_dates),
+            axis=1,
+        )
 
     # We are trying to find gaps in the data. Our "endpoints" for our gaps are places where THERE IS DATA.
-    # Therefore we add 60s to the beginning and subtract 60s from the end of each gap.
+    # Therefore, we add 60s to the beginning and subtract 60s from the end of each gap.
     # (smallest granularity of data is 1min)
     # unless either t1 or t2 are dummy timestamps that were added to make gaps at the ends detectable
 
@@ -79,7 +82,7 @@ async def find_gaps(
     return gaps
 
 
-def adjust_gap(row):
+def adjust_gap(open_dates, row):
     if row["days_apart"] == 0:
         return row["gap"]
 
@@ -88,10 +91,10 @@ def adjust_gap(row):
     d1 = row["prev_date"].date()
     d2 = row["date"].date()
     # Get index of previous and current day from array of all open dates
-    i1 = all_open_dates.searchsorted(d1)  # todo memoize
-    i2 = all_open_dates.searchsorted(d2)
-    if i1 == len(all_open_dates) or all_open_dates[i1] != d1:
-        raise ValueError(f"{d1} is not in {all_open_dates}")
+    i1 = open_dates.searchsorted(d1)  # todo memoize
+    i2 = open_dates.searchsorted(d2)
+    if i1 == len(open_dates) or open_dates[i1] != d1:
+        raise ValueError(f"{d1} is not in {open_dates}")
     open_days = i2 - i1
     closed = row["days_apart"] - open_days
     # 28800 is the time between the end of one market day and the start of another. 8pm to 4am = 8 hours * 3600 = 28800
@@ -100,7 +103,7 @@ def adjust_gap(row):
     return row["gap"]
 
 
-async def filter_out_past_queries(table, gaps, company_id):
+async def filter_out_past_queries(table, gaps, company_id, min_market_ts):
     past_query_table = table + "AttemptedQueries"
     # Check if gap already in corresponding gap table
     # ptq = previously tried queries
@@ -173,7 +176,8 @@ async def fill_gap(
         if data:
             await save_data_func(cpy["id"], data)
 
-        # TODO should I save every attempted query or just the ones that returned no data? How much data do I expect to lose?
+        # TODO should I save every attempted query or just the ones that returned no data?
+        #  How much data do I expect to lose?
         ptq_table = table + "AttemptedQueries"
         await dao_manager.get_dao(ptq_table).insert((cpy["id"], start, end))
 
@@ -206,10 +210,11 @@ async def fill_gaps(
     tasks = []
     n_cpy = len(companies)
     for c, cpy in companies.iterrows():
+        min_market_ts = earliest_market_time()
         print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
         current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
-        gaps = await filter_out_past_queries(table, gaps, cpy["id"])
+        gaps = await filter_out_past_queries(table, gaps, cpy["id"], min_market_ts)
         if max_gap_size:
             gaps = break_large_gaps(gaps, max_gap_size)
         n_gaps = len(gaps)
@@ -227,4 +232,3 @@ async def fill_gaps(
     print("WAITING FOR TASKS")
     await asyncio.gather(*tasks)
     print("TASKS COMPLETE")
-    tasks = []

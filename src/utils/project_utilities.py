@@ -1,14 +1,8 @@
-from config import CONFIG
 import asyncio
+import json
 
-
-def get_key(key_name):
-    with open(CONFIG["root_path"] + "/keys.txt", "r") as f:
-        for line in f:
-            name, key = line.strip().split("=")
-            if name == key_name:
-                return key
-    raise ValueError(f"No key found for key named: {key_name}")
+with open("config.json", "r") as f:
+    config = json.load(f)
 
 
 call_limiter = asyncio.Semaphore(32)

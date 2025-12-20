@@ -2,12 +2,11 @@ import asyncio
 from datetime import datetime
 
 from polygon import ReferenceClient
-from webrock.decorator import plugin
-
 from src.data_access.dao_manager import dao_manager
 from src.data_sources.missing_data import fill_gaps
 from src.data_sources.tickers import get_or_create_company
-from src.utils.project_utilities import get_key
+from src.utils.project_utilities import config
+from webrock.decorator import plugin
 
 cmp = dao_manager.get_dao("Company")
 news = dao_manager.get_dao("News")
@@ -75,7 +74,7 @@ async def save_data(company_id, data):
 @plugin()
 async def fill_missing(companies: str = ""):
     try:
-        async with ReferenceClient(get_key("polygon_io"), True) as client:
+        async with ReferenceClient(config["polygon_io"], True) as client:
             await fill_gaps(
                 client,
                 "News",
@@ -94,5 +93,5 @@ async def fill_missing(companies: str = ""):
 async def query_api(symbol: str, start: int, end: int):
     if symbol in ("all", "*"):
         symbol = ""
-    async with ReferenceClient(get_key("polygon_io"), True) as client:
+    async with ReferenceClient(config["polygon_io"], True) as client:
         return await _get_data(client, symbol, start, end)

@@ -2,11 +2,10 @@ import asyncio
 import datetime
 
 from polygon import StocksClient
-from webrock.decorator import plugin
-
 from src.data_access.dao_manager import dao_manager
 from src.data_sources.missing_data import fill_gaps
-from src.utils.project_utilities import get_key
+from src.utils.project_utilities import config
+from webrock.decorator import plugin
 
 td = dao_manager.get_dao("TradingData")
 cp = dao_manager.get_dao("Company")
@@ -50,7 +49,7 @@ async def save_data(company_id, data):
 @plugin()
 async def fill_missing(companies: str = ""):
     try:
-        async with StocksClient(get_key("polygon_io"), True) as client:
+        async with StocksClient(config["polygon_io"], True) as client:
             await fill_gaps(
                 client,
                 "TradingData",
@@ -70,5 +69,5 @@ async def fill_missing(companies: str = ""):
 async def query_api(symbol: str, start: int, end: int):
     if symbol in ("all", "*"):
         symbol = ""
-    async with StocksClient(get_key("polygon_io"), True) as client:
+    async with StocksClient(config["polygon_io"], True) as client:
         return await _get_data(client, symbol, start, end)

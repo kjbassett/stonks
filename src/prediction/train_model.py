@@ -73,7 +73,7 @@ def create_model_space(max_timestamp, min_timestamp):
         # when aggregation is minutes, seconds ahead of current row for calculating percent changes
         # when aggregation is hours, rows ahead of current row for calculating percent changes
         # TODO fix this ^ nonsense. Go to rows only because it skips over closed market hours
-        "price_change_offset": DiscreteOrdinal(range(1, 9)),
+        "price_change_offset": DiscreteOrdinal([8]),  # DiscreteOrdinal(range(1, 9)),
         "max_window": DiscreteOrdinal(
             range(3, 11)
         ),  # maximum row behind current row to see trends

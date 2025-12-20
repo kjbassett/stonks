@@ -1,8 +1,7 @@
 import asyncpraw
-from webrock.decorator import plugin
-
 from src.data_access.dao_manager import dao_manager
-from src.utils.project_utilities import get_key
+from src.utils.project_utilities import config
+from webrock.decorator import plugin
 
 reddit_dao = dao_manager.get_dao("Reddit")
 
@@ -58,11 +57,11 @@ async def main():
     subs = ["wallstreetbets", "stocks", "StockMarket", "investing"]
 
     reddit = asyncpraw.Reddit(
-        client_id=get_key("reddit_id"),
-        client_secret=get_key("reddit_secret"),
-        password=get_key("reddit_password"),
+        client_id=config["reddit_id"],
+        client_secret=config["reddit_secret"],
+        password=config["reddit_password"],
         user_agent="stonks",
-        username=get_key("reddit_username"),
+        username=config["reddit_username"],
     )
 
     await fetch_posts_and_comments(reddit, subs)

@@ -1,7 +1,7 @@
 import asyncio
-from datetime import datetime, time
+from datetime import datetime
 
-from config import CONFIG
+from src.utils.market_calendar import earliest_market_time
 from webrock.decorator import plugin
 
 
@@ -13,9 +13,7 @@ async def update_hourly_aggregations(companies: str = None, hours_per_query: int
     cmp = dao_manager.get_dao("Company")
     window = 3600 * hours_per_query
     tda = dao_manager.get_dao("TradingDataAggregation")
-    earliest_timestamp = int(
-        datetime.combine(CONFIG["min_date"], time()).timestamp()
-    )  # midnight of earliest date in seconds since epoch
+    earliest_timestamp = earliest_market_time()
     if companies:
         companies = await cmp.get(symbol=companies)
     else:

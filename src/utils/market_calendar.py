@@ -3,8 +3,12 @@ from functools import cache
 
 import pandas as pd
 import pandas_market_calendars
+from src.utils.project_utilities import config
 
-from config import CONFIG
+
+def get_min_date():
+    earliest = datetime.date.today() - datetime.timedelta(days=config["max_data_age"])
+    return market_date_delta(earliest)
 
 
 def is_open(date):
@@ -57,6 +61,12 @@ def get_open_dates(start, end):
     return cal
 
 
+def earliest_market_time():
+    min_date = get_min_date()
+    min_time = datetime.datetime.combine(min_date, datetime.time(4, 0, 0))
+    return int(min_time.timestamp())
+
+
 def latest_market_time(delay=900):
     # data delayed by 15 minutes, extra 5 minutes buffer
     lmt1 = datetime.datetime.now().timestamp() - delay - 300
@@ -67,19 +77,11 @@ def latest_market_time(delay=900):
     return int(min(lmt1, lmt2))
 
 
-all_open_dates = get_open_dates(CONFIG["min_date"], datetime.datetime.today())
-
-
-@cache
-def filter_open_dates(start_date, end_date):
-    return all_open_dates[(all_open_dates >= start_date) & (all_open_dates <= end_date)]
-
-
 if __name__ == "__main__":
     print(get_open_dates(datetime.date(2023, 8, 1), datetime.datetime.today()))
     print(latest_market_time())
-    cal = pandas_market_calendars.get_calendar("NYSE")
-    cal = cal.schedule(
+    calendar = pandas_market_calendars.get_calendar("NYSE")
+    calendar = calendar.schedule(
         start_date=datetime.date(2021, 11, 22), end_date=datetime.date(2021, 11, 22)
     )
-    print(cal)
+    print(calendar)

@@ -1,12 +1,12 @@
 # dao_manager.py
 import importlib.util
 import os
-from datetime import datetime, time
 
-from config import CONFIG
 from icecream import ic
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
+from src.utils.market_calendar import earliest_market_time
+from src.utils.project_utilities import config
 from webrock.decorator import plugin, init, shutdown
 
 
@@ -21,7 +21,7 @@ class DAOManager:
 
     async def initialize(self):
         # TODO module 'config' has no attribute 'config'
-        name = os.path.join(CONFIG["db_folder"], CONFIG["db_name"])
+        name = os.path.join(config["db_folder"], config["db_name"])
         self.db = AsyncDatabase(name)
 
         await self.load_default_daos()
@@ -83,8 +83,10 @@ class DAOManager:
     @plugin()
     async def clean_data(
         self,
-        min_timestamp: int = datetime.combine(CONFIG["min_date"], time()).timestamp(),
+        min_timestamp: int = 0,
     ):
+        if min_timestamp == 0:
+            min_timestamp = earliest_market_time()
         for table, dao in self.daos.items():
             if hasattr(dao, "clean_data"):
                 print(f"Cleaning data from {table} dao...")
