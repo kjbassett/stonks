@@ -148,14 +148,15 @@ CREATE TABLE Prediction (
   UNIQUE (model_id, company_id)
 );
 
--- Calendar Table (TODO is this needed?)
-CREATE TABLE Calendar (
-  date TEXT PRIMARY KEY,
-  open INTEGER,
-  close INTEGER
+-- Market Calendar Table
+CREATE TABLE MarketCalendar (
+    date DATE PRIMARY KEY,
+    open_ts INTEGER,
+    close_ts INTEGER,              -- unix seconds UTC
+    last_market_hour INTEGER      -- 19 or 20
 );
 
--- Trading Data Gap
+-- Trading Data Attempted Queries
 CREATE TABLE TradingDataAttemptedQueries (
   company_id INTEGER,
   start INTEGER,

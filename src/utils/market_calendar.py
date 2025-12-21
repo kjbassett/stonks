@@ -4,6 +4,7 @@ from functools import cache
 import pandas as pd
 import pandas_market_calendars
 from src.utils.project_utilities import config
+from webrock.decorator import plugin
 
 
 def get_min_date():
@@ -75,6 +76,17 @@ def latest_market_time(delay=900):
     lmt2 = datetime.datetime.combine(lmt2, datetime.time(hour=20))
     lmt2 = lmt2.timestamp()
     return int(min(lmt1, lmt2))
+
+
+@plugin()
+async def update_market_calendar():
+    from src.data_access.dao_manager import dao_manager
+
+    earliest = datetime.date.today() - datetime.timedelta(days=config["max_data_age"])
+    latest = datetime.date.today() + datetime.timedelta(days=7)
+    await dao_manager.get_dao("MarketCalendar").populate_market_calendar(
+        earliest, latest
+    )
 
 
 if __name__ == "__main__":
