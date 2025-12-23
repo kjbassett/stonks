@@ -12,7 +12,6 @@ class DataCompiler(BaseDAO):
     async def get_data(
         self,
         aggregation_interval: str = "minute",
-        price_change_offset: int = 86400 * 5,
         min_timestamp: int = 0,
         max_timestamp: int = 0,
         max_window: int = 0,
@@ -29,7 +28,6 @@ class DataCompiler(BaseDAO):
     ) -> pd.DataFrame:
         query = construct_query(
             aggregation_interval,
-            price_change_offset,
             min_timestamp,
             max_timestamp,
             max_window,
@@ -43,6 +41,8 @@ class DataCompiler(BaseDAO):
             include_cv_volume_ratio,
             keep_latest_only=keep_latest_only,
         )
+        if print_query:
+            print(query)
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
@@ -55,7 +55,6 @@ class DataCompiler(BaseDAO):
 
 def construct_query(
     aggregation_interval: str,
-    price_change_offset: int = 86400 * 5,  # 1 day in seconds x 5
     min_timestamp: int = 0,
     max_timestamp: int = 0,
     max_window: int = 0,
@@ -71,7 +70,6 @@ def construct_query(
 ) -> str:
     inner_query = construct_inner_query(
         aggregation_interval,
-        price_change_offset,  # 1 day in seconds x 5
         min_timestamp,
         max_timestamp,
         max_window,
@@ -90,7 +88,6 @@ def construct_query(
 
 def construct_inner_query(
     aggregation_interval: str,
-    price_change_offset: int = 86400 * 5,  # 1 day in seconds x 5
     min_timestamp: int = 0,
     max_timestamp: int = 0,
     max_window: int = 0,
@@ -144,9 +141,15 @@ def construct_inner_query(
 
     # target column
     if include_target:
-        columns.append(
-            construct_target_column(aggregation_interval, price_change_offset)
+        target_cols, target_joins, target_filters = construct_target_column(
+            aggregation_interval
         )
+        columns += target_cols
+        joins += target_joins
+        filters += target_filters
+
+    # market timing columns
+    columns += construct_market_timing_columns(aggregation_interval)
 
     # hour, day of week, and month of year
     columns += construct_dt_columns(aggregation_interval)
@@ -174,12 +177,12 @@ def construct_inner_query(
     )
 
     # Add filters
-    if min_timestamp > 0:
+    if min_timestamp != 0:
         filters.append(f"{start_col} >= {min_timestamp}")
     if max_timestamp > 0:
         filters.append(f"{end_col} <= {max_timestamp}")
     if aggregation_interval != "minute":
-        filters.append(f"interval = '{aggregation_interval}'")
+        filters.append(f"t.interval = '{aggregation_interval}'")
 
     # format query parts
     ctes = "WITH " + ",\n".join(ctes) + "\n" if ctes else ""
@@ -200,40 +203,67 @@ ORDER BY {end_col}
     return query
 
 
-def construct_target_column(aggregation_interval, price_change_offset):
+def construct_target_column(aggregation_interval):
     if aggregation_interval == "minute":
-        # TODO Does not account for hours that the market isn't open
-        # target column
-        pco_min = price_change_offset - 0.02 * price_change_offset
-        pco_max = price_change_offset + 0.02 * price_change_offset
-        return f"""
-CAST(((
-    SELECT AVG(t2.close)
-    FROM TradingData t2 
-    WHERE
-        t2.company_id = t.company_id
-        AND t2.timestamp >= t.timestamp + {pco_min}
-        AND t2.timestamp <= t.timestamp + {pco_max}
-) - t.close) / t.close AS REAL) AS target"""
+        raise NotImplementedError(
+            "construct_target_column not implemented for minute aggregations"
+        )
 
     elif aggregation_interval == "hour":
-        # Grab the price_change_offset-th row after the current row
-        # Would it be faster to use a window function here?
-        return f"""
-CAST(((
-    SELECT AVG(close) -- have to aggregate even though we use limit 1
-    FROM (
-        SELECT t2.close
-        FROM TradingDataAggregation t2
-        WHERE
-            t2.company_id = t.company_id
-            AND t2.interval = 'hour'
-            AND (t2.date > t.date OR (t2.date = t.date AND t2.hour > t.hour))
-            AND t2.row_count > 5  -- number of rows that went into the aggregation
-        ORDER BY t2.date, t2.hour
-        LIMIT 1 OFFSET {price_change_offset - 1} -- by offsetting rows, we are essentially skipping closed market hours
-    )
-) - t.close) / t.close AS REAL) AS target"""
+        columns = ["CAST((tt.close - t.close) / t.close AS REAL) as target"]
+        # join on close of next market day according to market calendar table
+        joins = [
+            """
+LEFT JOIN TradingDataAggregation tt
+    ON t.company_id = tt.company_id
+    AND (
+        SELECT mc.last_market_hour
+        FROM MarketCalendar mc
+        WHERE mc.close_ts > t.end
+        ORDER BY mc.close_ts
+        LIMIT 1
+    ) = tt.hour
+    AND date(datetime((
+        SELECT mc.close_ts
+        FROM MarketCalendar mc
+        WHERE mc.close_ts > t.end
+        ORDER BY mc.close_ts
+        LIMIT 1
+    ), 'unixepoch')) = tt.date
+            """
+        ]
+        filters = ["tt.interval = 'hour'"]
+
+        return columns, joins, filters
+
+
+def construct_market_timing_columns(aggregation_interval):
+    if aggregation_interval == "minute":
+        raise NotImplementedError(
+            "construct_market_timing_columns not implemented for minute aggregations"
+        )
+    return [
+        """
+        (
+            CASE
+                WHEN time(datetime(t.end, 'unixepoch', '-5 hours')) < '16:00:00'
+                THEN strftime('%s',
+                     date(datetime(t.end, 'unixepoch', '-5 hours')) || ' 16:00:00',
+                     '+5 hours')
+                ELSE strftime('%s',
+                     date(datetime(t.end, 'unixepoch', '-5 hours'), '+1 day') || ' 16:00:00',
+                     '+5 hours')
+            END
+        ) - t.end AS seconds_to_next_close
+        """,
+        """
+        CASE
+            WHEN time(datetime(t.end, 'unixepoch', '-5 hours')) >= '16:00:00'
+                 OR time(datetime(t.end, 'unixepoch', '-5 hours')) < '09:30:00'
+            THEN 1 ELSE 0
+        END AS is_after_hours
+        """,
+    ]
 
 
 def construct_dt_columns(aggregation_interval):
@@ -381,7 +411,7 @@ def construct_calculated_columns(
             # current price / past price for current company in the past window
             # "normalize" past data relative to current data
             calc_columns.append(
-                f"(t.{col} / LAG({col}, {offset}) OVER (PARTITION BY t.company_id ORDER BY {ts_col})) AS {col}_ratio_lag_{offset}"
+                f"(t.{col} / LAG(t.{col}, {offset}) OVER (PARTITION BY t.company_id ORDER BY {ts_col})) AS {col}_ratio_lag_{offset}"
             )
     return calc_columns
 

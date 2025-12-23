@@ -323,7 +323,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "train_dataset",
                     "test_dataset",
                     "batch_size",
-                    1,  # epochs
+                    5,  # epochs
                     "num_news",
                 ],
                 "outputs": [

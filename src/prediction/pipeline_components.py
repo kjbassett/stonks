@@ -30,7 +30,6 @@ async def load_data(
     structured_data_dao = dao_manager.get_dao("DataCompiler")
     structured_data = await structured_data_dao.get_data(
         "hour",
-        price_change_offset,
         min_timestamp,
         max_timestamp,
         max_window,
