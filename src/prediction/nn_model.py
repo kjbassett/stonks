@@ -190,21 +190,37 @@ def train_numerical_model(
         val_loss /= len(test_loader.dataset)
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
 
-        # --- Save best model + optimizer ---
+        predictions = pd.DataFrame(
+            {
+                "symbol": symbols,
+                "timestamp": timestamps,
+                "target": targets,
+                "prediction": preds,
+                "uncertainty": uncertainties,
+            }
+        )
+
+        # stats for diagnostics, todo do this for each epoch?
+        mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
+        var_mean = float(np.mean(predictions["uncertainty"]))
+        var_p90 = float(np.percentile(predictions["uncertainty"], 90))
+        var_max = float(np.max(predictions["uncertainty"]))
+        at_optimal = (
+            mse / var_mean
+        )  # the estimate for variance being the same as the mean squared error
+        print(
+            f"NLL={val_loss:.4f} MSE={mse:.4f} (MSE should not increase by a lot or be super big)\n"
+            f"var_mean={var_mean:.4e} var_p90={var_p90:.4e} var_max={var_max:.4e} (var_p90 shouldn't be >> var_mean)\n"
+            f"optimality test: {at_optimal:.4f} (should be close to 1 when varianced is reduced as far as it can with the current mu)"
+        )
+
+        # --- track best model + optimizer ---
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state_dict = copy.deepcopy(model.state_dict())
             best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
             best_epoch = epoch
-            best_predictions = pd.DataFrame(
-                {
-                    "symbol": symbols,
-                    "timestamp": timestamps,
-                    "target": targets,
-                    "prediction": preds,
-                    "uncertainty": uncertainties,
-                }
-            )
+            best_predictions = predictions
 
     # restore best weights + optimizer state
     if best_state_dict is not None:
