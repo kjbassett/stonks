@@ -219,7 +219,7 @@ LEFT JOIN TradingDataAggregation tt
     AND (
         SELECT mc.last_market_hour
         FROM MarketCalendar mc
-        WHERE mc.close_ts > t.end
+        WHERE mc.close_ts > t.end + 3600 -- next closing timestamp, but final hour should look at next day
         ORDER BY mc.close_ts
         LIMIT 1
     ) = tt.hour
@@ -304,8 +304,11 @@ def construct_dt_columns(aggregation_interval):
         columns.append(
             f"CASE strftime('%m', datetime(t.timestamp, 'unixepoch')) {month_str}"
         )
+        # TODO need cos & sin for minute agg
     elif aggregation_interval == "hour":
         columns.append("t.hour")
+        columns.append("COS(2 * PI() * t.hour) as hour_cos")
+        columns.append("SIN(2 * PI() * t.hour) as hour_sin")
         columns.append(f"CASE strftime('%w', t.date) {weekday_str}")
         columns.append(f"CASE strftime('%m', t.date) {month_str}")
 
