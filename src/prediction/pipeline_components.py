@@ -11,7 +11,6 @@ from src.data_access.dao_manager import dao_manager
 
 
 async def load_data(
-    price_change_offset: int = 86400,
     min_timestamp: int = 0,
     max_timestamp: int = 0,
     max_window: int = 0,
@@ -146,10 +145,11 @@ def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
 
 
 def unstandardize(predictions, means, stds):
-    mean, std = means["target"], stds["target"]
-    predictions["uncertainty"] = np.sqrt(
-        predictions["uncertainty"]
-    )  # variance to standard deviation
+    mean, std = means["target"], stds["target"]  # scaling factors
+
+    predictions["standardized_target"] = predictions["target"]
+    predictions["standardized_prediction"] = predictions["prediction"]
+    predictions["standardized_uncertainty"] = predictions["uncertainty"]
 
     # unscale target
     if "target" in predictions.columns:
