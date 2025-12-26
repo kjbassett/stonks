@@ -20,7 +20,7 @@ matplotlib
 aiosqlite
 MissForest
 lightgbm
-git+https://github.com/kjbassett/webrock@feature/scheduler
+git+https://github.com/kjbassett/webrock@dev
 torch
 torchvision
 tqdm
