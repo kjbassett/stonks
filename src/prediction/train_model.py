@@ -73,45 +73,44 @@ def create_model_space(max_timestamp, min_timestamp):
         # when aggregation is minutes, seconds ahead of current row for calculating percent changes
         # when aggregation is hours, rows ahead of current row for calculating percent changes
         # TODO fix this ^ nonsense. Go to rows only because it skips over closed market hours
-        "price_change_offset": DiscreteOrdinal([8]),  # DiscreteOrdinal(range(1, 9)),
         "max_window": DiscreteOrdinal(
-            range(3, 11)
+            [24]  # range(24, 73)
         ),  # maximum row behind current row to see trends
         "num_windows": DiscreteOrdinal(
-            [3, 5, 10]
+            [6]  # [5, 10, 15]
         ),  # number of points in time behind current row to compare for trends
         "num_news": DiscreteOrdinal(
             [0]
         ),  # number of news articles previous to the current row to include
         "news_history_threshold": ContinuousRange(
-            24 * 60 * 60, 5 * 24 * 60 * 60
+            24 * 60 * 60, 24 * 60 * 60 + 0.00000001  # 5 * 24 * 60 * 60
         ),  # The oldest a news article could be
         "include_close_ratio": DiscreteOrdinal(
-            [True, False]
+            [True]  # [True, False]
         ),  # include ratio of current close to past close
         "include_cv_close_ratio": DiscreteOrdinal(
-            [True, False]
+            [True]  # [True, False]
         ),  # include coef var of close data from past to current
         "include_avg_volume_ratio": DiscreteOrdinal(
-            [True, False]
+            [True]  # [True, False]
         ),  # include avg volume from past to current
         "include_cv_volume_ratio": DiscreteOrdinal(
-            [True, False]
+            [False]  # [True, False]
         ),  # include coef car of volume from past to current
         "max_one_hot_categories": DiscreteOrdinal(
             [20]
         ),  # maximum number of categories/columns will be created per original column when one-hot encoding
         "n_hidden_layers": DiscreteOrdinal(
-            [1, 2, 3, 4, 5, 6, 7]
+            [5]  # [1, 2, 3, 4, 5, 6, 7]
         ),  # number of hidden layers in NN
         "hidden_dim": DiscreteOrdinal(
-            [100, 250, 500, 750, 1000]
+            [250]  # [100, 250, 500, 750, 1000]
         ),  # number of nodes per hidden layer
         "dropout_rate": ContinuousRange(
-            0.3, 0.4
+            0.3, 0.30000000001  # 4
         ),  # chance of dropout per dropout layer in NN
         "missing_data_%_threshold": ContinuousRange(
-            0.5, 0.75
+            0, 0.000000001  # 0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
     }
     save_load_funcs = {
@@ -124,7 +123,6 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": load_data,
                 "kwargs": {
-                    "price_change_offset": "price_change_offset",
                     "min_timestamp": min_timestamp,
                     "max_timestamp": max_timestamp,
                     "max_window": "max_window",
@@ -141,7 +139,6 @@ def create_model_space(max_timestamp, min_timestamp):
             "inference": {
                 "func": load_data,
                 "kwargs": {
-                    "price_change_offset": "price_change_offset",
                     "min_timestamp": -3600
                     * 24
                     * 14,  # TODO find a better way to do this
@@ -185,14 +182,28 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": clip_values,
                 "args": "structured_data",
-                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
+                "kwargs": {
+                    "ignore_cols": [
+                        "symbol",
+                        "timestamp",
+                        "hour",
+                        "hour_cos",
+                        "hour_sin",
+                    ]
+                },
                 "outputs": ["structured_data", "column_limits"],
             },
             "inference": {
                 "func": clip_values,
                 "args": "structured_data",
                 "kwargs": {
-                    "ignore_cols": ["symbol", "timestamp"],
+                    "ignore_cols": [
+                        "symbol",
+                        "timestamp",
+                        "hour",
+                        "hour_cos",
+                        "hour_sin",
+                    ],
                     "column_limits": "column_limits",
                 },
                 "outputs": ["structured_data", "column_limits"],
@@ -203,13 +214,27 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": standardize_data,
                 "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
+                "kwargs": {
+                    "ignore_cols": [
+                        "symbol",
+                        "timestamp",
+                        "hour_cos",
+                        "hour_sin",
+                    ]
+                },
                 "outputs": ["structured_data", "means", "stds"],
             },
             "inference": {
                 "func": standardize_data,
                 "args": ["structured_data", "means", "stds"],
-                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
+                "kwargs": {
+                    "ignore_cols": [
+                        "symbol",
+                        "timestamp",
+                        "hour_cos",
+                        "hour_sin",
+                    ]
+                },
                 "outputs": ["structured_data", "means", "stds"],
             },
         },

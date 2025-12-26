@@ -16,14 +16,12 @@ def simulate_long_only(df, ratio_cutoff, capital=1.0, transaction_cost=0.0):
         transaction_cost (float): per-trade round-trip cost expressed as fraction of capital per trade (optional).
     """
     assert {"prediction", "uncertainty", "target", "timestamp"}.issubset(df.columns)
-    print("Simulating")
     df2 = df.copy()
     # ratio only for positive prediction (long-only)
     df2["ratio"] = df2["prediction"] / (df2["uncertainty"] + 1e-9)
 
     # group by timestamp and compute per-timestamp portfolio return
     timestamps = sorted(df2["timestamp"].unique())
-    print(f"{len(timestamps)} timestamps to simulate")
     port_returns = []
     capital_now = float(capital)
 
@@ -55,8 +53,6 @@ def simulate_long_only(df, ratio_cutoff, capital=1.0, transaction_cost=0.0):
 
         r = round(r, 6)
         capital_now = capital_now * (1.0 + r)
-        if r > 0:
-            print(r, capital_now)
     #     port_returns.append(
     #         {
     #             "timestamp": t,
