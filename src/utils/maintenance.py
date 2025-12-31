@@ -16,3 +16,10 @@ async def backup_db():
 @plugin()
 async def recreate_indices():
     await dao_manager.db.recreate_all_indices()
+
+
+@plugin()
+async def optimize_db():
+    result = await dao_manager.db.optimize()
+    print(result)
+    return result

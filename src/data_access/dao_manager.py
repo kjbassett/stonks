@@ -20,7 +20,6 @@ class DAOManager:
         return cls._instance
 
     async def initialize(self):
-        # TODO module 'config' has no attribute 'config'
         name = os.path.join(config["db_folder"], config["db_name"])
         self.db = AsyncDatabase(name)
 

@@ -18,7 +18,7 @@ class AsyncDatabase:
         self.edit_lock = asyncio.Lock()  # Lock for transaction management
         self.operation_lock = (
             asyncio.Lock()
-        )  # For when this object needs to do ONE thing
+        )  # lock to access the variable self.active_operations
         self.backup_in_progress = asyncio.Event()
         self.backup_in_progress.set()  # Initially allow operations
 
@@ -192,3 +192,73 @@ class AsyncDatabase:
 
         # Run the blocking function in a thread pool and get a Future object
         await loop.run_in_executor(None, shutil.copy, self.db_path, backup_path)
+
+    async def optimize(self):
+        """
+        Performs SQLite maintenance:
+        1. Checks fragmentation (freelist / page_count)
+        2. VACUUMs only if fragmentation is high
+        3. Runs PRAGMA optimize
+        """
+
+        await self.connect()
+
+        # Block new operations
+        self.backup_in_progress.clear()
+
+        try:
+            print("🔧 Starting database optimization...")
+
+            # Wait for active operations to finish
+            t0 = time.time()
+            while True:
+                async with self.operation_lock:
+                    if self.active_operations == 0:
+                        break
+                if time.time() - t0 > 3600:
+                    print("⚠️ Timeout waiting for active operations to finish")
+                    return
+                await asyncio.sleep(0.5)
+
+            async with self.edit_lock:
+                # --- Check fragmentation ---
+                cursor = await self.conn.execute("PRAGMA freelist_count;")
+                freelist_count = (await cursor.fetchone())[0]
+                await cursor.close()
+
+                cursor = await self.conn.execute("PRAGMA page_count;")
+                page_count = (await cursor.fetchone())[0]
+                await cursor.close()
+
+                fragmentation = freelist_count / page_count if page_count > 0 else 0.0
+
+                print(
+                    f"📊 Fragmentation: {fragmentation:.2%} "
+                    f"({freelist_count}/{page_count} pages)"
+                )
+
+                # --- WAL checkpoint before vacuum ---
+                cursor = await self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                await cursor.fetchall()
+                await cursor.close()
+
+                # --- VACUUM only if needed ---
+                if fragmentation > 0.10:
+                    print("🧹 Fragmentation high — running VACUUM...")
+                    await self.conn.execute("VACUUM;")
+                    print("✅ VACUUM completed")
+                else:
+                    print("✅ Fragmentation acceptable — skipping VACUUM")
+
+                # --- Optimize query planner ---
+                print("⚙️ Running PRAGMA optimize...")
+                await self.conn.execute("PRAGMA optimize;")
+                print("✅ PRAGMA optimize completed")
+
+                await self.conn.commit()
+
+            print("🎉 Database optimization finished")
+
+        finally:
+            # Allow operations again
+            self.backup_in_progress.set()
