@@ -135,7 +135,15 @@ class NumericalModel(nn.Module):
 
 # --- Training loop for numerical-only model ---
 def train_numerical_model(
-    model, train_loader, test_loader, device, epochs, optimizer, loss_fn
+    model,
+    train_loader,
+    test_loader,
+    device,
+    epochs,
+    optimizer,
+    loss_fn,
+    batches_before_validation=1000,
+    patience: int = 5,
 ):
     # --- Initialization of uncertainty head ---
     y_all = np.concatenate([y.numpy() for _, y, _ in train_loader], axis=0)
@@ -149,11 +157,17 @@ def train_numerical_model(
     best_epoch = None
     best_predictions = None
 
+    global_step = 0
+    patience_counter = 0
+    stop_training = False
+
     for epoch in range(epochs):
+        if stop_training:
+            break
         # --- Training ---
         model.train()  # signal to layers like dropout to act differently
-        train_loss = 0.0
         for x_batch, y_batch, _ in tqdm(train_loader, desc=f"Epoch {epoch+1} [train]"):
+            global_step += 1
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device).unsqueeze(1)
 
@@ -163,64 +177,83 @@ def train_numerical_model(
             loss.backward()
             optimizer.step()
 
-            train_loss += loss.item() * x_batch.size(0)
-        train_loss /= len(train_loader.dataset)
+            # --- Validation every N batches ---
+            if global_step % batches_before_validation != 0:
+                continue
 
-        # --- Validation ---
-        model.eval()  # signal to layers like dropout to act differently
-        val_loss = 0.0
-        preds, uncertainties, targets, symbols, timestamps = [], [], [], [], []
-        with torch.no_grad():  # no backward passes
-            for x_batch, y_batch, meta in tqdm(
-                test_loader, desc=f"Epoch {epoch+1} [val]"
-            ):
-                x_batch = x_batch.to(device)
-                y_batch = y_batch.to(device).unsqueeze(1)
+            # --- Validation ---
+            model.eval()  # signal to layers like dropout to act differently
+            val_loss = 0.0
+            preds, uncertainties, targets, symbols, timestamps = [], [], [], [], []
+            with torch.no_grad():  # no backward passes
+                for x_batch, y_batch, meta in tqdm(
+                    test_loader, desc=f"Epoch {epoch+1} [val]"
+                ):
+                    global_step += 1
+                    x_batch = x_batch.to(device)
+                    y_batch = y_batch.to(device).unsqueeze(1)
 
-                mu, var = model(x_batch)
-                loss = loss_fn(mu, y_batch, var)
-                val_loss += loss.item() * x_batch.size(0)
+                    mu, var = model(x_batch)
+                    loss = loss_fn(mu, y_batch, var)
+                    val_loss += loss.item() * x_batch.size(0)
 
-                preds.extend(mu.cpu().numpy().flatten())
-                uncertainties.extend(var.cpu().numpy().flatten())
-                targets.extend(y_batch.cpu().numpy().flatten())
-                symbols.extend(meta["symbol"])
-                timestamps.extend(meta["timestamp"].numpy())
+                    preds.extend(mu.cpu().numpy().flatten())
+                    uncertainties.extend(var.cpu().numpy().flatten())
+                    targets.extend(y_batch.cpu().numpy().flatten())
+                    symbols.extend(meta["symbol"])
+                    timestamps.extend(meta["timestamp"].numpy())
 
-        val_loss /= len(test_loader.dataset)
-        print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
+            val_loss /= len(test_loader.dataset)
 
-        predictions = pd.DataFrame(
-            {
-                "symbol": symbols,
-                "timestamp": timestamps,
-                "target": targets,
-                "prediction": preds,
-                "uncertainty": uncertainties,
-            }
-        )
+            predictions = pd.DataFrame(
+                {
+                    "symbol": symbols,
+                    "timestamp": timestamps,
+                    "target": targets,
+                    "prediction": preds,
+                    "uncertainty": uncertainties,
+                }
+            )
 
-        # stats for diagnostics, todo do this for each epoch?
-        mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
-        var_mean = float(np.mean(predictions["uncertainty"]))
-        var_p90 = float(np.percentile(predictions["uncertainty"], 90))
-        var_max = float(np.max(predictions["uncertainty"]))
-        at_optimal = (
-            mse / var_mean
-        )  # the estimate for variance being the same as the mean squared error
-        print(
-            f"NLL={val_loss:.4f} MSE={mse:.4f} (MSE should not increase by a lot or be super big)\n"
-            f"var_mean={var_mean:.4e} var_p90={var_p90:.4e} var_max={var_max:.4e} (var_p90 shouldn't be >> var_mean)\n"
-            f"optimality test: {at_optimal:.4f} (should be close to 1 when varianced is reduced as far as it can with the current mu)"
-        )
+            # stats for diagnostics
+            mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
+            var_mean = float(np.mean(predictions["uncertainty"]))
+            var_p90 = float(np.percentile(predictions["uncertainty"], 90))
+            var_max = float(np.max(predictions["uncertainty"]))
+            optimal_var = (
+                mse / var_mean
+            )  # the estimate for variance being the same as the mean squared error
+            print(
+                f"NLL={val_loss:.4f} MSE={mse:.4f} (MSE should not increase by a lot or be super big)\n"
+                f"var_mean={var_mean:.4e} var_p90={var_p90:.4e} var_max={var_max:.4e} (var_p90 shouldn't be >> var_mean)\n"
+                f"optimality test: {optimal_var:.4f} (should be close to 1 when varianced is reduced as far as it can with the current mu)"
+            )
 
-        # --- track best model + optimizer ---
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_state_dict = copy.deepcopy(model.state_dict())
-            best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
-            best_epoch = epoch
-            best_predictions = predictions
+            # --- track best model + optimizer ---
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state_dict = copy.deepcopy(model.state_dict())
+                best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
+                best_step = global_step
+                best_predictions = predictions
+
+                patience_counter = 0
+                print(f"  ✔ New best model at step {global_step}")
+            else:
+                patience_counter += 1
+                print(
+                    f"  ✖ No improvement " f"({patience_counter}/{patience} patience)"
+                )
+
+                if patience_counter >= patience:
+                    print(
+                        f"Early stopping triggered at step {global_step} "
+                        f"(best step was {best_step})"
+                    )
+                    stop_training = True
+                    break
+
+            model.train()  # switch back to training mode
 
     # restore best weights + optimizer state
     if best_state_dict is not None:
