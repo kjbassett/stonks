@@ -51,11 +51,12 @@ async def load_data(
     return structured_data, news_data
 
 
-def load_short_data():
+def load_short_data(file_name):
+    print("loading data")
+    t = time.time()
     # load csv of saved data from some intermediate step
-    structured_data = pd.read_csv("structured_data.csv", index_col=None).reset_index(
-        drop=True
-    )
+    structured_data = pd.read_csv(file_name, index_col=None).reset_index(drop=True)
+    print(f"data loaded after {int(time.time() - t)} seconds")
     return structured_data, None
 
 
@@ -147,18 +148,27 @@ def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
 def unstandardize(predictions, means, stds):
     mean, std = means["target"], stds["target"]  # scaling factors
 
-    predictions["standardized_target"] = predictions["target"]
+    # store standardized values other colums for reference
+    predictions["standardized_close"] = predictions["close"]
     predictions["standardized_prediction"] = predictions["prediction"]
-    predictions["standardized_uncertainty"] = predictions["uncertainty"]
+    predictions["standardized_variance"] = predictions["variance"]
 
     # unscale target
     if "target" in predictions.columns:
+        predictions["standardized_target"] = predictions["target"]
         predictions["target"] = predictions["target"] * std + mean
+
     # unscale prediction
     predictions["prediction"] = predictions["prediction"] * std + mean
+
+    # unscale variance
     # scale factor is std. std dev scales linearly with scale factor.
-    # So variance (std dev squared) scales with scale factor squard
-    predictions["uncertainty"] = predictions["uncertainty"] * std**2
+    # So variance (std dev squared) scales with scale factor squared
+    predictions["variance"] = predictions["variance"] * std**2
+
+    # unscale close
+    predictions["close"] = predictions["close"] * stds["close"] / means["close"]
+
     dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     predictions.to_csv(f"predictions_{dt}.csv", index=False)
     return predictions
