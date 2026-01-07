@@ -17,7 +17,7 @@ from src.prediction.pipeline_components import (
     save_torch_state,
     load_torch_state,
 )
-from src.prediction.trading_strategy import tune_ratio_cutoff, apply_ratio_cutoff
+from src.simulation.simulator import train_trading_policy, apply_trading_policy
 from webrock.decorator import plugin
 
 
@@ -42,26 +42,31 @@ async def run_genetic_algorithm(
 
 @plugin()
 async def run_short_genetic_algorithm(
-    run_name: str, min_timestamp: int = 0, max_timestamp: int = 0
+    name: str,
+    version: str = "latest",
+    log_states: bool = False,
+    file_name: str = "data.csv",
 ):
-    # train from csv of saved data from some intermediate step
-    model_space, hyperparam_space, save_load_funcs = create_model_space(
-        max_timestamp, min_timestamp
-    )
-    model_space = [
+    from ezmt.organism import Organism
+
+    model = Organism.load(name, version)
+    model.new_folder()
+    model.knowledge = {}
+    model.dna = [
         {
             "name": "load_data",
             "train": {
                 "func": load_short_data,
+                "args": [file_name],
                 "outputs": ["structured_data", "text_data"],
             },
+            "inference": None,
         }
-    ] + model_space[7:]
+    ] + model.dna[1:]
 
-    mt = ModelTuner(
-        model_space, hyperparam_space, save_load_funcs, None, "target", 1, 1
+    result = await model.run(
+        mode="train", log_states=log_states, result_name="recommendations"
     )
-    model = await mt.run(run_name)
     model.save()
 
 
@@ -375,16 +380,21 @@ def create_model_space(max_timestamp, min_timestamp):
             # TODO Also model shouldn't be pickled in the first place
         },
         {
-            "name": "trading_strategy",
+            "name": "trading_policy",
             "train": {
-                "func": tune_ratio_cutoff,
-                "args": "predictions",
-                "outputs": ["ratio_cutoff", "score"],
+                "func": train_trading_policy,
+                "args": ["predictions"],
+                "kwargs": {
+                    "starting_cash": 100_000,
+                    "flat_fee": 0.0,
+                    "percent_fee": 0.0,
+                },
+                "outputs": ["policy", "score"],
                 "run_in_parent_process": True,
             },
             "inference": {
-                "func": apply_ratio_cutoff,
-                "args": ["predictions", "ratio_cutoff"],
+                "func": apply_trading_policy,
+                "args": ["predictions", "policy"],
                 "outputs": ["recommendations"],
                 "run_in_parent_process": True,
             },
