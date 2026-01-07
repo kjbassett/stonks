@@ -14,9 +14,7 @@ async def predict_latest_data(
     recipients: str = None,
 ):
     model = Organism.load(name, version)
-    predictions = await model.predict(
-        log_states=log_states, result_name="recommendations"
-    )
+    predictions = await model.run(log_states=log_states, result_name="recommendations")
     if send_results:
         predictions = predictions[
             predictions["prediction"] / predictions["uncertainty"] > 2.5
