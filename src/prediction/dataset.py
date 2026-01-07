@@ -86,6 +86,7 @@ class NumericalDataset(Dataset):
     def __init__(self, data: pd.DataFrame):
         self.symbols = data["symbol"].values
         self.timestamps = data["timestamp"].values
+        self.closes = data["close"].values
         self.x = torch.tensor(
             data[data.columns.difference(["target", "symbol", "timestamp"])].values,
             dtype=torch.float32,
@@ -99,7 +100,11 @@ class NumericalDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, idx):
-        meta = {"symbol": self.symbols[idx], "timestamp": self.timestamps[idx]}
+        meta = {
+            "symbol": self.symbols[idx],
+            "timestamp": self.timestamps[idx],
+            "close": self.closes[idx],
+        }
         return self.x[idx], self.y[idx], meta
 
 

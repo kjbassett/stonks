@@ -123,12 +123,12 @@ class NumericalModel(nn.Module):
 
         # Two separate heads: mean and variance
         self.mean_head = nn.Linear(hidden_dim, output_dim)
-        self.uncertainty_head = nn.Linear(hidden_dim, output_dim)
+        self.variance_head = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
         h = self.fc(x)
         mu = self.mean_head(h)
-        var = self.uncertainty_head(h)  # variance (pre-softplus)
+        var = self.variance_head(h)  # variance (pre-softplus)
         var = nn.functional.softplus(var)  # enforce that variance must be positive
         return mu, var
 
@@ -145,11 +145,11 @@ def train_numerical_model(
     batches_before_validation=1000,
     patience: int = 5,
 ):
-    # --- Initialization of uncertainty head ---
+    # --- Initialization of variance_head ---
     y_all = np.concatenate([y.numpy() for _, y, _ in train_loader], axis=0)
     init_var = np.var(y_all) + 1e-6
     with torch.no_grad():
-        model.uncertainty_head.bias.data.fill_(init_var)
+        model.variance_head.bias.data.fill_(init_var)
 
     best_val_loss = float("inf")
     best_state_dict = None
@@ -184,7 +184,14 @@ def train_numerical_model(
             # --- Validation ---
             model.eval()  # signal to layers like dropout to act differently
             val_loss = 0.0
-            preds, uncertainties, targets, symbols, timestamps = [], [], [], [], []
+            preds, variances, targets, symbols, timestamps, closes = (
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+            )
             with torch.no_grad():  # no backward passes
                 for x_batch, y_batch, meta in tqdm(
                     test_loader, desc=f"Epoch {epoch+1} [val]"
@@ -198,10 +205,11 @@ def train_numerical_model(
                     val_loss += loss.item() * x_batch.size(0)
 
                     preds.extend(mu.cpu().numpy().flatten())
-                    uncertainties.extend(var.cpu().numpy().flatten())
+                    variances.extend(var.cpu().numpy().flatten())
                     targets.extend(y_batch.cpu().numpy().flatten())
                     symbols.extend(meta["symbol"])
                     timestamps.extend(meta["timestamp"].numpy())
+                    closes.extend(meta["close"].numpy())
 
             val_loss /= len(test_loader.dataset)
 
@@ -211,15 +219,16 @@ def train_numerical_model(
                     "timestamp": timestamps,
                     "target": targets,
                     "prediction": preds,
-                    "uncertainty": uncertainties,
+                    "variance": variances,
+                    "close": closes,
                 }
             )
 
             # stats for diagnostics
             mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
-            var_mean = float(np.mean(predictions["uncertainty"]))
-            var_p90 = float(np.percentile(predictions["uncertainty"], 90))
-            var_max = float(np.max(predictions["uncertainty"]))
+            var_mean = float(np.mean(predictions["variance"]))
+            var_p90 = float(np.percentile(predictions["variance"], 90))
+            var_max = float(np.max(predictions["variance"]))
             optimal_var = (
                 mse / var_mean
             )  # the estimate for variance being the same as the mean squared error
@@ -259,9 +268,6 @@ def train_numerical_model(
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
         optimizer.load_state_dict(best_optimizer_state_dict)
-
-    # write CSV for the best epoch
-    best_predictions.to_csv("validation_best.csv", index=False)
 
     return (
         best_state_dict,
@@ -425,7 +431,7 @@ def infer(model, dataset):
 
     data_loader = DataLoader(dataset, batch_size=32, shuffle=False)
 
-    preds, uncertainties, symbols, timestamps = [], [], [], []
+    preds, variances, symbols, timestamps, closes = [], [], [], [], []
     with torch.no_grad():
         for x_batch, _, meta in tqdm(data_loader, desc="Running inference"):
             x_batch = x_batch.to(device)
@@ -436,16 +442,18 @@ def infer(model, dataset):
             mu, var = model(x_batch)
 
             preds.extend(mu.cpu().numpy().flatten())
-            uncertainties.extend(var.cpu().numpy().flatten())
+            variances.extend(var.cpu().numpy().flatten())
             symbols.extend(meta["symbol"])
             timestamps.extend(meta["timestamp"])
+            closes.extend(meta["close"].numpy())
 
     predictions = pd.DataFrame(
         {
             "symbol": symbols,
             "timestamp": timestamps,
             "prediction": preds,
-            "uncertainty": uncertainties,
+            "variance": variances,
+            "close": closes,
         }
     )
 
