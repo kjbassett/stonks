@@ -21,11 +21,13 @@ class MarketSimulator:
         self.last_prices = {}
 
     def _apply_trade(self, symbol, target_exposure, price):
+        if target_exposure < 0:
+            raise NotImplementedError("Shorting not supported")
         if symbol not in self.portfolio.positions:
             self.portfolio.positions[symbol] = Position()
 
         pos = self.portfolio.positions[symbol]
-        equity = self.portfolio.total_equity(self.last_prices | {symbol: price})
+        equity = self.portfolio.total_equity(self.last_prices)
         target_value = equity * target_exposure
         current_value = pos.market_value(price)
 
@@ -34,10 +36,6 @@ class MarketSimulator:
             return
 
         shares_to_trade = delta_value / price
-
-        if shares_to_trade < 0:
-            raise NotImplementedError("Shorting not supported")
-
         cost = shares_to_trade * price
         fee = self.flat_fee + abs(cost) * self.percent_fee
 
@@ -71,6 +69,8 @@ class MarketSimulator:
 
             # apply trades
             for _, row in df_ts.iterrows():
+                # update latest price
+                self.last_prices = self.last_prices | {row["symbol"]: row["close"]}
                 self._apply_trade(
                     row["symbol"],
                     row["portfolio weight"],

@@ -198,13 +198,14 @@ class TestSimulator(unittest.TestCase):
 
     def test_sim_gives_the_right_result(self):
         result = self.sim.run()
-        assert result["total_equity"] == 200000
-        expected_shares = {
-            "AS": 0.102508909197489 * 100000,
-            "AT": 0.187632528838444 * 100000,
-            "AU": 0.709858561964068 * 100000,
+        assert result["total_equity"] == 175000
+        expected_values = {
+            "AS": 0.25 * 175000,
+            "AT": 0.25 * 175000,
+            "AU": 0.25 * 175000,
         }
-        for symbol, shares in expected_shares:
+        for symbol, value in expected_values.items():
+            # price should be $2 each at end of simulation
             self.assertAlmostEqual(
-                result["portfolio"].positions["symbol"].shares, shares
+                result["portfolio"].positions[symbol].shares * 2, value
             )
