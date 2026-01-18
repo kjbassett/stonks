@@ -1,4 +1,4 @@
-symbol,timestamp,prediction,uncertainty,close
+symbol,timestamp,prediction,variance,close
 AA,0,-0.5,1,1
 AB,0,-0.45,0.95,1
 AC,0,-0.4,0.9,1

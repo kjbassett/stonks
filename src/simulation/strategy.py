@@ -93,7 +93,7 @@ class PredictionThresholdRule(TradingRule):
 
     def apply(self, df):
         pred = df["prediction"]
-        var = df["uncertainty"]
+        var = df["variance"]
 
         scores = pred / (var.pow(0.5) + 1e-8)
 
@@ -117,6 +117,7 @@ class PredictionThresholdRule(TradingRule):
         # For util to be less than 1, there must be 1/max_score or fewer companies with a positive score
         if avg_return > 0 and avg_util < 1:
             self.threshold *= 1 - self.learning_rate
+            print(f"New Threshold: {self.threshold}")
 
         # Tighten threshold if:
         # 1. returns are negative
@@ -125,6 +126,7 @@ class PredictionThresholdRule(TradingRule):
             avg_return < 0 and avg_util == 1
         ):  # TODO should we adjust if avg_return is < something other than 0?
             self.threshold *= 1 + self.learning_rate
+            print(f"New Threshold: {self.threshold}")
 
         self.threshold = max(0.0, self.threshold)
 

@@ -70,7 +70,6 @@ class MarketSimulator:
             # apply trades
             for _, row in df_ts.iterrows():
                 # update latest price
-                self.last_prices = self.last_prices | {row["symbol"]: row["close"]}
                 self._apply_trade(
                     row["symbol"],
                     row["portfolio weight"],
@@ -83,6 +82,7 @@ class MarketSimulator:
                 realized_return = (equity - last_equity) / last_equity
                 utilization = sum(df_ts["portfolio weight"])
                 self.policy.adapt(realized_return, utilization)
+                print(utilization, equity)
 
             last_equity = equity
 
@@ -108,7 +108,7 @@ def train_trading_policy(
     """
 
     # --- Safety checks ---
-    required_cols = {"symbol", "timestamp", "close", "prediction", "uncertainty"}
+    required_cols = {"symbol", "timestamp", "close", "prediction", "variance"}
     missing = required_cols - set(predictions.columns)
     if missing:
         raise ValueError(f"Predictions missing required columns: {missing}")
