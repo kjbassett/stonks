@@ -167,7 +167,7 @@ def unstandardize(predictions, means, stds):
     predictions["variance"] = predictions["variance"] * std**2
 
     # unscale close
-    predictions["close"] = predictions["close"] * stds["close"] / means["close"]
+    predictions["close"] = predictions["close"] * stds["close"] + means["close"]
 
     dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     predictions.to_csv(f"predictions_{dt}.csv", index=False)
