@@ -83,7 +83,7 @@ class HybridDataset(Dataset):
 
 
 class NumericalDataset(Dataset):
-    def __init__(self, data: pd.DataFrame):
+    def __init__(self, data: pd.DataFrame, n_bins: int = 50, max_weight: float = 10.0):
         self.symbols = data["symbol"].values
         self.timestamps = data["timestamp"].values
         self.closes = data["close"].values
@@ -92,9 +92,25 @@ class NumericalDataset(Dataset):
             dtype=torch.float32,
         )
         if "target" in data.columns:
-            self.y = torch.tensor(data["target"].values, dtype=torch.float32)
+            y_np = data["target"].values.astype(np.float32)
+            self.y = torch.tensor(y_np, dtype=torch.float32)
+
+            # --- density-aware sample weights ---
+            hist, bin_edges = np.histogram(y_np, bins=n_bins, density=False)
+            bin_idx = np.digitize(y_np, bin_edges[:-1], right=True)
+
+            # avoid zero density
+            hist = hist.astype(np.float32) + 1e-6
+            density = hist[bin_idx - 1]
+
+            weights = 1.0 / density
+            weights = weights / weights.mean()  # keep loss scale stable
+            weights = np.clip(weights, 0.0, max_weight)
+
+            self.weights = torch.tensor(weights, dtype=torch.float32)
         else:
             self.y = torch.full((len(data),), float("nan"), dtype=torch.float32)
+            self.weights = torch.ones(len(data), dtype=torch.float32)
 
     def __len__(self):
         return len(self.x)
@@ -105,7 +121,7 @@ class NumericalDataset(Dataset):
             "timestamp": self.timestamps[idx],
             "close": self.closes[idx],
         }
-        return self.x[idx], self.y[idx], meta
+        return self.x[idx], self.y[idx], self.weights[idx], meta
 
 
 def shuffle(df):

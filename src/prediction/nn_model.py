@@ -142,11 +142,11 @@ def train_numerical_model(
     epochs,
     optimizer,
     loss_fn,
-    batches_before_validation=1000,
+    batches_before_validation=2000,
     patience: int = 5,
 ):
     # --- Initialization of variance_head ---
-    y_all = np.concatenate([y.numpy() for _, y, _ in train_loader], axis=0)
+    y_all = np.concatenate([y.numpy() for _, y, _, _ in train_loader], axis=0)
     init_var = np.var(y_all) + 1e-6
     with torch.no_grad():
         model.variance_head.bias.data.fill_(init_var)
@@ -166,14 +166,18 @@ def train_numerical_model(
             break
         # --- Training ---
         model.train()  # signal to layers like dropout to act differently
-        for x_batch, y_batch, _ in tqdm(train_loader, desc=f"Epoch {epoch+1} [train]"):
+        for x_batch, y_batch, weights, _ in tqdm(
+            train_loader, desc=f"Epoch {epoch+1} [train]"
+        ):
             global_step += 1
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device).unsqueeze(1)
+            weights = weights.to(device)
 
             optimizer.zero_grad()
             mu, var = model(x_batch)
             loss = loss_fn(mu, y_batch, var)
+            loss = (loss * weights).mean()
             loss.backward()
             optimizer.step()
 
@@ -193,16 +197,18 @@ def train_numerical_model(
                 [],
             )
             with torch.no_grad():  # no backward passes
-                for x_batch, y_batch, meta in tqdm(
+                for x_batch, y_batch, weights, meta in tqdm(
                     test_loader, desc=f"Epoch {epoch+1} [val]"
                 ):
                     global_step += 1
                     x_batch = x_batch.to(device)
                     y_batch = y_batch.to(device).unsqueeze(1)
+                    weights = weights.to(device)
 
                     mu, var = model(x_batch)
                     loss = loss_fn(mu, y_batch, var)
-                    val_loss += loss.item() * x_batch.size(0)
+                    loss = (loss * weights).sum()
+                    val_loss += loss.item()
 
                     preds.extend(mu.cpu().numpy().flatten())
                     variances.extend(var.cpu().numpy().flatten())
@@ -373,7 +379,7 @@ def train_model(
     batch_size=32,
     epochs=10,
     n_news=0,
-    loss_fn=nn.GaussianNLLLoss(),
+    loss_fn=nn.GaussianNLLLoss(reduction="none"),
     lr=1e-4,
 ):
 
