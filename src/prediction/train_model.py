@@ -5,7 +5,6 @@ from ezmt.model_tuner import ModelTuner
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (
-    load_short_data,
     filter_out_missing_data,
     clip_values,
     standardize_data,
@@ -42,31 +41,17 @@ async def run_genetic_algorithm(
 
 @plugin()
 async def run_short_genetic_algorithm(
-    name: str,
-    version: str = "latest",
+    source_name: str,
+    source_version: str = "latest",
+    new_name: str = None,
+    new_version: str = None,
     log_states: bool = False,
-    file_name: str = "data.csv",
 ):
     from ezmt.organism import Organism
 
-    model = Organism.load(name, version)
-    model.new_folder()
-    model.knowledge = {}
-    model.dna = [
-        {
-            "name": "load_data",
-            "train": {
-                "func": load_short_data,
-                "args": [file_name],
-                "outputs": ["structured_data", "text_data"],
-            },
-            "inference": None,
-        }
-    ] + model.dna[1:]
-
-    result = await model.run(
-        mode="train", log_states=log_states, result_name="recommendations"
-    )
+    model = Organism.load(source_name, source_version, gene_index="one_hot_encode")
+    model.new_version(name=new_name, version=new_version)
+    result = await model.run(mode="train", log_states=log_states, result_name="score")
     model.save()
 
 
