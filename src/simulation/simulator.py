@@ -82,7 +82,8 @@ class MarketSimulator:
                 realized_return = (equity - last_equity) / last_equity
                 utilization = sum(df_ts["portfolio weight"])
                 self.policy.adapt(realized_return, utilization)
-                print(utilization, equity)
+                if utilization != 0:
+                    print(utilization, equity)
 
             last_equity = equity
 
@@ -116,7 +117,7 @@ def train_trading_policy(
     # --- Create trading rules ---
     # TODO GA can choose rules and control initial values and params if desired.
     rule = PredictionThresholdRule(
-        threshold=3,  # initial Sharpe-like cutoff
+        threshold=0,  # initial Sharpe-like cutoff
         aggressiveness=1.0,  # exposure scaling
         learning_rate=0.01,  # enables in-simulation tuning
     )
