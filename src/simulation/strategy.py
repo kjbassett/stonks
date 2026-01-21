@@ -123,7 +123,7 @@ class PredictionThresholdRule(TradingRule):
         # 1. returns are negative
         # 2. capital was heavily utilized
         elif (
-            avg_return < 0 and avg_util == 1
+            avg_return < 0 and avg_util >= 1
         ):  # TODO should we adjust if avg_return is < something other than 0?
             self.threshold *= 1 + self.learning_rate
             print(f"New Threshold: {self.threshold}")
