@@ -6,12 +6,11 @@ from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (
     filter_out_missing_data,
-    clip_values,
-    standardize_data,
+    scale_data,
     one_hot_encode,
     impute,
     get_num_x_columns,
-    unstandardize,
+    unscale_data,
     load_data,
     save_torch_state,
     load_torch_state,
@@ -43,14 +42,27 @@ async def run_genetic_algorithm(
 async def run_short_genetic_algorithm(
     source_name: str,
     source_version: str = "latest",
+    gene_index: str = None,
     new_name: str = None,
     new_version: str = None,
     log_states: bool = False,
+    recreate_dna: bool = False,
+    min_timestamp: int = 0,
+    max_timestamp: int = 0,
 ):
     from ezmt.organism import Organism
 
-    model = Organism.load(source_name, source_version, gene_index="one_hot_encode")
+    model = Organism.load(source_name, source_version, gene_index=gene_index)
     model.new_version(name=new_name, version=new_version)
+    if recreate_dna:
+        from ezmt.model_tuner import choose_dna, validate_config
+
+        model_space, hyperparam_space, _ = create_model_space(
+            max_timestamp, min_timestamp
+        )
+        model_space = validate_config(model_space, hyperparam_space)
+        dna = choose_dna(model_space)
+        model.dna = dna
     result = await model.run(mode="train", log_states=log_states, result_name="score")
     model.save()
 
@@ -167,42 +179,42 @@ def create_model_space(max_timestamp, min_timestamp):
                 "outputs": "structured_data",
             },
         },
+        # {
+        #     "name": "clip_values",
+        #     "train": {
+        #         "func": clip_values,
+        #         "args": "structured_data",
+        #         "kwargs": {
+        #             "ignore_cols": [
+        #                 "symbol",
+        #                 "timestamp",
+        #                 "hour",
+        #                 "hour_cos",
+        #                 "hour_sin",
+        #             ]
+        #         },
+        #         "outputs": ["structured_data", "column_limits"],
+        #     },
+        #     "inference": {
+        #         "func": clip_values,
+        #         "args": "structured_data",
+        #         "kwargs": {
+        #             "ignore_cols": [
+        #                 "symbol",
+        #                 "timestamp",
+        #                 "hour",
+        #                 "hour_cos",
+        #                 "hour_sin",
+        #             ],
+        #             "column_limits": "column_limits",
+        #         },
+        #         "outputs": ["structured_data", "column_limits"],
+        #     },
+        # },
         {
-            "name": "clip_values",
+            "name": "scale_data",
             "train": {
-                "func": clip_values,
-                "args": "structured_data",
-                "kwargs": {
-                    "ignore_cols": [
-                        "symbol",
-                        "timestamp",
-                        "hour",
-                        "hour_cos",
-                        "hour_sin",
-                    ]
-                },
-                "outputs": ["structured_data", "column_limits"],
-            },
-            "inference": {
-                "func": clip_values,
-                "args": "structured_data",
-                "kwargs": {
-                    "ignore_cols": [
-                        "symbol",
-                        "timestamp",
-                        "hour",
-                        "hour_cos",
-                        "hour_sin",
-                    ],
-                    "column_limits": "column_limits",
-                },
-                "outputs": ["structured_data", "column_limits"],
-            },
-        },
-        {
-            "name": "standardize_data",
-            "train": {
-                "func": standardize_data,
+                "func": scale_data,
                 "args": ["structured_data"],
                 "kwargs": {
                     "ignore_cols": [
@@ -215,7 +227,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "outputs": ["structured_data", "means", "stds"],
             },
             "inference": {
-                "func": standardize_data,
+                "func": scale_data,
                 "args": ["structured_data", "means", "stds"],
                 "kwargs": {
                     "ignore_cols": [
@@ -357,8 +369,8 @@ def create_model_space(max_timestamp, min_timestamp):
             },
         },
         {
-            "name": "unstandardize",
-            "func": unstandardize,
+            "name": "unscale_data",
+            "func": unscale_data,
             "args": ["predictions", "means", "stds"],
             "outputs": "predictions",
             "run_in_parent_process": True,  # TODO this step should not have to pickle model and pass to another process

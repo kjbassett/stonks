@@ -103,7 +103,14 @@ def clip_values(df, ignore_cols=None, column_limits=None):
     return df, column_limits
 
 
-def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
+def scale_data(
+    dataframe,
+    means=None,
+    stds=None,
+    ignore_cols=None,
+    target_col="target",
+    target_transform="asinh",
+):
     """
     Standardize the numeric columns of the DataFrame, ignoring object dtype columns.
 
@@ -128,10 +135,14 @@ def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
         ignore_cols
     )
 
+    if target_transform == "asinh" and target_col in dataframe.columns:
+        print("target transform is happening!")
+        dataframe[target_col] = np.arcsinh(dataframe[target_col])
+
     if means is None:
         means = dataframe[numeric_cols].mean().to_dict()
     if stds is None:
-        stds = dataframe[numeric_cols].std().to_dict()
+        stds = dataframe[numeric_cols].std().replace(0, 1e-8).to_dict()
 
     # inference doesn't have the target column
     _means = {k: v for k, v in means.items() if k in numeric_cols}
@@ -145,7 +156,14 @@ def standardize_data(dataframe, means=None, stds=None, ignore_cols=None):
     return dataframe, means, stds
 
 
-def unstandardize(predictions, means, stds):
+def unscale_data(
+    predictions,
+    means,
+    stds,
+    target_col="target",
+    target_transform="asinh",
+    save_csv=True,
+):
     mean, std = means["target"], stds["target"]  # scaling factors
 
     # store standardized values other colums for reference
@@ -169,8 +187,20 @@ def unstandardize(predictions, means, stds):
     # unscale close
     predictions["close"] = predictions["close"] * stds["close"] + means["close"]
 
-    dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    predictions.to_csv(f"predictions_{dt}.csv", index=False)
+    # --- inverse target transform ---
+    if target_transform == "asinh":
+        if target_col in predictions.columns:
+            print("target untransform is happening!")
+            predictions[target_col] = np.sinh(predictions[target_col])
+        predictions["prediction"] = np.sinh(predictions["prediction"])
+
+        # variance stays in transformed space by design
+        # do NOT sinh variance
+
+    if save_csv:
+        dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        predictions.to_csv(f"predictions_{dt}.csv", index=False)
+
     return predictions
 
 
