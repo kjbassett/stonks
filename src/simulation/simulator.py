@@ -117,7 +117,7 @@ def train_trading_policy(
     # --- Create trading rules ---
     # TODO GA can choose rules and control initial values and params if desired.
     rule = PredictionThresholdRule(
-        threshold=0,  # initial Sharpe-like cutoff
+        threshold=0,
         aggressiveness=1.0,  # exposure scaling
         learning_rate=0.01,  # enables in-simulation tuning
     )

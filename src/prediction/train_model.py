@@ -286,7 +286,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
-                "kwargs": {"split": 0.8, "shuffle_rows": False},
+                "kwargs": {"split": 0.8},
                 "outputs": ["train_dataset", "test_dataset"],
             },
             "inference": {
@@ -297,7 +297,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
-                "kwargs": {"shuffle_rows": False},
+                "kwargs": {"use_weights": False},
                 "outputs": ["inference_dataset"],
             },
         },

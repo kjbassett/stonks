@@ -83,7 +83,13 @@ class HybridDataset(Dataset):
 
 
 class NumericalDataset(Dataset):
-    def __init__(self, data: pd.DataFrame, n_bins: int = 50, max_weight: float = 10.0):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        n_bins: int = 50,
+        use_weights: bool = False,
+        max_weight: float = 10.0,
+    ):
         self.symbols = data["symbol"].values
         self.timestamps = data["timestamp"].values
         self.closes = data["close"].values
@@ -91,7 +97,8 @@ class NumericalDataset(Dataset):
             data[data.columns.difference(["target", "symbol", "timestamp"])].values,
             dtype=torch.float32,
         )
-        if "target" in data.columns:
+        if use_weights:
+            # requires target column
             y_np = data["target"].values.astype(np.float32)
             self.y = torch.tensor(y_np, dtype=torch.float32)
 
@@ -109,7 +116,11 @@ class NumericalDataset(Dataset):
 
             self.weights = torch.tensor(weights, dtype=torch.float32)
         else:
-            self.y = torch.full((len(data),), float("nan"), dtype=torch.float32)
+            if "target" in data.columns:
+                y_np = data["target"].values.astype(np.float32)
+                self.y = torch.tensor(y_np, dtype=torch.float32)
+            else:
+                self.y = torch.full((len(data),), float("nan"), dtype=torch.float32)
             self.weights = torch.ones(len(data), dtype=torch.float32)
 
     def __len__(self):
@@ -135,35 +146,50 @@ async def create_datasets(
     tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
     max_text_length=512,
     split=0,
-    shuffle_rows=False,
+    use_weights=False,
 ) -> list | Dataset:
-    news_args = (news_data, tokenizer, max_text_length)
-
     # split structured data (numerical data)
     if split:
         # We don't split news data because it has a one-to-many relationship with structured data.
-        # Later on, we retrieve correct news article(s) as needed. This saves memory.
+        # Later on, we retrieve correct news article(s) as needed.
+        # This saves memory over joining it with the trading data
         n_train = int(split * len(structured_data))
         train, test = structured_data.iloc[:n_train], structured_data.iloc[n_train:]
-        if shuffle_rows:
-            # we shuffle after splitting because we don't want to mix in the test data with our train data.
-            # timestamps close to our test timestamps are likely to have similar data, so this prevents overfitting
-            train = shuffle(train)
+        # assume that training set uses weights and validation does not
         return [
-            create_dataset(train, *news_args),
-            create_dataset(test, *news_args),
+            create_dataset(
+                train,
+                use_weights=True,
+                news_data=news_data,
+                tokenizer=tokenizer,
+                max_text_length=max_text_length,
+            ),
+            create_dataset(
+                test,
+                use_weights=False,
+                news_data=news_data,
+                tokenizer=tokenizer,
+                max_text_length=max_text_length,
+            ),
         ]
-    return create_dataset(structured_data, *news_args)
+    return create_dataset(
+        structured_data,
+        use_weights=use_weights,
+        news_data=news_data,
+        tokenizer=tokenizer,
+        max_text_length=max_text_length,
+    )
 
 
 def create_dataset(
     data,
+    use_weights=False,
     news_data=None,
     tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
     max_text_length=None,
 ):
     if news_data is None:
-        return NumericalDataset(data)
+        return NumericalDataset(data, use_weights=use_weights)
     else:
         return HybridDataset(
             data,
