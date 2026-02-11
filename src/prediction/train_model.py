@@ -87,6 +87,9 @@ def create_model_space(max_timestamp, min_timestamp):
         "news_history_threshold": ContinuousRange(
             24 * 60 * 60, 24 * 60 * 60 + 0.00000001  # 5 * 24 * 60 * 60
         ),  # The oldest a news article could be
+        "target_offset": DiscreteOrdinal(
+            [24]  # How far in the future we are predicting. "next_close" is an option
+        ),
         "include_close_ratio": DiscreteOrdinal(
             [True]  # [True, False]
         ),  # include ratio of current close to past close
@@ -131,6 +134,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "num_windows": "num_windows",
                     "num_news": "num_news",
                     "news_history_threshold": "news_history_threshold",
+                    "target_offset": "target_offset",
                     "include_close_ratio": "include_close_ratio",
                     "include_cv_close_ratio": "include_cv_close_ratio",
                     "include_avg_volume_ratio": "include_avg_volume_ratio",

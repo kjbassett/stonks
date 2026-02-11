@@ -19,6 +19,7 @@ class DataCompiler(BaseDAO):
         num_news: int = 0,
         news_history_threshold: int = 24 * 60 * 60,
         include_target: bool = True,
+        target_offset: any = "next_close",
         include_close_ratio: bool = True,
         include_cv_close_ratio: bool = True,
         include_avg_volume_ratio: bool = True,
@@ -35,6 +36,7 @@ class DataCompiler(BaseDAO):
             num_news,
             news_history_threshold,
             include_target,
+            target_offset,
             include_close_ratio,
             include_cv_close_ratio,
             include_avg_volume_ratio,
@@ -62,6 +64,7 @@ def construct_query(
     num_news: int = 0,
     news_history_threshold: int = 86400,
     include_target: bool = True,
+    target_offset: any = "next_close",
     include_close_ratio: bool = True,
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
@@ -77,6 +80,7 @@ def construct_query(
         num_news,
         news_history_threshold,
         include_target,
+        target_offset,
         include_close_ratio,
         include_cv_close_ratio,
         include_avg_volume_ratio,
@@ -95,6 +99,7 @@ def construct_inner_query(
     num_news: int = 0,
     news_history_threshold: int = 86400,
     include_target: bool = True,
+    target_offset: any = "next_close",
     include_close_ratio: bool = True,
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
@@ -142,7 +147,7 @@ def construct_inner_query(
     # target column
     if include_target:
         target_cols, target_joins, target_filters = construct_target_column(
-            aggregation_interval
+            aggregation_interval, target_offset
         )
         columns += target_cols
         joins += target_joins
@@ -203,17 +208,18 @@ ORDER BY {end_col}
     return query
 
 
-def construct_target_column(aggregation_interval):
+def construct_target_column(aggregation_interval, offset):
     if aggregation_interval == "minute":
         raise NotImplementedError(
             "construct_target_column not implemented for minute aggregations"
         )
 
     elif aggregation_interval == "hour":
-        columns = ["CAST((tt.close - t.close) / t.close AS REAL) as target"]
-        # join on close of next market day according to market calendar table
-        joins = [
-            """
+        if offset == "next_close":
+            columns = ["CAST((tt.close - t.close) / t.close AS REAL) as target"]
+            # join on close of next market day according to market calendar table
+            joins = [
+                """
 LEFT JOIN TradingDataAggregation tt
     ON t.company_id = tt.company_id
     AND (
@@ -230,9 +236,28 @@ LEFT JOIN TradingDataAggregation tt
         ORDER BY mc.close_ts
         LIMIT 1
     ), 'unixepoch')) = tt.date
-            """
-        ]
-        filters = ["tt.interval = 'hour'"]
+                """
+            ]
+            filters = ["tt.interval = 'hour'"]
+        elif isinstance(offset, int):
+            columns = [
+                f"""
+CAST(
+    (LEAD(close, {offset}) OVER (PARTITION BY company_id ORDER BY end) AS future_close - t.close) / t.close AS REAL
+) AS target
+                """,
+                "LEAD(end, 24) OVER (PARTITION BY company_id ORDER BY end) - end AS target_ts_delta",
+            ]
+            joins = [
+                f"""
+LEFT JOIN TradingDataAggregation t2
+    ON t2.company_id = t.company_id
+    AND t2.end >= t.end + 3600 * {offset * 0.9}
+    AND t2.end <= t.end + 3600 * {offset * 1.1}"""
+            ]
+            filters = []
+        else:
+            raise ValueError('target offset must be int or "next_close"')
 
         return columns, joins, filters
 

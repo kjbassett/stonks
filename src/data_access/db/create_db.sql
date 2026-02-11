@@ -64,7 +64,8 @@ CREATE TABLE TradingDataAggregation (
 );
 
 CREATE INDEX idx_trading_data_aggregation ON TradingDataAggregation (company_id, date, hour, interval);
-CREATE INDEX idx_tda_interval_rowcount_end ON TradingDataAggregation(interval, end);
+CREATE INDEX idx_tda_interval_rowcount_end ON TradingDataAggregation (interval, end);
+CREATE INDEX idx_tda_company_end ON TradingDataAggregation(company_id, end);
 
 -- Reddit Table
 CREATE TABLE Reddit (
@@ -157,8 +158,7 @@ CREATE TABLE MarketCalendar (
     last_market_hour INTEGER      -- 19 or 20
 );
 
-CREATE INDEX idx_marketcalendar_close_ts
-ON MarketCalendar(close_ts);
+CREATE INDEX idx_marketcalendar_close_ts ON MarketCalendar(close_ts);
 
 -- Trading Data Attempted Queries
 CREATE TABLE TradingDataAttemptedQueries (
