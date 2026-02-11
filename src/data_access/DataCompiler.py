@@ -240,14 +240,7 @@ LEFT JOIN TradingDataAggregation tt
             ]
             filters = ["tt.interval = 'hour'"]
         elif isinstance(offset, int):
-            columns = [
-                f"""
-CAST(
-    (LEAD(close, {offset}) OVER (PARTITION BY company_id ORDER BY end) AS future_close - t.close) / t.close AS REAL
-) AS target
-                """,
-                "LEAD(end, 24) OVER (PARTITION BY company_id ORDER BY end) - end AS target_ts_delta",
-            ]
+            columns = ["(t2.close - t.close) / t.close as target"]
             joins = [
                 f"""
 LEFT JOIN TradingDataAggregation t2
