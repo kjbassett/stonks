@@ -1,86 +1,100 @@
 import pandas as pd
+from datetime import date, datetime, timezone
+from typing import Optional
 
-from src.simulation.portfolio import Portfolio, Position
+from src.simulation.executor import OrderExecutor, PaperOrderExecutor
 from src.simulation.strategy import StrategyPolicy, PredictionThresholdRule
 
 
 class MarketSimulator:
+    """
+    Backtests or runs a trading policy over a predictions DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain columns: symbol, timestamp (unix seconds), close,
+        prediction, variance.
+        Optionally: prediction_ts (unix seconds, for stale-prediction checks).
+    executor : OrderExecutor
+        Handles actual trade execution and safety checks. If None, a
+        PaperOrderExecutor is created with default settings.
+    rebalance_interval_hours : float
+        How often to rebalance the portfolio. 1.0 = every timestamp.
+        Between rebalances, prices are still updated and stop-losses checked.
+    """
+
     def __init__(
         self,
-        df,
-        starting_cash=100_000.0,
-        flat_fee=0.0,
-        percent_fee=0.0,
+        df: pd.DataFrame,
+        executor: Optional[OrderExecutor] = None,
+        rebalance_interval_hours: float = 1.0,
+        # Kept for backward compatibility when no executor is provided
+        starting_cash: float = 100_000.0,
+        flat_fee: float = 0.0,
+        percent_fee: float = 0.0,
         rules=None,
     ):
         self.df = df.sort_values("timestamp")
-        self.portfolio = Portfolio(starting_cash)
-        self.flat_fee = flat_fee
-        self.percent_fee = percent_fee
-        self.policy = StrategyPolicy(rules)
+        self.rebalance_interval_hours = rebalance_interval_hours
         self.last_prices = {}
 
-    def _apply_trade(self, symbol, target_exposure, price):
-        if target_exposure < 0:
-            raise NotImplementedError("Shorting not supported")
-        if symbol not in self.portfolio.positions:
-            self.portfolio.positions[symbol] = Position()
-
-        pos = self.portfolio.positions[symbol]
-        equity = self.portfolio.total_equity(self.last_prices)
-        target_value = equity * target_exposure
-        current_value = pos.market_value(price)
-
-        delta_value = target_value - current_value
-        if abs(delta_value) < 1e-6:
-            return
-
-        shares_to_trade = delta_value / price
-        cost = shares_to_trade * price
-        fee = self.flat_fee + abs(cost) * self.percent_fee
-
-        if cost + fee > self.portfolio.cash:
-            # Cap to available cash
-            cost = (self.portfolio.cash - self.flat_fee) / (1 + self.percent_fee)
-            shares_to_trade = cost / price
-            fee = self.flat_fee + cost * self.percent_fee
-
-        # Update portfolio
-        self.portfolio.cash -= cost + fee
-        self.portfolio.fees_paid += fee
-        # Update position
-        new_total_shares = pos.shares + shares_to_trade
-        if new_total_shares > 0:
-            pos.avg_price = (
-                pos.avg_price * pos.shares + price * shares_to_trade
-            ) / new_total_shares
-        pos.shares = new_total_shares
+        if executor is not None:
+            self.executor = executor
+            self.policy = StrategyPolicy(rules or [])
+        else:
+            self.executor = PaperOrderExecutor(
+                starting_cash=starting_cash,
+                flat_fee=flat_fee,
+                percent_fee=percent_fee,
+            )
+            self.policy = StrategyPolicy(rules or [])
 
     def run(self):
         last_equity = None
+        last_rebalance_ts = None
 
         for ts, df_ts in self.df.groupby("timestamp", sort=True):
-            # update prices
+            # Always update last known prices
             for _, row in df_ts.iterrows():
                 self.last_prices[row["symbol"]] = row["close"]
 
-            # allocate exposures
-            df_ts["portfolio weight"] = self.policy.apply(df_ts)
+            # Check stop-losses on every tick even when not rebalancing
+            self.executor.check_stop_losses(self.last_prices)
 
-            # apply trades
-            for _, row in df_ts.iterrows():
-                # update latest price
-                self._apply_trade(
-                    row["symbol"],
-                    row["portfolio weight"],
-                    row["close"],
-                )
+            # Decide whether to rebalance
+            rebalance_interval_s = self.rebalance_interval_hours * 3600
+            should_rebalance = (
+                last_rebalance_ts is None
+                or (ts - last_rebalance_ts) >= rebalance_interval_s
+            )
 
-            # compute realized return
-            equity = self.portfolio.total_equity(self.last_prices)
+            if should_rebalance:
+                equity = self.executor.get_equity(self.last_prices)
+                weights = self.policy.apply(df_ts)
+                df_ts = df_ts.copy()
+                df_ts["portfolio_weight"] = weights
+
+                pred_ts = self._parse_prediction_ts(df_ts)
+                trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+
+                for i, (_, row) in enumerate(df_ts.iterrows()):
+                    self.executor.execute_target_exposure(
+                        symbol=row["symbol"],
+                        target_exposure=row["portfolio_weight"],
+                        price=row["close"],
+                        current_equity=equity,
+                        prediction_ts=pred_ts,
+                        trade_date=trade_date,
+                    )
+
+                last_rebalance_ts = ts
+
+            # Adapt policy after rebalancing
+            equity = self.executor.get_equity(self.last_prices)
             if last_equity is not None:
                 realized_return = (equity - last_equity) / last_equity
-                utilization = sum(df_ts["portfolio weight"])
+                utilization = float(df_ts["portfolio_weight"].sum()) if should_rebalance else 0.0
                 self.policy.adapt(realized_return, utilization)
                 if utilization != 0:
                     print(utilization, equity)
@@ -90,8 +104,19 @@ class MarketSimulator:
         return {
             "total_equity": equity,
             "policy": self.policy,
-            "portfolio": self.portfolio,
+            "executor": self.executor,
+            "fees_paid": self.executor.get_fees_paid(),
         }
+
+    @staticmethod
+    def _parse_prediction_ts(df_ts: pd.DataFrame) -> Optional[datetime]:
+        """Extract a prediction timestamp from the dataframe if present."""
+        if "prediction_ts" not in df_ts.columns:
+            return None
+        val = df_ts["prediction_ts"].dropna()
+        if val.empty:
+            return None
+        return datetime.fromtimestamp(float(val.iloc[0]), tz=timezone.utc).replace(tzinfo=None)
 
 
 def train_trading_policy(
@@ -99,43 +124,48 @@ def train_trading_policy(
     starting_cash: float = 100_000.0,
     flat_fee: float = 0.0,
     percent_fee: float = 0.0,
+    rebalance_interval_hours: float = 1.0,
+    allow_intraday: bool = False,
+    max_drawdown_pct: float = 0.10,
+    stop_loss_pct: float = 0.05,
 ):
     """
     Train a trading policy via market simulation.
 
     Returns:
-        policy: StrategyPolicy (stateful, trained, frozen)
-        fitness: float (final equity)
+        policy: StrategyPolicy (stateful, trained)
+        fitness: float (final equity / starting_cash)
     """
 
-    # --- Safety checks ---
     required_cols = {"symbol", "timestamp", "close", "prediction", "variance"}
     missing = required_cols - set(predictions.columns)
     if missing:
         raise ValueError(f"Predictions missing required columns: {missing}")
 
-    # --- Create trading rules ---
-    # TODO GA can choose rules and control initial values and params if desired.
     rule = PredictionThresholdRule(
         threshold=0,
-        aggressiveness=1.0,  # exposure scaling
-        learning_rate=0.01,  # enables in-simulation tuning
+        aggressiveness=1.0,
+        learning_rate=0.01,
     )
 
-    policy = StrategyPolicy(rules=[rule])
-
-    # --- Run simulation ---
-    simulator = MarketSimulator(
-        df=predictions,
+    executor = PaperOrderExecutor(
         starting_cash=starting_cash,
         flat_fee=flat_fee,
         percent_fee=percent_fee,
-        rules=policy.rules,
+        allow_intraday=allow_intraday,
+        max_drawdown_pct=max_drawdown_pct,
+        stop_loss_pct=stop_loss_pct,
     )
 
-    result = simulator.run()  # TODO run mode = train or apply or maybe freeze=True
+    simulator = MarketSimulator(
+        df=predictions,
+        executor=executor,
+        rebalance_interval_hours=rebalance_interval_hours,
+        rules=[rule],
+    )
 
-    # --- Extract results ---
+    result = simulator.run()
+
     returns = result["total_equity"] / starting_cash
     policy = result["policy"]
     return policy, returns
@@ -149,12 +179,13 @@ def apply_trading_policy(
     Apply a trained trading policy to new data.
 
     Returns:
-        recommendations: pd.DataFrame
+        recommendations: pd.DataFrame with portfolio_weight column added
     """
 
-    required_cols = {"symbol", "timestamp", "prediction", "uncertainty"}
+    required_cols = {"symbol", "timestamp", "prediction", "variance"}
     missing = required_cols - set(predictions.columns)
     if missing:
         raise ValueError(f"Predictions missing required columns: {missing}")
-    predictions["portfolio weight"] = policy.apply(predictions)
+    predictions = predictions.copy()
+    predictions["portfolio_weight"] = policy.apply(predictions)
     return predictions

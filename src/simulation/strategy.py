@@ -81,6 +81,19 @@ class TradingRule(ABC):
 
 
 class PredictionThresholdRule(TradingRule):
+    """
+    Gate stocks by their signal-to-noise ratio (prediction / sqrt(variance)),
+    then score the ones that pass by that same ratio raised to `aggressiveness`.
+
+    adapt() logic:
+      - Returns positive AND utilization < 1: loosen threshold (more stocks qualify,
+        signal is working and there's capacity to deploy more capital)
+      - Returns negative (any utilization): tighten threshold (signal is hurting us,
+        be more selective regardless of how deployed we are)
+      - Returns positive AND utilization >= 1: leave threshold alone (working well,
+        fully deployed — don't fix what isn't broken)
+    """
+
     def __init__(
         self,
         threshold: float = 1.0,
@@ -97,38 +110,92 @@ class PredictionThresholdRule(TradingRule):
 
         scores = pred / (var.pow(0.5) + 1e-8)
 
-        # Gate
         mask = scores >= self.threshold
-
         scores[mask] = scores[mask] ** self.aggressiveness
         scores[~mask] = 0
 
-        scores = normalize(scores)
-
-        return scores
+        return normalize(scores)
 
     def adapt(self, avg_return, avg_util):
         if self.learning_rate == 0:
             return
 
-        # Only loosen threshold if:
-        # 1. returns are positive
-        # 2. capital was underutilized
-        # For util to be less than 1, there must be 1/max_score or fewer companies with a positive score
         if avg_return > 0 and avg_util < 1:
+            # Signal is profitable but we're underutilising capital — relax the filter
             self.threshold *= 1 - self.learning_rate
-            print(f"New Threshold: {self.threshold}")
-
-        # Tighten threshold if:
-        # 1. returns are negative
-        # 2. capital was heavily utilized
-        elif (
-            avg_return < 0 and avg_util >= 1
-        ):  # TODO should we adjust if avg_return is < something other than 0?
+            print(f"[PredictionThresholdRule] Loosened threshold → {self.threshold:.4f}")
+        elif avg_return < 0:
+            # Losing money regardless of utilisation — tighten the quality filter
             self.threshold *= 1 + self.learning_rate
-            print(f"New Threshold: {self.threshold}")
+            print(f"[PredictionThresholdRule] Tightened threshold → {self.threshold:.4f}")
+        # avg_return > 0 and avg_util >= 1: profitable and fully deployed — leave it alone
 
         self.threshold = max(0.0, self.threshold)
+
+
+class PredictionMagnitudeRule(TradingRule):
+    """
+    Score stocks by the raw magnitude of their predicted return (ignoring uncertainty).
+
+    Complements PredictionThresholdRule: that rule gates by signal quality,
+    this rule weights the survivors by how much upside they predict.
+
+    adapt(): if returns are negative, dampen aggressiveness; if positive and
+    underutilised, increase it.
+    """
+
+    def __init__(self, aggressiveness: float = 1.0, learning_rate: float = 0.01):
+        self.aggressiveness = aggressiveness
+        self.learning_rate = learning_rate
+
+    def apply(self, df):
+        pred = df["prediction"].copy()
+        pred = pred.clip(lower=0)  # ignore negative predictions (no shorting)
+        scores = pred ** self.aggressiveness
+        return normalize(scores)
+
+    def adapt(self, avg_return, avg_util):
+        if self.learning_rate == 0:
+            return
+        if avg_return > 0 and avg_util < 1:
+            self.aggressiveness = min(self.aggressiveness * (1 + self.learning_rate), 3.0)
+        elif avg_return < 0:
+            self.aggressiveness = max(self.aggressiveness * (1 - self.learning_rate), 0.1)
+
+
+class InformationRatioRule(TradingRule):
+    """
+    Score by prediction² / variance — the squared information ratio.
+
+    This rewards stocks that are simultaneously high-conviction (large prediction)
+    AND low-uncertainty (small variance). Compared to PredictionThresholdRule's
+    linear ratio, the squaring of the prediction makes it prefer larger moves more
+    aggressively, while still discounting uncertain predictions.
+
+    adapt(): tighten the minimum ratio required when returns are negative.
+    """
+
+    def __init__(self, min_ratio: float = 0.0, learning_rate: float = 0.01):
+        self.min_ratio = min_ratio
+        self.learning_rate = learning_rate
+
+    def apply(self, df):
+        pred = df["prediction"]
+        var = df["variance"] + 1e-8
+
+        ratios = (pred ** 2) / var
+        ratios = ratios.where(pred > 0, 0)  # only positive predictions
+        ratios = ratios.where(ratios >= self.min_ratio, 0)
+
+        return normalize(ratios)
+
+    def adapt(self, avg_return, avg_util):
+        if self.learning_rate == 0:
+            return
+        if avg_return > 0 and avg_util < 1:
+            self.min_ratio = max(0.0, self.min_ratio * (1 - self.learning_rate))
+        elif avg_return < 0:
+            self.min_ratio *= 1 + self.learning_rate
 
 
 def normalize(x):
