@@ -48,8 +48,9 @@ class DataCompiler(BaseDAO):
         data = await self.db.execute_query(
             query, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
-        if "rn" in data.columns:
-            data = data.drop(columns=["rn"])
+        for col in data.columns:
+            if col[:2] == "rn":
+                data = data.drop(columns=[col])
         data.to_csv("data.csv", index=False)
         print(data.dtypes)
         return data
@@ -86,7 +87,9 @@ def construct_query(
         include_avg_volume_ratio,
         include_cv_volume_ratio,
     )
-    query = construct_full_query(inner_query, keep_latest_only)
+    query = construct_full_query(
+        inner_query, keep_latest_only, include_target, target_offset
+    )
     return query
 
 
@@ -222,6 +225,7 @@ def construct_target_column(aggregation_interval, offset):
                 """
 LEFT JOIN TradingDataAggregation tt
     ON t.company_id = tt.company_id
+    AND t.interval = tt.interval
     AND (
         SELECT mc.last_market_hour
         FROM MarketCalendar mc
@@ -240,11 +244,15 @@ LEFT JOIN TradingDataAggregation tt
             ]
             filters = ["tt.interval = 'hour'"]
         elif isinstance(offset, int):
-            columns = ["(t2.close - t.close) / t.close as target"]
+            columns = [
+                "(t2.close - t.close) / t.close as target",
+                "ROW_NUMBER() OVER (PARTITION BY t.company_id, t.end ORDER BY ABS(t2.end - t.end)) as rn_target",
+            ]
             joins = [
                 f"""
 LEFT JOIN TradingDataAggregation t2
     ON t2.company_id = t.company_id
+    AND t.interval = t2.interval
     AND t2.end >= t.end + 3600 * {offset * 0.9}
     AND t2.end <= t.end + 3600 * {offset * 1.1}"""
             ]
@@ -325,8 +333,8 @@ def construct_dt_columns(aggregation_interval):
         # TODO need cos & sin for minute agg
     elif aggregation_interval == "hour":
         columns.append("t.hour")
-        columns.append("COS(2 * PI() * t.hour) as hour_cos")
-        columns.append("SIN(2 * PI() * t.hour) as hour_sin")
+        columns.append("COS(2 * PI() * t.hour / 24) as hour_cos")
+        columns.append("SIN(2 * PI() * t.hour / 24) as hour_sin")
         columns.append(f"CASE strftime('%w', t.date) {weekday_str}")
         columns.append(f"CASE strftime('%m', t.date) {month_str}")
 
@@ -437,8 +445,11 @@ def construct_calculated_columns(
     return calc_columns
 
 
-def construct_full_query(inner_query, keep_latest_only):
+def construct_full_query(inner_query, keep_latest_only, include_target, target_offset):
     if not keep_latest_only:
+        if isinstance(target_offset, int) and include_target:
+            # inner query produces a row number called rn_target to rank closest row to target_offset
+            return f"SELECT * FROM ({inner_query}) WHERE rn_target = 1"
         return inner_query
     query = f"""
     SELECT *
@@ -447,10 +458,11 @@ def construct_full_query(inner_query, keep_latest_only):
                ROW_NUMBER() OVER (
                    PARTITION BY symbol
                    ORDER BY timestamp DESC
-               ) AS rn
+               ) AS rn_latest_only
         FROM ({inner_query})
+        {"WHERE rn_target = 1" if isinstance(target_offset, int) and include_target else ""}
     )
-    WHERE rn = 1;
+    WHERE rn_latest_only = 1;
     """
     return query
 
