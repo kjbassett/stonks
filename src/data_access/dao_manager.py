@@ -111,3 +111,40 @@ async def query_db(sql: str):
     result = await dao_manager.db.execute_query(sql)
     print(result)
     return result
+
+
+@plugin()
+async def compile_data(
+    min_timestamp: int = 1761969600,
+    max_timestamp: int = 0,
+    max_window: int = 24,
+    num_windows: int = 6,
+    num_news: int = 0,
+    news_history_threshold: int = 0,
+    include_target: bool = True,
+    target_offset: int = 24,
+    include_close_ratio: bool = True,
+    include_cv_close_ratio: bool = True,
+    include_avg_volume_ratio: bool = True,
+    include_cv_volume_ratio: bool = True,
+    keep_latest_only: bool = False,
+):
+    structured_data_dao = dao_manager.get_dao("DataCompiler")
+    structured_data = await structured_data_dao.get_data(
+        "hour",
+        min_timestamp,
+        max_timestamp,
+        max_window,
+        num_windows,
+        num_news,
+        news_history_threshold,
+        include_target,
+        target_offset,
+        include_close_ratio,
+        include_cv_close_ratio,
+        include_avg_volume_ratio,
+        include_cv_volume_ratio,
+        keep_latest_only,
+        print_query=True,
+    )
+    return structured_data

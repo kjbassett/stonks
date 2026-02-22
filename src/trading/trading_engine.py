@@ -1,14 +1,15 @@
 import pandas as pd
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
-from src.simulation.executor import OrderExecutor, PaperOrderExecutor
-from src.simulation.strategy import StrategyPolicy, PredictionThresholdRule
+from src.trading.executor import OrderExecutor
+from src.trading.brokers.paper_broker import PaperBroker
+from src.trading.strategy import StrategyPolicy, PredictionThresholdRule
 
 
-class MarketSimulator:
+class TradingEngine:
     """
-    Backtests or runs a trading policy over a predictions DataFrame.
+    Drives a trading policy over a predictions DataFrame.
 
     Parameters
     ----------
@@ -17,10 +18,10 @@ class MarketSimulator:
         prediction, variance.
         Optionally: prediction_ts (unix seconds, for stale-prediction checks).
     executor : OrderExecutor
-        Handles actual trade execution and safety checks. If None, a
-        PaperOrderExecutor is created with default settings.
+        Handles actual trade execution and safety checks. If None, an
+        OrderExecutor backed by PaperBroker is created with default settings.
     rebalance_interval_hours : float
-        How often to rebalance the portfolio. 1.0 = every timestamp.
+        How often to rebalance the portfolio. 0.0 = every timestamp.
         Between rebalances, prices are still updated and stop-losses checked.
     """
 
@@ -41,14 +42,15 @@ class MarketSimulator:
 
         if executor is not None:
             self.executor = executor
-            self.policy = StrategyPolicy(rules or [])
         else:
-            self.executor = PaperOrderExecutor(
-                starting_cash=starting_cash,
-                flat_fee=flat_fee,
-                percent_fee=percent_fee,
+            self.executor = OrderExecutor(
+                broker=PaperBroker(
+                    starting_cash=starting_cash,
+                    flat_fee=flat_fee,
+                    percent_fee=percent_fee,
+                )
             )
-            self.policy = StrategyPolicy(rules or [])
+        self.policy = StrategyPolicy(rules or [])
 
     def run(self):
         last_equity = None
@@ -78,7 +80,7 @@ class MarketSimulator:
                 pred_ts = self._parse_prediction_ts(df_ts)
                 trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
 
-                for i, (_, row) in enumerate(df_ts.iterrows()):
+                for _, row in df_ts.iterrows():
                     self.executor.execute_target_exposure(
                         symbol=row["symbol"],
                         target_exposure=row["portfolio_weight"],
@@ -90,14 +92,12 @@ class MarketSimulator:
 
                 last_rebalance_ts = ts
 
-            # Adapt policy after rebalancing
+            # Adapt policy after each tick
             equity = self.executor.get_equity(self.last_prices)
             if last_equity is not None:
                 realized_return = (equity - last_equity) / last_equity
                 utilization = float(df_ts["portfolio_weight"].sum()) if should_rebalance else 0.0
                 self.policy.adapt(realized_return, utilization)
-                if utilization != 0:
-                    print(utilization, equity)
 
             last_equity = equity
 
@@ -148,23 +148,25 @@ def train_trading_policy(
         learning_rate=0.01,
     )
 
-    executor = PaperOrderExecutor(
-        starting_cash=starting_cash,
-        flat_fee=flat_fee,
-        percent_fee=percent_fee,
+    executor = OrderExecutor(
+        broker=PaperBroker(
+            starting_cash=starting_cash,
+            flat_fee=flat_fee,
+            percent_fee=percent_fee,
+        ),
         allow_intraday=allow_intraday,
         max_drawdown_pct=max_drawdown_pct,
         stop_loss_pct=stop_loss_pct,
     )
 
-    simulator = MarketSimulator(
+    engine = TradingEngine(
         df=predictions,
         executor=executor,
         rebalance_interval_hours=rebalance_interval_hours,
         rules=[rule],
     )
 
-    result = simulator.run()
+    result = engine.run()
 
     returns = result["total_equity"] / starting_cash
     policy = result["policy"]

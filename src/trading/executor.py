@@ -1,28 +1,17 @@
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime, date
+
+from datetime import datetime, date, timezone
 from typing import Dict, List, Optional, Tuple
 import logging
 
-from src.simulation.portfolio import Portfolio, Position
+from src.trading.brokers.base_broker import BaseBroker, TradeResult
+from src.trading.portfolio import Position
 
 
-@dataclass
-class TradeResult:
-    symbol: str
-    shares_delta: float
-    price: float
-    filled: bool
-    reason: str = "ok"              # outcome: what happened when execution was attempted
-    trigger: Optional[str] = None   # why the trade was initiated (e.g. "stop_loss", "drawdown_halt")
-    order_id: Optional[str] = None
-
-
-class OrderExecutor(ABC):
+class OrderExecutor:
     """
-    Abstraction over order execution.
+    Enforces all trading safety rules and delegates fill mechanics to a BrokerInterface.
 
-    Shared safety checks applied before every trade:
+    Safety checks applied before every trade:
       - Max drawdown halt: liquidates all positions then blocks new buys
       - Per-position stop-loss: auto-closes positions below avg_price * (1 - stop_loss_pct)
       - PDT (Pattern Day Trader) rule: when allow_intraday=False, refuses same-day round-trips
@@ -34,15 +23,13 @@ class OrderExecutor(ABC):
 
     def __init__(
         self,
-        flat_fee: float = 0.0,
-        percent_fee: float = 0.0,
+        broker: BaseBroker,
         max_drawdown_pct: float = 0.10,
         stop_loss_pct: float = 0.05,
         allow_intraday: bool = True,
         stale_prediction_hours: float = 2.0,
     ):
-        self.flat_fee = flat_fee
-        self.percent_fee = percent_fee
+        self.broker = broker
         self.max_drawdown_pct = max_drawdown_pct
         self.stop_loss_pct = stop_loss_pct
         self.allow_intraday = allow_intraday
@@ -52,14 +39,15 @@ class OrderExecutor(ABC):
         self._halted: bool = False
         self._needs_liquidation: bool = False
 
-        # PDT tracking: (symbol, date) → count of same-day events not yet matched.
-        # Buys and sells are tracked separately so both round-trip directions are caught:
-        #   buy→sell same day: _intraday_buys  > 0 blocks the sell
+        # PDT tracking: (symbol, date) → count of same-day events.
+        # Buys and sells tracked separately so both round-trip directions are caught:
+        #   buy→sell same day: _intraday_buys > 0 blocks the sell
         #   sell→buy same day: _intraday_sells > 0 blocks the buy
         self._intraday_buys: Dict[Tuple[str, date], int] = {}
         self._intraday_sells: Dict[Tuple[str, date], int] = {}
 
         self._log = logging.getLogger(self.__class__.__name__)
+        self._restore_intraday_state()
 
     # ------------------------------------------------------------------
     # Safety checks
@@ -129,7 +117,7 @@ class OrderExecutor(ABC):
         """
         if prediction_ts is None:
             return True
-        age_h = (datetime.utcnow() - prediction_ts).total_seconds() / 3600.0
+        age_h = (datetime.now(timezone.utc).replace(tzinfo=None) - prediction_ts).total_seconds() / 3600.0
         if age_h > self.stale_prediction_hours:
             self._log.warning(
                 f"Stale prediction: {age_h:.1f}h old (max {self.stale_prediction_hours}h). Skipping trade."
@@ -137,11 +125,38 @@ class OrderExecutor(ABC):
             return False
         return True
 
+    def _restore_intraday_state(self) -> None:
+        """
+        Restore PDT tracking from broker order history.
+        Called on __init__ so that state survives a process restart mid-day.
+        Brokers that don't support history return [] from get_today_fills().
+        """
+        today = date.today()
+        try:
+            fills = self.broker.get_today_fills()
+        except Exception as e:
+            self._log.warning(f"Could not restore intraday state from broker history: {e}")
+            return
+
+        buys, sells = 0, 0
+        for symbol, instruction in fills:
+            if instruction == "BUY":
+                self._record_buy(symbol, today)
+                buys += 1
+            elif instruction == "SELL":
+                self._record_sell(symbol, today)
+                sells += 1
+
+        if buys or sells:
+            self._log.info(
+                f"Restored intraday state from broker history: "
+                f"{buys} buy(s), {sells} sell(s) for {today}"
+            )
+
     # ------------------------------------------------------------------
-    # Abstract interface
+    # Public interface
     # ------------------------------------------------------------------
 
-    @abstractmethod
     def execute_target_exposure(
         self,
         symbol: str,
@@ -161,57 +176,14 @@ class OrderExecutor(ABC):
         When halted, closes (target_exposure=0) are still allowed so the
         liquidation sweep can proceed; new/increased buys are blocked.
         """
-
-    @abstractmethod
-    def check_stop_losses(self, prices: Dict[str, float]) -> List[TradeResult]:
-        """
-        Check all open positions for stop-loss triggers and close if needed.
-        Also handles the one-time liquidation sweep when a drawdown halt fires.
-        """
-
-    @abstractmethod
-    def get_equity(self, prices: Dict[str, float]) -> float:
-        """Current total portfolio value (cash + positions)."""
-
-    @abstractmethod
-    def get_fees_paid(self) -> float:
-        """Cumulative fees/commissions paid."""
-
-    def reset_halt(self) -> None:
-        """Clear a drawdown halt after manual review."""
-        self._halted = False
-        self._needs_liquidation = False
-        self._peak_equity = None
-        self._log.info("Trading halt cleared.")
-
-
-class PaperOrderExecutor(OrderExecutor):
-    """
-    Simulates order execution against a local Portfolio.
-    Fills are assumed immediate at the provided price (no slippage model).
-    """
-
-    def __init__(self, starting_cash: float = 100_000.0, **kwargs):
-        super().__init__(**kwargs)
-        self.portfolio = Portfolio(starting_cash)
-
-    def execute_target_exposure(
-        self,
-        symbol: str,
-        target_exposure: float,
-        price: float,
-        current_equity: float,
-        prediction_ts: Optional[datetime] = None,
-        trade_date: Optional[date] = None,
-    ) -> TradeResult:
         if trade_date is None:
             trade_date = date.today()
 
-        if symbol not in self.portfolio.positions:
-            self.portfolio.positions[symbol] = Position()
-        pos = self.portfolio.positions[symbol]
+        self._update_drawdown(current_equity)
 
-        current_value = pos.market_value(price)
+        positions = self.broker.get_positions()
+        pos = positions.get(symbol, Position())
+        current_value = pos.shares * price
         target_value = current_equity * target_exposure
         delta_value = target_value - current_value
 
@@ -221,7 +193,6 @@ class PaperOrderExecutor(OrderExecutor):
         is_buying = delta_value > 0
         is_selling = delta_value < 0 and pos.shares > 0
 
-        # When halted, block new/increased buys but allow closes
         if self._halted and is_buying:
             return TradeResult(symbol, 0.0, price, False, "halted")
 
@@ -234,40 +205,31 @@ class PaperOrderExecutor(OrderExecutor):
             return TradeResult(symbol, 0.0, price, False, "pdt_blocked")
 
         shares_delta = delta_value / price
-        fee = (self.flat_fee + abs(delta_value) * self.percent_fee) if abs(delta_value) > 1e-6 else 0.0
+        result = self.broker.fill_order(symbol, shares_delta, price)
 
-        # Cap buys to available cash
-        if is_buying and delta_value + fee > self.portfolio.cash:
-            affordable = (self.portfolio.cash - self.flat_fee) / (1.0 + self.percent_fee)
-            shares_delta = affordable / price
-            fee = self.flat_fee + affordable * self.percent_fee
-
-        if abs(shares_delta) < 1e-6:
-            return TradeResult(symbol, 0.0, price, True, "no_change")
-
-        cost = shares_delta * price
-        self.portfolio.cash -= cost + fee
-        self.portfolio.fees_paid += fee
-
-        new_shares = pos.shares + shares_delta
-        if new_shares > 1e-9:
-            pos.avg_price = (pos.avg_price * pos.shares + price * shares_delta) / new_shares
-        pos.shares = new_shares
-
-        if shares_delta > 0:
+        if result.shares_delta > 0:
             self._record_buy(symbol, trade_date)
-        elif is_selling:
+        elif result.shares_delta < 0:
             self._record_sell(symbol, trade_date)
 
-        return TradeResult(symbol, shares_delta, price, True)
+        return result
 
     def check_stop_losses(self, prices: Dict[str, float]) -> List[TradeResult]:
+        """
+        Check all open positions for stop-loss triggers and close if needed.
+        Also handles the one-time liquidation sweep when a drawdown halt fires.
+        """
         results = []
+        try:
+            positions = self.broker.get_positions()
+        except Exception as e:
+            self._log.error(f"Failed to fetch positions for stop-loss check: {e}")
+            return results
 
         # One-time liquidation sweep when drawdown halt first fires
         if self._needs_liquidation:
             self._needs_liquidation = False
-            for symbol, pos in list(self.portfolio.positions.items()):
+            for symbol, pos in positions.items():
                 if pos.shares > 0 and symbol in prices:
                     result = self._force_close(symbol, prices[symbol], date.today())
                     result.trigger = "drawdown_halt"
@@ -276,12 +238,14 @@ class PaperOrderExecutor(OrderExecutor):
             return results
 
         # Regular per-position stop-loss check
-        for symbol, pos in list(self.portfolio.positions.items()):
+        equity = None  # computed lazily to avoid KeyError when not all symbols are in prices
+        for symbol, pos in positions.items():
             if pos.shares <= 0 or symbol not in prices:
                 continue
             price = prices[symbol]
             if pos.avg_price > 0 and price < pos.avg_price * (1.0 - self.stop_loss_pct):
-                equity = self.get_equity(prices)
+                if equity is None:
+                    equity = self.broker.get_equity(prices)
                 result = self.execute_target_exposure(symbol, 0.0, price, equity)
                 result.trigger = "stop_loss"
                 self._log.warning(
@@ -292,6 +256,21 @@ class PaperOrderExecutor(OrderExecutor):
                 results.append(result)
         return results
 
+    def get_equity(self, prices: Dict[str, float]) -> float:
+        """Current total portfolio value (delegates to broker)."""
+        return self.broker.get_equity(prices)
+
+    def get_fees_paid(self) -> float:
+        """Cumulative fees paid (delegates to broker)."""
+        return self.broker.get_fees_paid()
+
+    def reset_halt(self) -> None:
+        """Clear a drawdown halt after manual review."""
+        self._halted = False
+        self._needs_liquidation = False
+        self._peak_equity = None
+        self._log.info("Trading halt cleared.")
+
     def _force_close(self, symbol: str, price: float, trade_date: date) -> TradeResult:
         """
         Close a position unconditionally, bypassing halt and PDT checks.
@@ -299,11 +278,11 @@ class PaperOrderExecutor(OrderExecutor):
         so that re-buying the same symbol today is subsequently blocked.
         If this causes a PDT violation (position was bought today), a warning is logged.
         """
-        pos = self.portfolio.positions.get(symbol)
+        positions = self.broker.get_positions()
+        pos = positions.get(symbol)
         if pos is None or pos.shares <= 0:
             return TradeResult(symbol, 0.0, price, True, "no_change")
 
-        # Warn if this force-close would constitute a PDT violation
         if not self.allow_intraday:
             buys_today = self._intraday_buys.get((symbol, trade_date), 0)
             if buys_today > 0:
@@ -312,20 +291,6 @@ class PaperOrderExecutor(OrderExecutor):
                     f"This constitutes a day trade. Capital protection takes priority."
                 )
 
-        shares_delta = -pos.shares
-        proceeds = pos.shares * price
-        fee = self.flat_fee + proceeds * self.percent_fee
-
-        self.portfolio.cash += proceeds - fee
-        self.portfolio.fees_paid += fee
-        pos.shares = 0.0
-
+        result = self.broker.fill_order(symbol, -pos.shares, price)
         self._record_sell(symbol, trade_date)
-
-        return TradeResult(symbol, shares_delta, price, True)
-
-    def get_equity(self, prices: Dict[str, float]) -> float:
-        return self.portfolio.total_equity(prices)
-
-    def get_fees_paid(self) -> float:
-        return self.portfolio.fees_paid
+        return result

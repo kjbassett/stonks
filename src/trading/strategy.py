@@ -123,11 +123,11 @@ class PredictionThresholdRule(TradingRule):
         if avg_return > 0 and avg_util < 1:
             # Signal is profitable but we're underutilising capital — relax the filter
             self.threshold *= 1 - self.learning_rate
-            print(f"[PredictionThresholdRule] Loosened threshold → {self.threshold:.4f}")
+            print(f"[PredictionThresholdRule] Loosened threshold -> {self.threshold:.4f}")
         elif avg_return < 0:
             # Losing money regardless of utilisation — tighten the quality filter
             self.threshold *= 1 + self.learning_rate
-            print(f"[PredictionThresholdRule] Tightened threshold → {self.threshold:.4f}")
+            print(f"[PredictionThresholdRule] Tightened threshold -> {self.threshold:.4f}")
         # avg_return > 0 and avg_util >= 1: profitable and fully deployed — leave it alone
 
         self.threshold = max(0.0, self.threshold)

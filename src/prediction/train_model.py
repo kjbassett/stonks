@@ -15,7 +15,7 @@ from src.prediction.pipeline_components import (
     save_torch_state,
     load_torch_state,
 )
-from src.simulation.simulator import train_trading_policy, apply_trading_policy
+from src.trading.trading_engine import train_trading_policy, apply_trading_policy
 from webrock.decorator import plugin
 
 
