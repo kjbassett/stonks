@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pandas as pd
 from src.trading.executor import OrderExecutor
@@ -316,7 +316,7 @@ class TestInformationRatioRule(unittest.TestCase):
         assert rule.min_ratio >= 0.0
 
 
-class TestSimulator(unittest.TestCase):
+class TestSimulator(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         rules = [
             PredictionThresholdRule(
@@ -344,14 +344,14 @@ class TestSimulator(unittest.TestCase):
             rebalance_interval_hours=0.0,
         )
 
-    def test_sim_applies_executes_the_right_stuff(self):
+    async def test_sim_applies_executes_the_right_stuff(self):
         self.sim.policy.apply = MagicMock(return_value=0)
         self.sim.policy.adapt = MagicMock()
-        self.sim.executor.get_equity = MagicMock(return_value=1.0)
-        self.sim.executor.execute_target_exposure = MagicMock()
-        self.sim.executor.check_stop_losses = MagicMock(return_value=[])
+        self.sim.executor.get_equity = AsyncMock(return_value=1.0)
+        self.sim.executor.execute_target_exposure = AsyncMock()
+        self.sim.executor.check_stop_losses = AsyncMock(return_value=[])
 
-        self.sim.run()
+        await self.sim.run()
 
         expected_iterations = len(df_original["timestamp"].unique())  # 2
         assert self.sim.policy.apply.call_count == expected_iterations
@@ -362,8 +362,8 @@ class TestSimulator(unittest.TestCase):
         assert self.sim.executor.execute_target_exposure.call_count == len(df_original.index)
         assert self.sim.executor.check_stop_losses.call_count == expected_iterations
 
-    def test_sim_gives_the_right_result(self):
-        result = self.sim.run()
+    async def test_sim_gives_the_right_result(self):
+        result = await self.sim.run()
         assert result["total_equity"] == 175000
         expected_values = {
             "AS": 0.25 * 175000,

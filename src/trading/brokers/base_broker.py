@@ -29,7 +29,7 @@ class BaseBroker(ABC):
     """
 
     @abstractmethod
-    def fill_order(
+    async def fill_order(
         self,
         symbol: str,
         shares_delta: float,
@@ -42,18 +42,18 @@ class BaseBroker(ABC):
         """
 
     @abstractmethod
-    def get_positions(self) -> Dict[str, Position]:
+    async def get_positions(self) -> Dict[str, Position]:
         """Current holdings: {symbol -> Position(shares, avg_price)}."""
 
     @abstractmethod
-    def get_equity(self, prices: Dict[str, float]) -> float:
+    async def get_equity(self, prices: Dict[str, float]) -> float:
         """Current total portfolio value (cash + positions)."""
 
     @abstractmethod
     def get_fees_paid(self) -> float:
         """Cumulative fees paid."""
 
-    def get_today_fills(self) -> List[Tuple[str, str]]:
+    async def get_today_fills(self) -> List[Tuple[str, str]]:
         """
         Return (symbol, 'BUY'|'SELL') pairs for all filled orders today.
         Used by OrderExecutor to restore intraday PDT tracking after a restart.

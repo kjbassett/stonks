@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 from datetime import datetime, timezone
 from typing import Optional
@@ -52,7 +53,8 @@ class TradingEngine:
             )
         self.policy = StrategyPolicy(rules or [])
 
-    def run(self):
+    async def run(self):
+        await self.executor._restore_intraday_state()
         last_equity = None
         last_rebalance_ts = None
 
@@ -62,7 +64,7 @@ class TradingEngine:
                 self.last_prices[row["symbol"]] = row["close"]
 
             # Check stop-losses on every tick even when not rebalancing
-            self.executor.check_stop_losses(self.last_prices)
+            await self.executor.check_stop_losses(self.last_prices)
 
             # Decide whether to rebalance
             rebalance_interval_s = self.rebalance_interval_hours * 3600
@@ -72,7 +74,7 @@ class TradingEngine:
             )
 
             if should_rebalance:
-                equity = self.executor.get_equity(self.last_prices)
+                equity = await self.executor.get_equity(self.last_prices)
                 weights = self.policy.apply(df_ts)
                 df_ts = df_ts.copy()
                 df_ts["portfolio_weight"] = weights
@@ -80,20 +82,41 @@ class TradingEngine:
                 pred_ts = self._parse_prediction_ts(df_ts)
                 trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
 
+                # Split into sells and buys so sells execute first, freeing cash
+                # for subsequent buys. asyncio.gather runs each group concurrently,
+                # but the two awaits are sequential — all sells complete before any
+                # buy starts.
+                positions = await self.executor.broker.get_positions()
+                sell_coros, buy_coros = [], []
                 for _, row in df_ts.iterrows():
-                    self.executor.execute_target_exposure(
-                        symbol=row["symbol"],
-                        target_exposure=row["portfolio_weight"],
-                        price=row["close"],
+                    symbol = row["symbol"]
+                    price = row["close"]
+                    target_exposure = row["portfolio_weight"]
+                    pos = positions.get(symbol)
+                    current_value = pos.shares * price if pos else 0.0
+                    target_value = equity * target_exposure
+
+                    coro = self.executor.execute_target_exposure(
+                        symbol=symbol,
+                        target_exposure=target_exposure,
+                        price=price,
                         current_equity=equity,
                         prediction_ts=pred_ts,
                         trade_date=trade_date,
                     )
+                    if target_value < current_value:
+                        sell_coros.append(coro)
+                    else:
+                        buy_coros.append(coro)
+
+                # Sells complete fully before any buy begins
+                await asyncio.gather(*sell_coros)
+                await asyncio.gather(*buy_coros)
 
                 last_rebalance_ts = ts
 
             # Adapt policy after each tick
-            equity = self.executor.get_equity(self.last_prices)
+            equity = await self.executor.get_equity(self.last_prices)
             if last_equity is not None:
                 realized_return = (equity - last_equity) / last_equity
                 utilization = float(df_ts["portfolio_weight"].sum()) if should_rebalance else 0.0
@@ -166,7 +189,7 @@ def train_trading_policy(
         rules=[rule],
     )
 
-    result = engine.run()
+    result = asyncio.run(engine.run())
 
     returns = result["total_equity"] / starting_cash
     policy = result["policy"]

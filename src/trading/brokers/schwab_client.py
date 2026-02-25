@@ -11,12 +11,9 @@ Pass the access_token to SchwabClient. Token refresh is the caller's responsibil
 Rate limit: ~35,000 requests per 10 minutes per the developer portal.
 """
 
-import logging
 from typing import Any, Dict, List, Optional
 
-import requests
-
-_log = logging.getLogger(__name__)
+import httpx
 
 MARKET_BASE = "https://api.schwabapi.com/marketdata/v1"
 TRADER_BASE = "https://api.schwabapi.com/trader/v1"
@@ -33,15 +30,16 @@ class SchwabAPIError(Exception):
 
 class SchwabClient:
     """
-    Thin wrapper around the Schwab REST API.
+    Thin async wrapper around the Schwab REST API.
 
     All methods raise SchwabAPIError on non-2xx responses.
+    Call aclose() (or use as an async context manager) to release the
+    underlying HTTP session when done.
     """
 
     def __init__(self, access_token: str):
-        self._session = requests.Session()
-        self._session.headers.update(
-            {
+        self._client = httpx.AsyncClient(
+            headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -50,34 +48,43 @@ class SchwabClient:
 
     def update_token(self, access_token: str) -> None:
         """Replace the Bearer token (call after an OAuth token refresh)."""
-        self._session.headers["Authorization"] = f"Bearer {access_token}"
+        self._client.headers["Authorization"] = f"Bearer {access_token}"
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP session."""
+        await self._client.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        await self.aclose()
 
     # ------------------------------------------------------------------
     # Market data
     # ------------------------------------------------------------------
 
-    def get_quotes(self, symbols: List[str]) -> Dict[str, Any]:
+    async def get_quotes(self, symbols: List[str]) -> Dict[str, Any]:
         """
         Fetch real-time NBBO quotes for one or more symbols.
 
         Returns a dict keyed by symbol, each value containing:
           quote.lastPrice, quote.bidPrice, quote.askPrice, quote.closePrice, etc.
         """
-        resp = self._get(
+        return await self._get(
             f"{MARKET_BASE}/quotes",
             params={"symbols": ",".join(symbols), "fields": "quote,reference"},
         )
-        return resp
 
     # ------------------------------------------------------------------
     # Account information
     # ------------------------------------------------------------------
 
-    def get_accounts(self) -> List[Dict[str, Any]]:
+    async def get_accounts(self) -> List[Dict[str, Any]]:
         """Return a list of linked accounts with basic info."""
-        return self._get(f"{TRADER_BASE}/accounts")
+        return await self._get(f"{TRADER_BASE}/accounts")
 
-    def get_account(self, account_number: str, fields: str = "positions") -> Dict[str, Any]:
+    async def get_account(self, account_number: str, fields: str = "positions") -> Dict[str, Any]:
         """
         Fetch account details.
 
@@ -91,31 +98,31 @@ class SchwabClient:
           positions[].averagePrice
           positions[].marketValue
         """
-        return self._get(
+        return await self._get(
             f"{TRADER_BASE}/accounts/{account_number}",
             params={"fields": fields},
         )
 
-    def get_account_equity(self, account_number: str) -> float:
+    async def get_account_equity(self, account_number: str) -> float:
         """Convenience: return current liquidation value of the account."""
-        data = self.get_account(account_number, fields="")
+        data = await self.get_account(account_number, fields="")
         return data["securitiesAccount"]["currentBalances"]["liquidationValue"]
 
-    def get_positions(self, account_number: str) -> List[Dict[str, Any]]:
+    async def get_positions(self, account_number: str) -> List[Dict[str, Any]]:
         """Return list of open positions for the account."""
-        data = self.get_account(account_number, fields="positions")
+        data = await self.get_account(account_number, fields="positions")
         return data["securitiesAccount"].get("positions", [])
 
-    def get_cash_available(self, account_number: str) -> float:
+    async def get_cash_available(self, account_number: str) -> float:
         """Return cash available for trading."""
-        data = self.get_account(account_number, fields="")
+        data = await self.get_account(account_number, fields="")
         return data["securitiesAccount"]["currentBalances"]["cashAvailableForTrading"]
 
     # ------------------------------------------------------------------
     # Orders
     # ------------------------------------------------------------------
 
-    def place_order(self, account_number: str, order: Dict[str, Any]) -> Optional[str]:
+    async def place_order(self, account_number: str, order: Dict[str, Any]) -> Optional[str]:
         """
         Submit an order. Returns the order ID extracted from the Location header,
         or None if the header is absent.
@@ -127,19 +134,19 @@ class SchwabClient:
                         AWAITING_UR_OUT, PENDING_ACKNOWLEDGEMENT, PENDING_RECALL,
                         UNKNOWN
         """
-        resp = self._raw_post(f"{TRADER_BASE}/accounts/{account_number}/orders", json=order)
+        resp = await self._raw_post(f"{TRADER_BASE}/accounts/{account_number}/orders", json=order)
         location = resp.headers.get("Location", "")
         return location.rstrip("/").split("/")[-1] if location else None
 
-    def get_order(self, account_number: str, order_id: str) -> Dict[str, Any]:
+    async def get_order(self, account_number: str, order_id: str) -> Dict[str, Any]:
         """Fetch the current state of an order."""
-        return self._get(f"{TRADER_BASE}/accounts/{account_number}/orders/{order_id}")
+        return await self._get(f"{TRADER_BASE}/accounts/{account_number}/orders/{order_id}")
 
-    def cancel_order(self, account_number: str, order_id: str) -> None:
+    async def cancel_order(self, account_number: str, order_id: str) -> None:
         """Cancel an open order."""
-        self._delete(f"{TRADER_BASE}/accounts/{account_number}/orders/{order_id}")
+        await self._delete(f"{TRADER_BASE}/accounts/{account_number}/orders/{order_id}")
 
-    def get_orders(
+    async def get_orders(
         self,
         account_number: str,
         from_entered_time: Optional[str] = None,
@@ -159,7 +166,7 @@ class SchwabClient:
             params["toEnteredTime"] = to_entered_time
         if status:
             params["status"] = status
-        return self._get(f"{TRADER_BASE}/accounts/{account_number}/orders", params=params)
+        return await self._get(f"{TRADER_BASE}/accounts/{account_number}/orders", params=params)
 
     # ------------------------------------------------------------------
     # Order builders
@@ -223,21 +230,21 @@ class SchwabClient:
     # Internal HTTP helpers
     # ------------------------------------------------------------------
 
-    def _get(self, url: str, params: Optional[Dict] = None) -> Any:
-        resp = self._session.get(url, params=params)
+    async def _get(self, url: str, params: Optional[Dict] = None) -> Any:
+        resp = await self._client.get(url, params=params)
         self._raise_for_status(resp)
         return resp.json()
 
-    def _raw_post(self, url: str, json: Any) -> requests.Response:
-        resp = self._session.post(url, json=json)
+    async def _raw_post(self, url: str, json: Any) -> httpx.Response:
+        resp = await self._client.post(url, json=json)
         self._raise_for_status(resp)
         return resp
 
-    def _delete(self, url: str) -> None:
-        resp = self._session.delete(url)
+    async def _delete(self, url: str) -> None:
+        resp = await self._client.delete(url)
         self._raise_for_status(resp)
 
     @staticmethod
-    def _raise_for_status(resp: requests.Response) -> None:
-        if not resp.ok:
+    def _raise_for_status(resp: httpx.Response) -> None:
+        if not resp.is_success:
             raise SchwabAPIError(resp.status_code, resp.text[:500])

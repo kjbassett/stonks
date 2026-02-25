@@ -5,6 +5,7 @@ Use dry_run=True (default) to log what would be traded without placing real orde
 Flip to dry_run=False only after validating the integration against paper results.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ _FILLED_STATUS = "FILLED"
 
 class SchwabBroker(BaseBroker):
     """
-    Implements BrokerInterface for the Charles Schwab Trader API.
+    Implements BaseBroker for the Charles Schwab Trader API.
 
     Unlike PaperBroker, portfolio state is owned by Schwab — this class
     queries the API for current positions and balances rather than maintaining
@@ -52,18 +53,18 @@ class SchwabBroker(BaseBroker):
         self.account_number = account_number
         self.dry_run = dry_run
         self.order_confirm_timeout = order_confirm_timeout
-        self._log = logging.getLogger("SchwabBroker")
+        self._log = logging.getLogger("trading.schwab_broker")
 
         if dry_run:
             self._log.info(
-                "SchwabBroker running in DRY RUN mode — no real orders will be placed."
+                "SchwabBroker running in DRY RUN mode - no real orders will be placed."
             )
 
     # ------------------------------------------------------------------
-    # BrokerInterface
+    # BaseBroker
     # ------------------------------------------------------------------
 
-    def fill_order(
+    async def fill_order(
         self,
         symbol: str,
         shares_delta: float,
@@ -80,17 +81,16 @@ class SchwabBroker(BaseBroker):
 
         if self.dry_run:
             self._log.info(
-                f"[DRY RUN] {instruction} {shares_to_trade} × {symbol} @ ~${price:.2f} "
-                f"(target exposure via OrderExecutor)"
+                f"[DRY RUN] {instruction} {shares_to_trade} x {symbol} @ ~${price:.2f}"
             )
             return TradeResult(symbol, float(signed), price, True, "dry_run")
 
-        order_id = self.client.place_order(self.account_number, order)
+        order_id = await self.client.place_order(self.account_number, order)
         self._log.info(
-            f"Placed {instruction} {shares_to_trade} × {symbol} | order_id={order_id}"
+            f"Placed {instruction} {shares_to_trade} x {symbol} | order_id={order_id}"
         )
 
-        filled = self._wait_for_fill(order_id)
+        filled = await self._wait_for_fill(order_id)
         if not filled:
             self._log.warning(
                 f"Order {order_id} not confirmed within {self.order_confirm_timeout}s"
@@ -101,8 +101,8 @@ class SchwabBroker(BaseBroker):
             "filled" if filled else "unconfirmed", order_id=order_id,
         )
 
-    def get_positions(self) -> Dict[str, Position]:
-        positions = self.client.get_positions(self.account_number)
+    async def get_positions(self) -> Dict[str, Position]:
+        positions = await self.client.get_positions(self.account_number)
         result = {}
         for p in positions:
             symbol = p["instrument"]["symbol"].upper()
@@ -112,16 +112,16 @@ class SchwabBroker(BaseBroker):
             )
         return result
 
-    def get_equity(self, _: Dict[str, float]) -> float:
+    async def get_equity(self, _: Dict[str, float]) -> float:
         """Query Schwab for current account liquidation value."""
-        return self.client.get_account_equity(self.account_number)
+        return await self.client.get_account_equity(self.account_number)
 
     def get_fees_paid(self) -> float:
         # Schwab doesn't expose cumulative commissions via API.
         # Zero is returned; override this if you add local fee tracking.
         return 0.0
 
-    def get_today_fills(self) -> List[Tuple[str, str]]:
+    async def get_today_fills(self) -> List[Tuple[str, str]]:
         """
         Query today's filled orders from the API.
         Returns (symbol, 'BUY'|'SELL') pairs for PDT state restoration in OrderExecutor.
@@ -131,7 +131,7 @@ class SchwabBroker(BaseBroker):
         from_ts = f"{today.isoformat()}T00:00:00.000Z"
         to_ts   = f"{today.isoformat()}T23:59:59.999Z"
 
-        orders = self.client.get_orders(
+        orders = await self.client.get_orders(
             self.account_number,
             from_entered_time=from_ts,
             to_entered_time=to_ts,
@@ -151,20 +151,24 @@ class SchwabBroker(BaseBroker):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _wait_for_fill(self, order_id: Optional[str]) -> bool:
+    async def _wait_for_fill(self, order_id: Optional[str]) -> bool:
         if order_id is None:
             return False
         deadline = time.monotonic() + self.order_confirm_timeout
         while time.monotonic() < deadline:
             try:
-                order = self.client.get_order(self.account_number, order_id)
+                order = await self.client.get_order(self.account_number, order_id)
                 status = order.get("status", "")
                 if status == _FILLED_STATUS:
                     return True
                 if status in _FAILED_STATUSES:
-                    self._log.error(f"Order {order_id} ended with status '{status}'")
+                    self._log.error(
+                        f"Order {order_id} ended with terminal status '{status}'"
+                    )
                     return False
             except Exception as e:
-                self._log.warning(f"Error polling order {order_id}: {e}")
-            time.sleep(0.5)
+                self._log.warning(
+                    f"Error polling order {order_id}: {e}", exc_info=True
+                )
+            await asyncio.sleep(0.5)
         return False

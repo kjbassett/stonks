@@ -1,24 +1,30 @@
-
+import asyncio
+import logging
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional, Tuple
-import logging
 
 from src.trading.brokers.base_broker import BaseBroker, TradeResult
 from src.trading.portfolio import Position
 
 
+_log = logging.getLogger("trading.executor")
+
+
 class OrderExecutor:
     """
-    Enforces all trading safety rules and delegates fill mechanics to a BrokerInterface.
+    Enforces all trading safety rules and delegates fill mechanics to a BaseBroker.
 
     Safety checks applied before every trade:
       - Max drawdown halt: liquidates all positions then blocks new buys
       - Per-position stop-loss: auto-closes positions below avg_price * (1 - stop_loss_pct)
       - PDT (Pattern Day Trader) rule: when allow_intraday=False, refuses same-day round-trips
-        in both directions (buy→sell and sell→buy count equally as day trades)
+        in both directions (buy->sell and sell->buy count equally as day trades)
       - Stale prediction guard: skips trades if the prediction is too old (live trading only;
         None prediction_ts is treated as unknown age and allowed through, which is the
         correct behaviour for backtesting)
+
+    All public methods that interact with the broker are async so that concurrent
+    stop-loss closes (asyncio.gather) and async brokers (SchwabBroker) are supported.
     """
 
     def __init__(
@@ -39,15 +45,12 @@ class OrderExecutor:
         self._halted: bool = False
         self._needs_liquidation: bool = False
 
-        # PDT tracking: (symbol, date) → count of same-day events.
+        # PDT tracking: (symbol, date) -> count of same-day events.
         # Buys and sells tracked separately so both round-trip directions are caught:
-        #   buy→sell same day: _intraday_buys > 0 blocks the sell
-        #   sell→buy same day: _intraday_sells > 0 blocks the buy
+        #   buy->sell same day: _intraday_buys > 0 blocks the sell
+        #   sell->buy same day: _intraday_sells > 0 blocks the buy
         self._intraday_buys: Dict[Tuple[str, date], int] = {}
         self._intraday_sells: Dict[Tuple[str, date], int] = {}
-
-        self._log = logging.getLogger(self.__class__.__name__)
-        self._restore_intraday_state()
 
     # ------------------------------------------------------------------
     # Safety checks
@@ -61,25 +64,27 @@ class OrderExecutor:
         """
         if self._peak_equity is None or current_equity > self._peak_equity:
             self._peak_equity = current_equity
+            _log.debug(f"Peak equity updated: ${self._peak_equity:,.2f}")
+
         if current_equity < self._peak_equity * (1.0 - self.max_drawdown_pct):
             if not self._halted:
                 self._halted = True
                 self._needs_liquidation = True
                 pct = 1.0 - current_equity / self._peak_equity
-                self._log.warning(
+                _log.warning(
                     f"TRADING HALTED: portfolio down {pct:.1%} from peak "
-                    f"(${self._peak_equity:,.2f} → ${current_equity:,.2f}). "
+                    f"(${self._peak_equity:,.2f} -> ${current_equity:,.2f}). "
                     f"Liquidating all positions."
                 )
         return self._halted
 
     def _pdt_buy_allowed(self, symbol: str, trade_date: date) -> bool:
-        """Block a buy if the same symbol was already sold today (sell→buy round-trip)."""
+        """Block a buy if the same symbol was already sold today (sell->buy round-trip)."""
         if self.allow_intraday:
             return True
         count = self._intraday_sells.get((symbol, trade_date), 0)
         if count > 0:
-            self._log.warning(
+            _log.warning(
                 f"PDT block: buying {symbol} would complete a same-day round-trip "
                 f"({count} same-day sell(s) on {trade_date}). "
                 f"Set allow_intraday=True or ensure account >= $25k."
@@ -88,12 +93,12 @@ class OrderExecutor:
         return True
 
     def _pdt_sell_allowed(self, symbol: str, trade_date: date) -> bool:
-        """Block a sell if the same symbol was already bought today (buy→sell round-trip)."""
+        """Block a sell if the same symbol was already bought today (buy->sell round-trip)."""
         if self.allow_intraday:
             return True
         count = self._intraday_buys.get((symbol, trade_date), 0)
         if count > 0:
-            self._log.warning(
+            _log.warning(
                 f"PDT block: selling {symbol} would complete a same-day round-trip "
                 f"({count} unmatched same-day buy(s) on {trade_date}). "
                 f"Set allow_intraday=True or ensure account >= $25k."
@@ -119,23 +124,28 @@ class OrderExecutor:
             return True
         age_h = (datetime.now(timezone.utc).replace(tzinfo=None) - prediction_ts).total_seconds() / 3600.0
         if age_h > self.stale_prediction_hours:
-            self._log.warning(
-                f"Stale prediction: {age_h:.1f}h old (max {self.stale_prediction_hours}h). Skipping trade."
+            _log.warning(
+                f"Stale prediction: {age_h:.1f}h old (max {self.stale_prediction_hours}h). "
+                f"Skipping trade."
             )
             return False
         return True
 
-    def _restore_intraday_state(self) -> None:
+    async def _restore_intraday_state(self) -> None:
         """
         Restore PDT tracking from broker order history.
-        Called on __init__ so that state survives a process restart mid-day.
+        Call this once at startup (e.g. from TradingEngine.run()) so that
+        state survives a process restart mid-day.
         Brokers that don't support history return [] from get_today_fills().
         """
         today = date.today()
         try:
-            fills = self.broker.get_today_fills()
+            fills = await self.broker.get_today_fills()
         except Exception as e:
-            self._log.warning(f"Could not restore intraday state from broker history: {e}")
+            _log.warning(
+                f"Could not restore intraday state from broker history: {e}",
+                exc_info=True,
+            )
             return
 
         buys, sells = 0, 0
@@ -148,7 +158,7 @@ class OrderExecutor:
                 sells += 1
 
         if buys or sells:
-            self._log.info(
+            _log.info(
                 f"Restored intraday state from broker history: "
                 f"{buys} buy(s), {sells} sell(s) for {today}"
             )
@@ -157,7 +167,7 @@ class OrderExecutor:
     # Public interface
     # ------------------------------------------------------------------
 
-    def execute_target_exposure(
+    async def execute_target_exposure(
         self,
         symbol: str,
         target_exposure: float,
@@ -179,21 +189,37 @@ class OrderExecutor:
         if trade_date is None:
             trade_date = date.today()
 
+        _log.debug(
+            f"Evaluating: {symbol} target={target_exposure:.2%} "
+            f"price=${price:.2f} equity=${current_equity:,.2f} date={trade_date}"
+        )
+
         self._update_drawdown(current_equity)
 
-        positions = self.broker.get_positions()
+        positions = await self.broker.get_positions()
         pos = positions.get(symbol, Position())
         current_value = pos.shares * price
         target_value = current_equity * target_exposure
         delta_value = target_value - current_value
 
+        _log.debug(
+            f"Position: {symbol} shares={pos.shares:.4f} "
+            f"value=${current_value:.2f} -> target=${target_value:.2f} "
+            f"delta=${delta_value:.2f}"
+        )
+
         if abs(delta_value) < 1e-6:
+            _log.debug(f"No change: {symbol} already at target")
             return TradeResult(symbol, 0.0, price, True, "no_change")
 
         is_buying = delta_value > 0
         is_selling = delta_value < 0 and pos.shares > 0
 
         if self._halted and is_buying:
+            _log.warning(
+                f"Trade blocked: {symbol} BUY rejected - trading halted "
+                f"(drawdown exceeded max {self.max_drawdown_pct:.1%})"
+            )
             return TradeResult(symbol, 0.0, price, False, "halted")
 
         if not self._prediction_fresh(prediction_ts):
@@ -205,7 +231,18 @@ class OrderExecutor:
             return TradeResult(symbol, 0.0, price, False, "pdt_blocked")
 
         shares_delta = delta_value / price
-        result = self.broker.fill_order(symbol, shares_delta, price)
+        result = await self.broker.fill_order(symbol, shares_delta, price)
+
+        direction = "BUY" if result.shares_delta > 0 else ("SELL" if result.shares_delta < 0 else "NONE")
+        if result.filled and result.reason != "no_change":
+            _log.info(
+                f"Trade executed: {symbol} {direction} {abs(result.shares_delta):.4f} shares "
+                f"@ ${price:.2f} | reason={result.reason}"
+            )
+        elif not result.filled:
+            _log.warning(
+                f"Trade not filled: {symbol} {direction} | reason={result.reason}"
+            )
 
         if result.shares_delta > 0:
             self._record_buy(symbol, trade_date)
@@ -214,51 +251,79 @@ class OrderExecutor:
 
         return result
 
-    def check_stop_losses(self, prices: Dict[str, float]) -> List[TradeResult]:
+    async def check_stop_losses(self, prices: Dict[str, float]) -> List[TradeResult]:
         """
         Check all open positions for stop-loss triggers and close if needed.
         Also handles the one-time liquidation sweep when a drawdown halt fires.
+        Qualifying closes are executed concurrently via asyncio.gather.
         """
         results = []
         try:
-            positions = self.broker.get_positions()
+            positions = await self.broker.get_positions()
         except Exception as e:
-            self._log.error(f"Failed to fetch positions for stop-loss check: {e}")
+            _log.error(
+                f"Failed to fetch positions for stop-loss check: {e}", exc_info=True
+            )
             return results
+
+        _log.debug(f"Stop-loss check: {len(positions)} open position(s)")
 
         # One-time liquidation sweep when drawdown halt first fires
         if self._needs_liquidation:
             self._needs_liquidation = False
-            for symbol, pos in positions.items():
-                if pos.shares > 0 and symbol in prices:
-                    result = self._force_close(symbol, prices[symbol], date.today())
-                    result.trigger = "drawdown_halt"
-                    self._log.warning(f"Drawdown liquidation: closing {symbol}")
-                    results.append(result)
+            symbols_to_close = [
+                sym for sym, pos in positions.items()
+                if pos.shares > 0 and sym in prices
+            ]
+            _log.warning(
+                f"Drawdown liquidation: closing {len(symbols_to_close)} position(s): "
+                f"{', '.join(symbols_to_close)}"
+            )
+            close_coros = [
+                self._force_close(sym, prices[sym], date.today())
+                for sym in symbols_to_close
+            ]
+            closed = await asyncio.gather(*close_coros)
+            for result in closed:
+                result.trigger = "drawdown_halt"
+                results.append(result)
             return results
 
         # Regular per-position stop-loss check
         equity = None  # computed lazily to avoid KeyError when not all symbols are in prices
+        triggered = []
         for symbol, pos in positions.items():
             if pos.shares <= 0 or symbol not in prices:
                 continue
             price = prices[symbol]
             if pos.avg_price > 0 and price < pos.avg_price * (1.0 - self.stop_loss_pct):
+                loss_pct = 1.0 - price / pos.avg_price
+                _log.warning(
+                    f"Stop-loss trigger: {symbol} @ ${price:.2f} "
+                    f"(avg ${pos.avg_price:.2f}, loss {loss_pct:.1%})"
+                )
                 if equity is None:
-                    equity = self.broker.get_equity(prices)
-                result = self.execute_target_exposure(symbol, 0.0, price, equity)
+                    equity = await self.broker.get_equity(prices)
+                triggered.append((symbol, price, equity))
+
+        if triggered:
+            close_coros = [
+                self.execute_target_exposure(sym, 0.0, px, eq)
+                for sym, px, eq in triggered
+            ]
+            closed = await asyncio.gather(*close_coros)
+            for (symbol, price, _), result in zip(triggered, closed):
                 result.trigger = "stop_loss"
-                self._log.warning(
-                    f"Stop-loss triggered: {symbol} @ ${price:.2f} "
-                    f"(avg ${pos.avg_price:.2f}, loss {1.0 - price / pos.avg_price:.1%}) "
-                    f"→ outcome: {result.reason}"
+                _log.warning(
+                    f"Stop-loss outcome: {symbol} @ ${price:.2f} -> {result.reason}"
                 )
                 results.append(result)
+
         return results
 
-    def get_equity(self, prices: Dict[str, float]) -> float:
+    async def get_equity(self, prices: Dict[str, float]) -> float:
         """Current total portfolio value (delegates to broker)."""
-        return self.broker.get_equity(prices)
+        return await self.broker.get_equity(prices)
 
     def get_fees_paid(self) -> float:
         """Cumulative fees paid (delegates to broker)."""
@@ -269,16 +334,16 @@ class OrderExecutor:
         self._halted = False
         self._needs_liquidation = False
         self._peak_equity = None
-        self._log.info("Trading halt cleared.")
+        _log.info("Trading halt cleared by operator.")
 
-    def _force_close(self, symbol: str, price: float, trade_date: date) -> TradeResult:
+    async def _force_close(self, symbol: str, price: float, trade_date: date) -> TradeResult:
         """
         Close a position unconditionally, bypassing halt and PDT checks.
         Used only for drawdown liquidation. Records the sell for PDT tracking
         so that re-buying the same symbol today is subsequently blocked.
         If this causes a PDT violation (position was bought today), a warning is logged.
         """
-        positions = self.broker.get_positions()
+        positions = await self.broker.get_positions()
         pos = positions.get(symbol)
         if pos is None or pos.shares <= 0:
             return TradeResult(symbol, 0.0, price, True, "no_change")
@@ -286,11 +351,14 @@ class OrderExecutor:
         if not self.allow_intraday:
             buys_today = self._intraday_buys.get((symbol, trade_date), 0)
             if buys_today > 0:
-                self._log.warning(
+                _log.warning(
                     f"PDT notice: force-closing {symbol} which was bought today ({trade_date}). "
                     f"This constitutes a day trade. Capital protection takes priority."
                 )
 
-        result = self.broker.fill_order(symbol, -pos.shares, price)
+        _log.info(
+            f"Force close: {symbol} {pos.shares:.4f} shares @ ${price:.2f} (drawdown_halt)"
+        )
+        result = await self.broker.fill_order(symbol, -pos.shares, price)
         self._record_sell(symbol, trade_date)
         return result
