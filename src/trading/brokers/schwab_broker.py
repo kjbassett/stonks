@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from src.trading.brokers.schwab_client import SchwabClient
 from src.trading.brokers.base_broker import BaseBroker, TradeResult
 from src.trading.portfolio import Position
+from src.utils.project_utilities import config
 
 
 # Order statuses that indicate a terminal failure
@@ -44,13 +45,14 @@ class SchwabBroker(BaseBroker):
 
     def __init__(
         self,
-        client: SchwabClient,
-        account_number: str,
         dry_run: bool = True,
         order_confirm_timeout: float = 15.0,
+        client: Optional[SchwabClient] = None,
+        account_number: Optional[str] = None,
     ):
-        self.client = client
-        self.account_number = account_number
+        cfg = config["schwab"]
+        self.account_number = account_number or cfg["account_number"]
+        self.client = client or SchwabClient(access_token=cfg["access_token"])
         self.dry_run = dry_run
         self.order_confirm_timeout = order_confirm_timeout
         self._log = logging.getLogger("trading.schwab_broker")

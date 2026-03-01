@@ -5,7 +5,9 @@ from typing import Optional
 
 from src.trading.executor import OrderExecutor
 from src.trading.brokers.paper_broker import PaperBroker
+from src.trading.brokers.schwab_broker import SchwabBroker
 from src.trading.strategy import StrategyPolicy, PredictionThresholdRule
+from src.utils.project_utilities import config
 
 
 class TradingEngine:
@@ -18,40 +20,55 @@ class TradingEngine:
         Must contain columns: symbol, timestamp (unix seconds), close,
         prediction, variance.
         Optionally: prediction_ts (unix seconds, for stale-prediction checks).
-    executor : OrderExecutor
-        Handles actual trade execution and safety checks. If None, an
-        OrderExecutor backed by PaperBroker is created with default settings.
+    policy : StrategyPolicy
+        The policy that decides how to distribute money among stocks
+    paper_trading : bool
+        If True (default), simulate trades with a PaperBroker using cash and
+        fee settings from config.json under ``trading_rules``.
+        If False, execute live trades via SchwabBroker — requires
+        ``schwab_client`` and ``account_number``.
     rebalance_interval_hours : float
         How often to rebalance the portfolio. 0.0 = every timestamp.
         Between rebalances, prices are still updated and stop-losses checked.
+    allow_intraday : bool
+        Passed to OrderExecutor. Set False to enforce PDT rules.
+    max_drawdown_pct : float
+        Halt trading if portfolio drops this fraction from peak.
+    stop_loss_pct : float
+        Auto-close positions that lose this fraction from average cost.
     """
 
     def __init__(
         self,
         df: pd.DataFrame,
-        executor: Optional[OrderExecutor] = None,
+        policy: StrategyPolicy,
+        paper_trading: bool = True,
         rebalance_interval_hours: float = 1.0,
-        # Kept for backward compatibility when no executor is provided
-        starting_cash: float = 100_000.0,
-        flat_fee: float = 0.0,
-        percent_fee: float = 0.0,
-        rules=None,
+        allow_intraday: bool = True,
+        max_drawdown_pct: float = 0.10,
+        stop_loss_pct: float = 0.05,
     ):
         self.df = df.sort_values("timestamp")
         self.rebalance_interval_hours = rebalance_interval_hours
         self.last_prices = {}
 
-        if executor is not None:
-            self.executor = executor
-        else:
-            self.executor = OrderExecutor(
-                broker=PaperBroker(
-                    starting_cash=starting_cash,
-                    flat_fee=flat_fee,
-                    percent_fee=percent_fee,
-                )
+        cfg = config["trading_rules"]
+        if paper_trading:
+            broker = PaperBroker(
+                starting_cash=cfg["starting_cash"],
+                flat_fee=cfg["flat_fee"],
+                percent_fee=cfg["percent_fee"],
             )
-        self.policy = StrategyPolicy(rules or [])
+        else:
+            broker = SchwabBroker()
+
+        self.executor = OrderExecutor(
+            broker=broker,
+            allow_intraday=allow_intraday,
+            max_drawdown_pct=max_drawdown_pct,
+            stop_loss_pct=stop_loss_pct,
+        )
+        self.policy = policy
 
     async def run(self):
         await self.executor._restore_intraday_state()
@@ -142,11 +159,8 @@ class TradingEngine:
         return datetime.fromtimestamp(float(val.iloc[0]), tz=timezone.utc).replace(tzinfo=None)
 
 
-def train_trading_policy(
+async def train_trading_policy(
     predictions: pd.DataFrame,
-    starting_cash: float = 100_000.0,
-    flat_fee: float = 0.0,
-    percent_fee: float = 0.0,
     rebalance_interval_hours: float = 1.0,
     allow_intraday: bool = False,
     max_drawdown_pct: float = 0.10,
@@ -165,38 +179,35 @@ def train_trading_policy(
     if missing:
         raise ValueError(f"Predictions missing required columns: {missing}")
 
-    rule = PredictionThresholdRule(
-        threshold=0,
-        aggressiveness=1.0,
-        learning_rate=0.01,
+    policy = StrategyPolicy(
+        [
+            PredictionThresholdRule(
+                threshold=0,
+                aggressiveness=1.0,
+                learning_rate=0.01,
+            )
+        ]
     )
 
-    executor = OrderExecutor(
-        broker=PaperBroker(
-            starting_cash=starting_cash,
-            flat_fee=flat_fee,
-            percent_fee=percent_fee,
-        ),
+    engine = TradingEngine(
+        df=predictions,
+        policy=policy,
+        paper_trading=True,
+        rebalance_interval_hours=rebalance_interval_hours,
         allow_intraday=allow_intraday,
         max_drawdown_pct=max_drawdown_pct,
         stop_loss_pct=stop_loss_pct,
     )
 
-    engine = TradingEngine(
-        df=predictions,
-        executor=executor,
-        rebalance_interval_hours=rebalance_interval_hours,
-        rules=[rule],
-    )
+    result = await engine.run()
 
-    result = asyncio.run(engine.run())
-
+    starting_cash = config["trading_rules"]["starting_cash"]
     returns = result["total_equity"] / starting_cash
     policy = result["policy"]
     return policy, returns
 
 
-def apply_trading_policy(
+async def apply_trading_policy(
     predictions: pd.DataFrame,
     policy: StrategyPolicy,
 ):
@@ -213,4 +224,5 @@ def apply_trading_policy(
         raise ValueError(f"Predictions missing required columns: {missing}")
     predictions = predictions.copy()
     predictions["portfolio_weight"] = policy.apply(predictions)
+
     return predictions

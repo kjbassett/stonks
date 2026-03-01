@@ -2,8 +2,6 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 import pandas as pd
-from src.trading.executor import OrderExecutor
-from src.trading.brokers.paper_broker import PaperBroker
 from src.trading.trading_engine import TradingEngine
 from src.trading.strategy import (
     InformationRatioRule,
@@ -316,53 +314,59 @@ class TestInformationRatioRule(unittest.TestCase):
         assert rule.min_ratio >= 0.0
 
 
-class TestSimulator(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        rules = [
-            PredictionThresholdRule(
-                threshold=1.0, aggressiveness=1.0, learning_rate=0.01
-            ),
-            PredictionThresholdRule(
-                threshold=1.0, aggressiveness=2.0, learning_rate=0.01
-            ),
-        ]
+class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
+    async def test_sim_applies_executes_the_right_stuff(self):
+        policy = MagicMock()
+        policy.apply = MagicMock(return_value=0)
+        policy.adapt = MagicMock()
         # rebalance_interval_hours=0 ensures every timestamp triggers a rebalance,
         # matching the original behaviour where the simulator had no throttling.
         # allow_intraday=True because both test timestamps (0 and 1) map to the same
         # calendar date (1970-01-01), so without it PDT would block sells at ts=1.
         # stop_loss_pct=1.0 disables accidental stop-loss triggers (price would need
         # to drop 100% to fire, which never happens in the test data).
-        executor = OrderExecutor(
-            PaperBroker(),
+        sim = TradingEngine(
+            df_original,
+            policy=policy,
+            rebalance_interval_hours=0.0,
             stop_loss_pct=1.0,
             allow_intraday=True,
         )
-        self.sim = TradingEngine(
-            df_original,
-            executor=executor,
-            rules=rules,
-            rebalance_interval_hours=0.0,
-        )
+        sim.executor.get_equity = AsyncMock(return_value=1.0)
+        sim.executor.execute_target_exposure = AsyncMock()
+        sim.executor.check_stop_losses = AsyncMock(return_value=[])
 
-    async def test_sim_applies_executes_the_right_stuff(self):
-        self.sim.policy.apply = MagicMock(return_value=0)
-        self.sim.policy.adapt = MagicMock()
-        self.sim.executor.get_equity = AsyncMock(return_value=1.0)
-        self.sim.executor.execute_target_exposure = AsyncMock()
-        self.sim.executor.check_stop_losses = AsyncMock(return_value=[])
-
-        await self.sim.run()
+        await sim.run()
 
         expected_iterations = len(df_original["timestamp"].unique())  # 2
-        assert self.sim.policy.apply.call_count == expected_iterations
-        assert self.sim.policy.adapt.call_count == expected_iterations - 1
+        assert sim.policy.apply.call_count == expected_iterations
+        assert sim.policy.adapt.call_count == expected_iterations - 1
         # get_equity is called twice per rebalancing iteration:
         # once inside the rebalance block (for sizing) and once for the adapt step
-        assert self.sim.executor.get_equity.call_count == expected_iterations * 2
-        assert self.sim.executor.execute_target_exposure.call_count == len(df_original.index)
-        assert self.sim.executor.check_stop_losses.call_count == expected_iterations
+        assert sim.executor.get_equity.call_count == expected_iterations * 2
+        assert sim.executor.execute_target_exposure.call_count == len(df_original.index)
+        assert sim.executor.check_stop_losses.call_count == expected_iterations
 
     async def test_sim_gives_the_right_result(self):
+        policy = StrategyPolicy([
+            PredictionThresholdRule(
+                threshold=1.0, aggressiveness=1.0, learning_rate=0.01
+            ),
+            PredictionThresholdRule(
+                threshold=1.0, aggressiveness=2.0, learning_rate=0.01
+            ),
+        ])
+        # rebalance_interval_hours=0 ensures every timestamp triggers a rebalance.
+        # allow_intraday=True because both test timestamps (0 and 1) map to the same date
+        # calendar date (1970-01-01), so without it PDT would block sells at ts=1.
+        self.sim = TradingEngine(
+            df_original,
+            policy,
+            paper_trading=True,
+            rebalance_interval_hours=0.0,
+            allow_intraday=True
+        )
+
         result = await self.sim.run()
         assert result["total_equity"] == 175000
         expected_values = {
