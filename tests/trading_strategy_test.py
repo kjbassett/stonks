@@ -326,8 +326,8 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         # stop_loss_pct=1.0 disables accidental stop-loss triggers (price would need
         # to drop 100% to fire, which never happens in the test data).
         sim = TradingEngine(
-            df_original,
             policy=policy,
+            df=df_original,
             rebalance_interval_hours=0.0,
             stop_loss_pct=1.0,
             allow_intraday=True,
@@ -336,7 +336,7 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         sim.executor.execute_target_exposure = AsyncMock()
         sim.executor.check_stop_losses = AsyncMock(return_value=[])
 
-        await sim.run()
+        await sim.backtest()
 
         expected_iterations = len(df_original["timestamp"].unique())  # 2
         assert sim.policy.apply.call_count == expected_iterations
@@ -360,14 +360,14 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         # allow_intraday=True because both test timestamps (0 and 1) map to the same date
         # calendar date (1970-01-01), so without it PDT would block sells at ts=1.
         self.sim = TradingEngine(
-            df_original,
-            policy,
+            policy=policy,
+            df=df_original,
             paper_trading=True,
             rebalance_interval_hours=0.0,
-            allow_intraday=True
+            allow_intraday=True,
         )
 
-        result = await self.sim.run()
+        result = await self.sim.backtest()
         assert result["total_equity"] == 175000
         expected_values = {
             "AS": 0.25 * 175000,

@@ -386,9 +386,9 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": train_trading_policy,
                 "args": ["predictions"],
                 "kwargs": {
-                    "starting_cash": 100_000,
-                    "flat_fee": 0.0,
-                    "percent_fee": 0.0,
+                    "rebalance_interval_hours": 1,
+                    "allow_intraday":False,
+                    "stop_loss_pct": 0.1,
                 },
                 "outputs": ["policy", "score"],
                 "run_in_parent_process": True,
