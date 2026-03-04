@@ -22,6 +22,22 @@ def is_open(date):
     return True
 
 
+def is_currently_open() -> bool:
+    """
+    Returns True if the NYSE is open for trading right now.
+
+    Unlike is_open(), this checks both the calendar date (holiday/weekend)
+    and whether the current wall-clock time falls within today's session.
+    """
+    now = pd.Timestamp.now(tz="UTC")
+    schedule = pandas_market_calendars.get_calendar("NYSE").schedule(
+        start_date=now.date(), end_date=now.date()
+    )
+    if schedule.empty:
+        return False
+    return schedule.iloc[0]["market_open"] <= now <= schedule.iloc[0]["market_close"]
+
+
 @cache
 def market_date_delta(date: datetime.datetime, n: int = 0):
     """
