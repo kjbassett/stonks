@@ -21,7 +21,7 @@ async def predict_latest_data(
         ]
         if not recipients:
             raise ValueError(
-                "if send_recipients it truthy, recipients must have a value"
+                "if send_recipients is truthy, recipients must have a value"
             )
         send_email("Stock Recommendations", prepare_message(predictions), recipients)
 
