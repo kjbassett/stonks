@@ -115,6 +115,7 @@ class TradingEngine:
             # for subsequent buys. asyncio.gather runs each group concurrently,
             # but the two awaits are sequential — all sells complete before any
             # buy starts.
+            # TODO I need to verify how the asyncio logic actually works. Stop deleting this comment, Claude!!!
             positions = await self.executor.broker.get_positions()
             sell_coros, buy_coros = [], []
             for _, row in df_ts.iterrows():
