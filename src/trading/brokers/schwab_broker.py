@@ -6,11 +6,13 @@ Flip to dry_run=False only after validating the integration against paper result
 """
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
+from src.trading.brokers.schwab_auth import SchwabAuth
 from src.trading.brokers.schwab_client import SchwabClient
 from src.trading.brokers.base_broker import BaseBroker, TradeResult
 from src.trading.portfolio import Position
@@ -20,6 +22,44 @@ from src.utils.project_utilities import config
 # Order statuses that indicate a terminal failure
 _FAILED_STATUSES = {"REJECTED", "CANCELED", "EXPIRED"}
 _FILLED_STATUS = "FILLED"
+
+_log = logging.getLogger("trading.schwab_broker")
+
+
+async def _discover_account_number(client: SchwabClient) -> str:
+    """
+    Fetch the hash value Schwab uses in API URLs for the first linked account.
+
+    Schwab's Trader API requires the *hashValue* (not the plain account number)
+    in all URL paths. This is discovered via the /accounts/accountNumbers endpoint
+    and saved to config.json for future runs.
+
+    Raises:
+        ValueError: If no accounts are returned or the response is unexpected.
+    """
+    entries = await client.get_account_numbers()
+    if not entries:
+        raise ValueError("No Schwab accounts found for this token.")
+    try:
+        hash_value = str(entries[0]["hashValue"])
+    except (KeyError, IndexError) as e:
+        raise ValueError(f"Unexpected /accounts/accountNumbers response: {e}") from e
+    _log.info(f"Auto-discovered Schwab account hash: {hash_value}")
+    _persist_account_number(hash_value)
+    return hash_value
+
+
+def _persist_account_number(account_number: str) -> None:
+    """Write the discovered account number back to config.json."""
+    try:
+        with open("config.json", "r") as f:
+            cfg = json.load(f)
+        cfg["schwab"]["account_number"] = account_number
+        with open("config.json", "w") as f:
+            json.dump(cfg, f, indent=4)
+        _log.info("Saved account number to config.json.")
+    except OSError as e:
+        _log.warning(f"Could not persist account number to config.json: {e}")
 
 
 class SchwabBroker(BaseBroker):
@@ -50,9 +90,14 @@ class SchwabBroker(BaseBroker):
         client: Optional[SchwabClient] = None,
         account_number: Optional[str] = None,
     ):
+        if client is None:
+            raise ValueError(
+                "A SchwabClient is required. Use SchwabBroker.from_auth() to "
+                "obtain one with automatic token management."
+            )
         cfg = config["schwab"]
         self.account_number = account_number or cfg["account_number"]
-        self.client = client or SchwabClient(access_token=cfg["access_token"])
+        self.client = client
         self.dry_run = dry_run
         self.order_confirm_timeout = order_confirm_timeout
         self._log = logging.getLogger("trading.schwab_broker")
@@ -61,6 +106,32 @@ class SchwabBroker(BaseBroker):
             self._log.info(
                 "SchwabBroker running in DRY RUN mode - no real orders will be placed."
             )
+
+    @classmethod
+    async def from_auth(
+        cls,
+        dry_run: bool = True,
+        order_confirm_timeout: float = 15.0,
+        account_number: Optional[str] = None,
+    ) -> "SchwabBroker":
+        """
+        Create a SchwabBroker with tokens managed automatically by SchwabAuth.
+
+        Loads saved tokens (refreshing if needed) from the token file configured
+        in config.json. If account_number is not provided and not set in config,
+        it is auto-discovered from the /accounts endpoint and saved to config.json.
+        Run SchwabAuth().authorize() once before using this.
+        """
+        client = await SchwabAuth().get_client()
+        resolved = account_number or config["schwab"].get("account_number") or ""
+        if not resolved:
+            resolved = await _discover_account_number(client)
+        return cls(
+            dry_run=dry_run,
+            order_confirm_timeout=order_confirm_timeout,
+            client=client,
+            account_number=resolved,
+        )
 
     # ------------------------------------------------------------------
     # BaseBroker
@@ -92,11 +163,19 @@ class SchwabBroker(BaseBroker):
             f"Placed {instruction} {shares_to_trade} x {symbol} | order_id={order_id}"
         )
 
-        filled = await self._wait_for_fill(order_id)
-        if not filled:
-            self._log.warning(
-                f"Order {order_id} not confirmed within {self.order_confirm_timeout}s"
+        fill_status = await self._wait_for_fill(order_id)
+        filled = fill_status == _FILLED_STATUS
+
+        if fill_status in _FAILED_STATUSES:
+            self._log.error(
+                f"Order {order_id} ended with terminal status '{fill_status}'"
             )
+        elif fill_status is None:
+            self._log.warning(
+                f"Order {order_id} not confirmed within {self.order_confirm_timeout}s. "
+                f"Attempting to cancel."
+            )
+            await self._cancel_with_retry(order_id)
 
         return TradeResult(
             symbol, float(signed), price, filled,
@@ -153,24 +232,49 @@ class SchwabBroker(BaseBroker):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _wait_for_fill(self, order_id: Optional[str]) -> bool:
+    async def _cancel_with_retry(self, order_id: str) -> None:
+        """
+        Send a cancel request for an order, retrying once on failure.
+
+        Logs each attempt and its outcome. Does not raise — a failed cancel
+        is logged as an error and callers should treat the order state as unknown.
+        """
+        for attempt in range(1, 3):
+            try:
+                await self.client.cancel_order(self.account_number, order_id)
+                self._log.info(
+                    f"Cancel request sent for order {order_id} (attempt {attempt}/2)"
+                )
+                return
+            except Exception as e:
+                self._log.error(
+                    f"Cancel attempt {attempt}/2 failed for order {order_id}: {e}",
+                    exc_info=True,
+                )
+        self._log.error(
+            f"All cancel attempts exhausted for order {order_id}. "
+            f"Order may still be active on Schwab — verify manually."
+        )
+
+    async def _wait_for_fill(self, order_id: Optional[str]) -> Optional[str]:
+        """
+        Poll until the order reaches a terminal state or the timeout expires.
+
+        Returns the final Schwab status string (e.g. "FILLED", "REJECTED"),
+        or None if the poll deadline was reached without a terminal status.
+        """
         if order_id is None:
-            return False
+            return None
         deadline = time.monotonic() + self.order_confirm_timeout
         while time.monotonic() < deadline:
             try:
                 order = await self.client.get_order(self.account_number, order_id)
                 status = order.get("status", "")
-                if status == _FILLED_STATUS:
-                    return True
-                if status in _FAILED_STATUSES:
-                    self._log.error(
-                        f"Order {order_id} ended with terminal status '{status}'"
-                    )
-                    return False
+                if status == _FILLED_STATUS or status in _FAILED_STATUSES:
+                    return status
             except Exception as e:
                 self._log.warning(
                     f"Error polling order {order_id}: {e}", exc_info=True
                 )
             await asyncio.sleep(0.5)
-        return False
+        return None

@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from src.trading.trading_engine import TradingEngine
+from src.trading.brokers.schwab_broker import SchwabBroker
 from src.utils.market_calendar import is_currently_open
 
 from ezmt.organism import Organism
@@ -53,9 +54,11 @@ async def run_auto_trading(
     model = Organism.load(model_name, model_version)
     policy = model.state["policy"]
 
+    broker = None if paper_trading else await SchwabBroker.from_auth(dry_run=False)
     engine = TradingEngine(
         policy=policy,
         paper_trading=paper_trading,
+        broker=broker,
         rebalance_interval_hours=rebalance_interval_hours,
     )
     await engine.executor._restore_intraday_state()

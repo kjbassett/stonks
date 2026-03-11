@@ -1,5 +1,6 @@
 organisms
 todo.txt
+schwab_tokens.json
 config.py
 config.json
 models/*

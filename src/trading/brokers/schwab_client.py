@@ -41,8 +41,7 @@ class SchwabClient:
         self._client = httpx.AsyncClient(
             headers={
                 "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
+                "Accept": "application/json"
             }
         )
 
@@ -83,6 +82,17 @@ class SchwabClient:
     async def get_accounts(self) -> List[Dict[str, Any]]:
         """Return a list of linked accounts with basic info."""
         return await self._get(f"{TRADER_BASE}/accounts")
+
+    async def get_account_numbers(self) -> List[Dict[str, str]]:
+        """
+        Return ``[{"accountNumber": ..., "hashValue": ...}, ...]`` for all linked accounts.
+
+        Schwab's API uses the *hashValue* in all account-specific URL paths —
+        it is NOT the same as the account number printed on your statement.
+        Use this once to discover the correct value for
+        config['schwab']['account_number'].
+        """
+        return await self._get(f"{TRADER_BASE}/accounts/accountNumbers")
 
     async def get_account(self, account_number: str, fields: str = "positions") -> Dict[str, Any]:
         """

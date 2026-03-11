@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from src.trading.executor import OrderExecutor
+from src.trading.brokers.base_broker import BaseBroker
 from src.trading.brokers.paper_broker import PaperBroker
-from src.trading.brokers.schwab_broker import SchwabBroker
 from src.trading.strategy import StrategyPolicy, PredictionThresholdRule
 from src.utils.project_utilities import config
 
@@ -43,6 +43,7 @@ class TradingEngine:
         policy: StrategyPolicy,
         df: Optional[pd.DataFrame] = None,
         paper_trading: bool = True,
+        broker: Optional[BaseBroker] = None,
         rebalance_interval_hours: float = 1.0,
         allow_intraday: bool = True,
         max_drawdown_pct: float = 0.10,
@@ -61,8 +62,11 @@ class TradingEngine:
                 flat_fee=cfg["flat_fee"],
                 percent_fee=cfg["percent_fee"],
             )
-        else:
-            broker = SchwabBroker()
+        elif broker is None:
+            raise ValueError(
+                "For live trading, pass an authenticated broker. "
+                "Use: broker = await SchwabBroker.from_auth()"
+            )
 
         self.executor = OrderExecutor(
             broker=broker,

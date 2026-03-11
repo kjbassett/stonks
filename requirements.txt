@@ -25,3 +25,4 @@ torch
 torchvision
 tqdm
 httpx
+python-dotenv
