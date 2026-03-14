@@ -12,7 +12,7 @@ from src.trading.brokers.base_broker import TradeResult
 
 
 def _make_broker(filled: bool = True, order_id: str = "oid-1") -> MagicMock:
-    """Return a mock SchwabBroker with a stubbed fill_order and client."""
+    """Return a mock SchwabBroker with stubbed methods including PDT/equity support."""
     broker = MagicMock()
     broker.account_number = "ACC123"
     broker.fill_order = AsyncMock(
@@ -30,6 +30,11 @@ def _make_broker(filled: bool = True, order_id: str = "oid-1") -> MagicMock:
     broker.client.get_quotes = AsyncMock(
         return_value={"AAPL": {"quote": {"lastPrice": 150.0}}}
     )
+    # Required by TradingEngine.restore_intraday_state()
+    broker.get_today_fills = AsyncMock(return_value=[])
+    # Required by TradingEngine.perform_safety_checks() → get_equity / get_positions
+    broker.get_equity = AsyncMock(return_value=10_000.0)
+    broker.get_positions = AsyncMock(return_value={})
     return broker
 
 
@@ -247,6 +252,29 @@ class TestExecuteManualTrade(unittest.IsolatedAsyncioTestCase):
                 await _execute_manual_trade("AAPL", 1, "auto", 60.0)
 
         # Assert — fill_order was never called
+        broker.fill_order.assert_not_awaited()
+
+    async def test_safety_check_halt_blocks_trade(self):
+        # Arrange — simulate halted engine state via a pre-populated broker
+        from src.trading.manual_trade import _execute_manual_trade
+        broker = _make_broker(filled=True)
+
+        with patch("src.trading.manual_trade.is_currently_open", return_value=True), \
+             patch("src.trading.manual_trade.SchwabBroker") as MockBroker, \
+             patch("src.trading.manual_trade.TradingEngine") as MockEngine:
+            MockBroker.from_auth = AsyncMock(return_value=broker)
+            mock_engine = MagicMock()
+            MockEngine.return_value = mock_engine
+            mock_engine.restore_intraday_state = AsyncMock()
+            mock_engine.execute_manual_trade = AsyncMock(
+                return_value=TradeResult("AAPL", 0.0, 150.0, False, "halted")
+            )
+
+            # Act
+            await _execute_manual_trade("AAPL", 1, "auto", 60.0)
+
+        # Assert — trade was attempted through engine but fill_order was not called
+        mock_engine.execute_manual_trade.assert_awaited_once()
         broker.fill_order.assert_not_awaited()
 
 

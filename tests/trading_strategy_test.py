@@ -325,6 +325,7 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         # calendar date (1970-01-01), so without it PDT would block sells at ts=1.
         # stop_loss_pct=1.0 disables accidental stop-loss triggers (price would need
         # to drop 100% to fire, which never happens in the test data).
+        from src.trading.trading_engine import SafetySignal
         sim = TradingEngine(
             policy=policy,
             df=df_original,
@@ -333,8 +334,12 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
             allow_intraday=True,
         )
         sim.executor.get_equity = AsyncMock(return_value=1.0)
-        sim.executor.execute_target_exposure = AsyncMock()
-        sim.executor.check_stop_losses = AsyncMock(return_value=[])
+        sim.executor.execute_shares = AsyncMock()
+        sim.perform_safety_checks = AsyncMock(
+            return_value=SafetySignal(
+                is_halted=False, needs_liquidation=False, stop_loss_symbols=[], positions={}
+            )
+        )
 
         await sim.backtest()
 
@@ -344,8 +349,8 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         # get_equity is called twice per rebalancing iteration:
         # once inside the rebalance block (for sizing) and once for the adapt step
         assert sim.executor.get_equity.call_count == expected_iterations * 2
-        assert sim.executor.execute_target_exposure.call_count == len(df_original.index)
-        assert sim.executor.check_stop_losses.call_count == expected_iterations
+        assert sim.executor.execute_shares.call_count == len(df_original.index)
+        assert sim.perform_safety_checks.call_count == expected_iterations
 
     async def test_sim_gives_the_right_result(self):
         policy = StrategyPolicy([

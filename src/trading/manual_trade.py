@@ -1,9 +1,8 @@
 """
 Manual single-trade plugins for live Schwab API testing.
 
-These plugins bypass the full TradingEngine and call SchwabBroker directly,
-allowing you to verify Schwab connectivity and order flow before enabling
-automated trading. Trades only execute during NYSE market hours.
+Trades route through TradingEngine so all safety checks (drawdown halt, PDT)
+are enforced. Trades only execute during NYSE market hours.
 
 Usage (web UI or direct call)::
 
@@ -19,6 +18,7 @@ from webrock.decorator import plugin
 from src.trading.brokers.base_broker import TradeResult
 from src.trading.brokers.schwab_broker import SchwabBroker
 from src.trading.brokers.schwab_client import SchwabClient
+from src.trading.trading_engine import TradingEngine
 from src.utils.market_calendar import is_currently_open
 
 _log = logging.getLogger("trading.manual")
@@ -87,7 +87,9 @@ async def _execute_manual_trade(
         f"@ ~${resolved_price:.2f} | timeout={timeout}s | cash_available=${cash:,.2f}"
     )
 
-    result = await broker.fill_order(symbol, float(shares_delta), resolved_price)
+    engine = TradingEngine(broker=broker, paper_trading=False)
+    await engine.restore_intraday_state()
+    result = await engine.execute_manual_trade(symbol, float(shares_delta), resolved_price)
     _log_trade_result(result, direction)
 
 
