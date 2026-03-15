@@ -89,7 +89,7 @@ async def _execute_manual_trade(
 
     engine = TradingEngine(broker=broker, paper_trading=False)
     await engine.restore_intraday_state()
-    result = await engine.execute_manual_trade(symbol, float(shares_delta), resolved_price)
+    result = await engine.execute_trade(symbol, float(shares_delta), resolved_price)
     _log_trade_result(result, direction)
 
 

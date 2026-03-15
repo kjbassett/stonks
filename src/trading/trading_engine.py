@@ -15,7 +15,6 @@ from src.utils.project_utilities import config
 _log = logging.getLogger("trading.engine")
 
 # TODO
-# Break safety up. Don't use one function to check everything because some rules apply per trade while some apply up one layer.
 # Pass full history of timestamps and close to paper broker.
 # Trading engine should not keep its own prices up to date. Gets it from the broker when needed
 
@@ -24,7 +23,7 @@ class TradingEngine:
     Drives a trading policy and owns all safety guardrails.
 
     Safety hierarchy:
-    - Tick-level: drawdown monitoring, stop-loss detection, halt liquidation
+    - Tick-level: stop-loss detection
     - Trade-level: PDT enforcement, stale-prediction blocking, halt-buy blocking
 
     Parameters
@@ -52,16 +51,16 @@ class TradingEngine:
 
     def __init__(
         self,
+        broker: BaseBroker,
         policy: Optional[StrategyPolicy] = None,
         df: Optional[pd.DataFrame] = None,
-        paper_trading: bool = True,
-        broker: Optional[BaseBroker] = None,
         rebalance_interval_hours: float = 1.0,
         allow_intraday: bool = True,
         max_drawdown_pct: float = 0.10,
         stop_loss_pct: float = 0.05,
         stale_prediction_hours: float = 2.0,
     ) -> None:
+        self.broker = broker
         self.df = df.sort_values("timestamp") if df is not None else None
         self.rebalance_interval_hours = rebalance_interval_hours
         self.allow_intraday = allow_intraday
@@ -77,56 +76,27 @@ class TradingEngine:
         self._intraday_buys: defaultdict = defaultdict(int)
         self._intraday_sells: defaultdict = defaultdict(int)
 
-        # setup broker
-        if paper_trading:
-            cfg = config["trading_rules"]
-            self.broker = PaperBroker(
-                starting_cash=cfg["starting_cash"],
-                flat_fee=cfg["flat_fee"],
-                percent_fee=cfg["percent_fee"],
-            )
-        elif broker is None:
-            raise ValueError(
-                "For live trading, pass an authenticated broker. "
-                "Use: broker = await SchwabBroker.from_auth()"
-            )
-        else:
-            self.broker = broker
-
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------    
 
-    async def execute_manual_trade(
-        self, symbol: str, shares_delta: float, price: float
-    ) -> TradeResult:
-        """Execute a manual trade with full safety checks via perform_safety_checks."""
-        safety = await self.perform_safety_checks()
-        trade_date = date.today()
-        return await self._execute_trade(
-            symbol, shares_delta, price, trade_date, safety=safety, trigger="manual"
-        )
-
     async def execute_target_exposure(
         self, symbol: str, target_exposure: float, price: float, equity: float,
         trade_date: Optional[date] = None,
-        bypass_safety: bool = False,
         trigger: Optional[str] = None,
     ) -> TradeResult:
         """
         Adjust symbol so its market value equals target_exposure * equity.
         Fetches the current position to compute the required delta, then calls _execute_trade.
-        Pass bypass_safety=True for forced closes (stop-loss, liquidation).
         """
         positions = await self.broker.get_positions()
         pos = positions.get(symbol, Position())
         shares_delta = (equity * target_exposure - pos.shares * price) / price
-        return await self._execute_trade(
-            symbol, shares_delta, price, trade_date,
-            bypass_safety=bypass_safety, trigger=trigger,
+        return await self.execute_trade(
+            symbol, shares_delta, price, trade_date, trigger=trigger,
         )
 
-    async def _execute_trade(
+    async def execute_trade(
         self,
         symbol: str,
         shares_delta: float,
@@ -136,10 +106,7 @@ class TradingEngine:
         trigger: Optional[str] = None,
     ) -> TradeResult:
         """
-        Apply per-trade safety filters from the SafetySignal (unless bypassed), then execute.
-
-        bypass_safety=True skips all filters — used for stop-loss and liquidation closes
-        where protection takes priority over PDT/halt rules.
+        Apply per-trade safety filters, then execute.
         trigger is stamped onto the TradeResult for audit purposes.
         """
         pdt_blocked_buys, pdt_blocked_sells = self._find_pdt_blocks(trade_date)
@@ -171,7 +138,6 @@ class TradingEngine:
             result = await self.broker.fill_order(symbol, shares_delta, price)
             result.trigger = trigger
 
-        direction = "BUY" if result.shares_delta > 0 else "SELL"
         if result.filled and result.reason != "no_change":
             _log.info(
                 f"Trade executed: {symbol} {direction} {abs(result.shares_delta):.4f} shares "
@@ -183,7 +149,7 @@ class TradingEngine:
         return result
 
     # ------------------------------------------------------------------
-    # Forced-close execution (called by step() based on SafetySignal)
+    # Forced-close execution
     # ------------------------------------------------------------------
 
     async def _execute_liquidation_sweep(
@@ -197,7 +163,7 @@ class TradingEngine:
         _log.warning(f"Drawdown liquidation: closing {len(symbols)} position(s).")
         return list(await asyncio.gather(*[
             self.execute_target_exposure(
-                s, 0.0, prices[s], 0.0, bypass_safety=True, trigger="drawdown_halt"
+                s, 0.0, prices[s], 0.0, trigger="drawdown_halt"
             )
             for s in symbols
         ]))
@@ -205,14 +171,13 @@ class TradingEngine:
     async def _execute_stop_loss_closes(
         self, symbols: List[str], prices: Dict[str, float]
     ) -> List[TradeResult]:
-        """Force-close all stop-loss-triggered positions, bypassing PDT rules."""
+        """Force-close all stop-loss-triggered positions"""
         trade_date = date.today()
         for sym in symbols:
             _log.warning(f"Stop-loss trigger: closing {sym} @ ${prices[sym]:.2f}.")
         return list(await asyncio.gather(*[
             self.execute_target_exposure(
-                sym, 0.0, prices[sym], 0.0, trade_date,
-                bypass_safety=True, trigger="stop_loss"
+                sym, 0.0, prices[sym], 0.0, trade_date, trigger="stop_loss"
             )
             for sym in symbols
         ]))
@@ -303,8 +268,7 @@ class TradingEngine:
         self,
         df_ts: pd.DataFrame,
         equity: float,
-        trade_date: date,
-        safety: "SafetySignal",
+        trade_date: date
     ) -> None:
         """Execute rebalancing trades for one timestamp: sells before buys."""
         positions = await self.broker.get_positions()
@@ -314,7 +278,7 @@ class TradingEngine:
             pos = positions.get(symbol)
             current_exposure = pos.shares * pos.market_value / equity
             
-            coro = self.execute_target_exposure(symbol, target_exposure, price, equity, trade_date=trade_date, safety)
+            coro = self.execute_target_exposure(symbol, target_exposure, price, equity, trade_date=trade_date)
             (sell_coros if target_exposure < current_exposure else buy_coros).append(coro)
         await asyncio.gather(*sell_coros)
         await asyncio.gather(*buy_coros)
@@ -335,9 +299,7 @@ class TradingEngine:
     async def step(self, df_ts: pd.DataFrame, adapt_policy: bool = True) -> None:
         """
         Process one snapshot of weighted recommendations.
-
-        Calls perform_safety_checks() to detect problems, then acts on the returned
-        SafetySignal: liquidates, closes stop-losses, or proceeds with rebalancing.
+        Checks all symbols for stop losses, then rebalnaces
 
         Parameters
         ----------
@@ -348,10 +310,11 @@ class TradingEngine:
             If True (default), call policy.adapt() after each tick.
         """
 
-        # perform safety checks
+        # check for stop losses
         stop_loss_symbols = await self._find_stop_loss_triggers()
         await self._execute_stop_loss_closes(stop_loss_symbols)
 
+        # if total equity decreased by self.max_drawdown_pct, above lines will halt engine
         if self._halted:
             return
 
@@ -431,6 +394,13 @@ async def train_trading_policy(
     if missing:
         raise ValueError(f"Predictions missing required columns: {missing}")
 
+    cfg = config["trading_rules"]
+    broker = PaperBroker(
+        starting_cash=cfg["starting_cash"],
+        flat_fee=cfg["flat_fee"],
+        percent_fee=cfg["percent_fee"],
+    )
+
     policy = StrategyPolicy(
         [
             PredictionThresholdRule(
@@ -442,9 +412,9 @@ async def train_trading_policy(
     )
 
     engine = TradingEngine(
+        broker,
         policy=policy,
         df=predictions,
-        paper_trading=True,
         rebalance_interval_hours=rebalance_interval_hours,
         allow_intraday=allow_intraday,
         max_drawdown_pct=max_drawdown_pct,
