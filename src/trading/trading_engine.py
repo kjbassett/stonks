@@ -3,9 +3,8 @@ import logging
 import pandas as pd
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
-from src.trading.executor import OrderExecutor
 from src.trading.brokers.base_broker import BaseBroker, TradeResult
 from src.trading.brokers.paper_broker import PaperBroker
 from src.trading.portfolio import Position
@@ -28,13 +27,20 @@ class SafetySignal(NamedTuple):
     needs_liquidation: bool
     stop_loss_symbols: List[str]
     positions: Dict[str, Position]
+    pdt_blocked_buys: List[str]
+    pdt_blocked_sells: List[str]
 
+
+# TODO
+# Break safety up. Don't use one function to check everything because some rules apply per trade while some apply up one layer.
+# Pass full history of timestamps and close to paper broker.
+# Trading engine should not keep its own prices up to date. Gets it from the broker when needed
 
 class TradingEngine:
     """
     Drives a trading policy and owns all safety guardrails.
 
-    Safety hierarchy (all live here, not in OrderExecutor):
+    Safety hierarchy:
     - Tick-level: drawdown monitoring, stop-loss detection, halt liquidation
     - Trade-level: PDT enforcement, stale-prediction blocking, halt-buy blocking
 
@@ -88,33 +94,177 @@ class TradingEngine:
         self._needs_liquidation: bool = False
         self._intraday_buys: defaultdict = defaultdict(int)
         self._intraday_sells: defaultdict = defaultdict(int)
-        self.executor = OrderExecutor(broker=self._init_broker(paper_trading, broker))
 
-    # ------------------------------------------------------------------
-    # Initialisation helpers
-    # ------------------------------------------------------------------
-
-    def _init_broker(
-        self, paper_trading: bool, broker: Optional[BaseBroker]
-    ) -> BaseBroker:
-        """Return the configured broker: PaperBroker from config, or the provided one."""
+        # setup broker
         if paper_trading:
             cfg = config["trading_rules"]
-            return PaperBroker(
+            self.broker = PaperBroker(
                 starting_cash=cfg["starting_cash"],
                 flat_fee=cfg["flat_fee"],
                 percent_fee=cfg["percent_fee"],
             )
-        if broker is None:
+        elif broker is None:
             raise ValueError(
                 "For live trading, pass an authenticated broker. "
                 "Use: broker = await SchwabBroker.from_auth()"
             )
-        return broker
+        else:
+            self.broker = broker
 
     # ------------------------------------------------------------------
-    # Safety state helpers
+    # Execution
+    # ------------------------------------------------------------------    
+
+    async def execute_manual_trade(
+        self, symbol: str, shares_delta: float, price: float
+    ) -> TradeResult:
+        """Execute a manual trade with full safety checks via perform_safety_checks."""
+        prices = {**self.last_prices, symbol: price}
+        safety = await self.perform_safety_checks(prices)
+        trade_date = date.today()
+        return await self._execute_trade(
+            symbol, shares_delta, price, trade_date, safety=safety, trigger="manual"
+        )
+
+    async def execute_target_exposure(
+        self, symbol: str, target_exposure: float, price: float, equity: float,
+        trade_date: Optional[date] = None,
+        bypass_safety: bool = False,
+        trigger: Optional[str] = None,
+    ) -> TradeResult:
+        """
+        Adjust symbol so its market value equals target_exposure * equity.
+        Fetches the current position to compute the required delta, then calls _execute_trade.
+        Pass bypass_safety=True for forced closes (stop-loss, liquidation).
+        """
+        positions = await self.broker.get_positions()
+        pos = positions.get(symbol, Position())
+        shares_delta = (equity * target_exposure - pos.shares * price) / price
+        return await self._execute_trade(
+            symbol, shares_delta, price, trade_date,
+            bypass_safety=bypass_safety, trigger=trigger,
+        )
+
+    async def _execute_trade(
+        self,
+        symbol: str,
+        shares_delta: float,
+        price: float,
+        trade_date: Optional[date] = None,
+        prediction_ts: Optional[datetime] = None,
+        safety: Optional["SafetySignal"] = None,
+        bypass_safety: bool = False,
+        trigger: Optional[str] = None,
+    ) -> TradeResult:
+        """
+        Apply per-trade safety filters from the SafetySignal (unless bypassed), then execute.
+
+        bypass_safety=True skips all filters — used for stop-loss and liquidation closes
+        where protection takes priority over PDT/halt rules.
+        trigger is stamped onto the TradeResult for audit purposes.
+        """
+        
+        reason = None
+        if abs(shares_delta) < 1e-6:
+            reason = "no_change"
+        if not bypass_safety and safety is not None:
+            direction = "BUY" if shares_delta > 0 else "SELL"
+            if safety.is_halted and direction == "BUY":
+                _log.warning(f"Buy blocked: trading is halted. symbol={symbol}")
+                reason = "halted"
+            elif direction == "BUY" and symbol in safety.pdt_blocked_buys:
+                _log.warning(
+                    f"PDT block: buying {symbol} would complete a same-day round-trip. "
+                    f"Set allow_intraday=True or ensure account >= $25k."
+                )
+                reason = "pdt_blocked"
+            elif direction == "SELL" and symbol in safety.pdt_blocked_sells:
+                _log.warning(
+                    f"PDT block: selling {symbol} would complete a same-day round-trip. "
+                    f"Set allow_intraday=True or ensure account >= $25k."
+                )
+                reason = "pdt_blocked"
+            elif direction == "BUY" and not self._prediction_fresh(prediction_ts):
+                _log.warning(f"Stale prediction for {symbol}: blocking buy.")
+                reason = "stale_prediction"
+        if reason is not None:
+            result = TradeResult(symbol, 0.0, price, False, reason, trigger)
+        else:
+            result = await self.broker.fill_order(symbol, shares_delta, price)
+            result.trigger = trigger
+
+        direction = "BUY" if result.shares_delta > 0 else "SELL"
+        if result.filled and result.reason != "no_change":
+            _log.info(
+                f"Trade executed: {symbol} {direction} {abs(result.shares_delta):.4f} shares "
+                f"@ ${price:.2f} | reason={result.reason}"
+            )
+            self._record_trade(symbol, trade_date or date.today(), direction)
+        elif not result.filled:
+            _log.warning(f"Trade not filled: {symbol} {direction} | reason={result.reason}")
+        return result
+
     # ------------------------------------------------------------------
+    # Forced-close execution (called by step() based on SafetySignal)
+    # ------------------------------------------------------------------
+
+    async def _execute_liquidation_sweep(
+        self, positions: Dict[str, Position], prices: Dict[str, float]
+    ) -> List[TradeResult]:
+        """Close all open positions as part of a drawdown-halt liquidation."""
+        self._needs_liquidation = False
+        symbols = [s for s in positions if s in prices and positions[s].shares > 0]
+        if not symbols:
+            return []
+        _log.warning(f"Drawdown liquidation: closing {len(symbols)} position(s).")
+        return list(await asyncio.gather(*[
+            self.execute_target_exposure(
+                s, 0.0, prices[s], 0.0, bypass_safety=True, trigger="drawdown_halt"
+            )
+            for s in symbols
+        ]))
+
+    async def _execute_stop_loss_closes(
+        self, symbols: List[str], prices: Dict[str, float]
+    ) -> List[TradeResult]:
+        """Force-close all stop-loss-triggered positions, bypassing PDT rules."""
+        trade_date = date.today()
+        for sym in symbols:
+            _log.warning(f"Stop-loss trigger: closing {sym} @ ${prices[sym]:.2f}.")
+        return list(await asyncio.gather(*[
+            self.execute_target_exposure(
+                sym, 0.0, prices[sym], 0.0, trade_date,
+                bypass_safety=True, trigger="stop_loss"
+            )
+            for sym in symbols
+        ]))
+
+    # ------------------------------------------------------------------
+    # Safety checks
+    # ------------------------------------------------------------------
+
+    async def perform_safety_checks(self, prices: Dict[str, float]) -> SafetySignal:
+        """
+        Evaluate all tick-level safety conditions. Does not execute any trades.
+
+        Fetches current equity and positions, updates drawdown state, and identifies
+        any stop-loss triggers. Returns a SafetySignal that step() uses to decide
+        whether to liquidate, close stop-losses, or proceed with normal rebalancing.
+        """
+        equity = await self.broker.get_equity(prices)
+        self._update_drawdown(equity)
+        positions = await self.broker.get_positions()
+        stop_loss_symbols = self._find_stop_loss_triggers(positions, prices)
+        trade_date = date.today()
+        pdt_blocked_buys, pdt_blocked_sells = self._find_pdt_blocks(trade_date)
+        return SafetySignal(
+            is_halted=self._halted,
+            needs_liquidation=self._needs_liquidation,
+            stop_loss_symbols=stop_loss_symbols,
+            positions=positions,
+            pdt_blocked_buys=pdt_blocked_buys,
+            pdt_blocked_sells=pdt_blocked_sells,
+        )
 
     def _update_drawdown(self, equity: float) -> None:
         """Update peak equity and set halt/liquidation flags if threshold breached."""
@@ -127,24 +277,6 @@ class TradingEngine:
                 f"TRADING HALTED: equity ${equity:,.2f} dropped "
                 f">{self.max_drawdown_pct:.0%} from peak ${self._peak_equity:,.2f}."
             )
-
-    def _pdt_allowed(self, symbol: str, trade_date: date, direction: str) -> bool:
-        """Return False and warn if this trade would complete a same-day round-trip."""
-        if self.allow_intraday:
-            return True
-        if direction == "BUY":
-            opposite, action, label = self._intraday_sells, "buying", "sell(s)"
-        else:
-            opposite, action, label = self._intraday_buys, "selling", "buy(s)"
-        count = opposite.get((symbol, trade_date), 0)
-        if count > 0:
-            _log.warning(
-                f"PDT block: {action} {symbol} would complete a same-day round-trip "
-                f"({count} same-day {label} on {trade_date}). "
-                f"Set allow_intraday=True or ensure account >= $25k."
-            )
-            return False
-        return True
 
     def _record_trade(self, symbol: str, trade_date: date, direction: str) -> None:
         """Record a completed trade for intraday PDT tracking."""
@@ -167,6 +299,20 @@ class TradingEngine:
             return True
         return (ts - self._last_rebalance_ts) >= self.rebalance_interval_hours * 3600
 
+    def _find_pdt_blocks(self, trade_date: date) -> Tuple[List[str], List[str]]:
+        """Return (blocked_buys, blocked_sells) based on today's intraday trade history."""
+        if self.allow_intraday:
+            return [], []
+        blocked_buys = [
+            sym for sym, d in self._intraday_sells
+            if d == trade_date and self._intraday_sells[(sym, d)] > 0
+        ]
+        blocked_sells = [
+            sym for sym, d in self._intraday_buys
+            if d == trade_date and self._intraday_buys[(sym, d)] > 0
+        ]
+        return blocked_buys, blocked_sells
+
     def _find_stop_loss_triggers(
         self, positions: Dict[str, Position], prices: Dict[str, float]
     ) -> List[str]:
@@ -188,125 +334,9 @@ class TradingEngine:
     async def restore_intraday_state(self) -> None:
         """Reload today's fills from broker to restore PDT tracking after a restart."""
         today = date.today()
-        fills = await self.executor.broker.get_today_fills()
+        fills = await self.broker.get_today_fills()
         for symbol, direction in fills:
             self._record_trade(symbol, today, direction)
-
-    # ------------------------------------------------------------------
-    # Tick-level safety: signal detection (no trades)
-    # ------------------------------------------------------------------
-
-    async def perform_safety_checks(self, prices: Dict[str, float]) -> SafetySignal:
-        """
-        Evaluate all tick-level safety conditions. Does not execute any trades.
-
-        Fetches current equity and positions, updates drawdown state, and identifies
-        any stop-loss triggers. Returns a SafetySignal that step() uses to decide
-        whether to liquidate, close stop-losses, or proceed with normal rebalancing.
-        """
-        equity = await self.executor.get_equity(prices)
-        self._update_drawdown(equity)
-        positions = await self.executor.broker.get_positions()
-        stop_loss_symbols = self._find_stop_loss_triggers(positions, prices)
-        return SafetySignal(
-            is_halted=self._halted,
-            needs_liquidation=self._needs_liquidation,
-            stop_loss_symbols=stop_loss_symbols,
-            positions=positions,
-        )
-
-    # ------------------------------------------------------------------
-    # Forced-close execution (called by step() based on SafetySignal)
-    # ------------------------------------------------------------------
-
-    async def _execute_liquidation_sweep(
-        self, positions: Dict[str, Position], prices: Dict[str, float]
-    ) -> List[TradeResult]:
-        """Close all open positions as part of a drawdown-halt liquidation."""
-        self._needs_liquidation = False
-        symbols = [s for s in positions if s in prices and positions[s].shares > 0]
-        if not symbols:
-            return []
-        _log.warning(f"Drawdown liquidation: closing {len(symbols)} position(s).")
-        results = await asyncio.gather(
-            *[self.executor.execute_close(s, prices[s], positions[s]) for s in symbols]
-        )
-        for r in results:
-            r.trigger = "drawdown_halt"
-        return list(results)
-
-    async def _force_close(
-        self, symbol: str, pos: Position, price: float, trade_date: date
-    ) -> TradeResult:
-        """Close a position due to stop-loss. Bypasses PDT — protection takes priority."""
-        _log.warning(
-            f"Stop-loss trigger: {symbol} current=${price:.2f} < "
-            f"avg_cost=${pos.avg_price:.2f} * {1.0 - self.stop_loss_pct:.2f}. Closing."
-        )
-        result = await self.executor.execute_close(symbol, price, pos)
-        result.trigger = "stop_loss"
-        self._record_trade(symbol, trade_date, "SELL")
-        return result
-
-    async def _execute_stop_loss_closes(
-        self,
-        symbols: List[str],
-        positions: Dict[str, Position],
-        prices: Dict[str, float],
-    ) -> List[TradeResult]:
-        """Force-close all stop-loss-triggered positions using pre-fetched data."""
-        trade_date = date.today()
-        results = await asyncio.gather(
-            *[self._force_close(sym, positions[sym], prices[sym], trade_date)
-              for sym in symbols]
-        )
-        return list(results)
-
-    # ------------------------------------------------------------------
-    # Trade-level safety + execution
-    # ------------------------------------------------------------------
-
-    async def _execute_and_record(
-        self,
-        symbol: str,
-        shares_delta: float,
-        price: float,
-        trade_date: date,
-        prediction_ts: Optional[datetime],
-    ) -> TradeResult:
-        """Apply per-trade safety checks and execute. Records for PDT on fill."""
-        direction = "BUY" if shares_delta > 0 else "SELL"
-        if self._halted and direction == "BUY":
-            return TradeResult(symbol, 0.0, price, False, "halted")
-        if not self._pdt_allowed(symbol, trade_date, direction):
-            return TradeResult(symbol, 0.0, price, False, "pdt_blocked")
-        if direction == "BUY" and not self._prediction_fresh(prediction_ts):
-            _log.warning(f"Stale prediction for {symbol}: blocking buy.")
-            return TradeResult(symbol, 0.0, price, False, "stale_prediction")
-        result = await self.executor.execute_shares(symbol, shares_delta, price)
-        if result.filled and result.reason != "no_change":
-            self._record_trade(symbol, trade_date, direction)
-        return result
-
-    # ------------------------------------------------------------------
-    # Manual trade
-    # ------------------------------------------------------------------
-
-    async def execute_manual_trade(
-        self, symbol: str, shares_delta: float, price: float
-    ) -> TradeResult:
-        """Execute a single manual trade after drawdown and PDT safety checks."""
-        trade_date = date.today()
-        direction = "BUY" if shares_delta > 0 else "SELL"
-        if self._halted:
-            _log.warning(f"Manual trade blocked: trading is halted. symbol={symbol}")
-            return TradeResult(symbol, 0.0, price, False, "halted", trigger="manual")
-        if not self._pdt_allowed(symbol, trade_date, direction):
-            return TradeResult(symbol, 0.0, price, False, "pdt_blocked", trigger="manual")
-        result = await self.executor.execute_shares(symbol, shares_delta, price)
-        if result.filled and result.reason != "no_change":
-            self._record_trade(symbol, trade_date, direction)
-        return result
 
     # ------------------------------------------------------------------
     # Rebalancing helpers
@@ -316,32 +346,28 @@ class TradingEngine:
         self,
         df_ts: pd.DataFrame,
         equity: float,
-        pred_ts: Optional[datetime],
         trade_date: date,
+        safety: "SafetySignal",
     ) -> None:
         """Execute rebalancing trades for one timestamp: sells before buys."""
-        positions = await self.executor.broker.get_positions()
+        positions = await self.broker.get_positions()
         sell_coros, buy_coros = [], []
         for _, row in df_ts.iterrows():
-            symbol = row["symbol"]
-            price = row["close"]
-            target_exposure = row["portfolio_weight"]
+            symbol, price, target_exposure = row["symbol"], row["close"], row["portfolio_weight"]
             pos = positions.get(symbol)
-            current_value = pos.shares * price if pos else 0.0
-            target_value = equity * target_exposure
-            pos_shares = pos.shares if pos else 0.0
-            shares_delta = (equity * target_exposure - pos_shares * price) / price
-            coro = self._execute_and_record(symbol, shares_delta, price, trade_date, pred_ts)
-            (sell_coros if target_value < current_value else buy_coros).append(coro)
+            current_exposure = pos.shares * pos.market_value / equity
+            
+            coro = self.execute_target_exposure(symbol, target_exposure, price, equity, trade_date=trade_date, safety)
+            (sell_coros if target_exposure < current_exposure else buy_coros).append(coro)
         await asyncio.gather(*sell_coros)
         await asyncio.gather(*buy_coros)
 
-    async def _run_adapt(self, df_ts: pd.DataFrame, did_rebalance: bool) -> None:
+    async def _run_adapt(self, df_ts: pd.DataFrame) -> None:
         """Update policy parameters based on the realized return since the last tick."""
-        equity = await self.executor.get_equity(self.last_prices)
+        equity = await self.broker.get_equity(self.last_prices)
         if self._last_equity is not None:
             realized_return = (equity - self._last_equity) / self._last_equity
-            utilization = float(df_ts["portfolio_weight"].sum()) if did_rebalance else 0.0
+            utilization = float(df_ts["portfolio_weight"].sum())
             self.policy.adapt(realized_return, utilization)
         self._last_equity = equity
 
@@ -364,34 +390,33 @@ class TradingEngine:
         adapt_policy : bool
             If True (default), call policy.adapt() after each tick.
         """
+        # update last prices
         for _, row in df_ts.iterrows():
             self.last_prices[row["symbol"]] = row["close"]
 
+        # perform safety checks
         safety = await self.perform_safety_checks(self.last_prices)
 
         if safety.needs_liquidation:
             await self._execute_liquidation_sweep(safety.positions, self.last_prices)
         elif safety.stop_loss_symbols:
-            await self._execute_stop_loss_closes(
-                safety.stop_loss_symbols, safety.positions, self.last_prices
-            )
+            await self._execute_stop_loss_closes(safety.stop_loss_symbols, self.last_prices)
+
+        if safety.is_halted:
+            return
 
         ts = float(df_ts["timestamp"].max())
-        should_rebalance = self._is_rebalance_due(ts)
-        did_rebalance = False
+        if not self._is_rebalance_due(ts):
+            return
 
-        if should_rebalance and not safety.is_halted:
-            equity = await self.executor.get_equity(self.last_prices)
-            pred_ts = self._parse_prediction_ts(df_ts)
-            trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
-            await self._run_rebalance(df_ts, equity, pred_ts, trade_date)
-            did_rebalance = True
-
-        if should_rebalance:
-            self._last_rebalance_ts = ts
-
-        if adapt_policy and self.policy is not None:
-            await self._run_adapt(df_ts, did_rebalance)
+        equity = await self.broker.get_equity(self.last_prices)
+        pred_ts = self._parse_prediction_ts(df_ts)
+        trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+        await self._run_rebalance(df_ts, equity, pred_ts, trade_date, safety)
+        if adapt_policy:
+            await self._run_adapt(df_ts)
+        self._last_rebalance_ts = ts
+            
 
     async def backtest(self, adapt_policy: bool = True) -> dict:
         """
@@ -399,7 +424,7 @@ class TradingEngine:
 
         Returns
         -------
-        dict with keys: total_equity, policy, executor, fees_paid
+        dict with keys: total_equity, policy, broker, fees_paid
         """
         if self.df is None:
             raise ValueError(
@@ -417,13 +442,13 @@ class TradingEngine:
         equity = (
             self._last_equity
             if self._last_equity is not None
-            else await self.executor.get_equity(self.last_prices)
+            else await self.broker.get_equity(self.last_prices)
         )
         return {
             "total_equity": equity,
             "policy": self.policy,
-            "executor": self.executor,
-            "fees_paid": self.executor.get_fees_paid(),
+            "broker": self.broker,
+            "fees_paid": self.broker.get_fees_paid(),
         }
 
     @staticmethod
