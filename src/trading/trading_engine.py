@@ -3,7 +3,7 @@ import logging
 import pandas as pd
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from src.trading.brokers.base_broker import BaseBroker, TradeResult
 from src.trading.brokers.paper_broker import PaperBroker
@@ -14,29 +14,24 @@ from src.utils.project_utilities import config
 
 _log = logging.getLogger("trading.engine")
 
-# TODO
-# Pass full history of timestamps and close to paper broker.
-# Trading engine should not keep its own prices up to date. Gets it from the broker when needed
 
 class TradingEngine:
     """
     Drives a trading policy and owns all safety guardrails.
 
     Safety hierarchy:
-    - Tick-level: stop-loss detection
+    - Tick-level: stop-loss detection (runs on every raw price tick in backtest)
     - Trade-level: PDT enforcement, stale-prediction blocking, halt-buy blocking
 
     Parameters
     ----------
+    broker : BaseBroker
+        The broker to execute trades through.
     policy : StrategyPolicy, optional
-        Required for backtest(). Optional for manual trades via execute_manual_trade().
+        Required for backtest(). Optional for step()-based live trading.
     df : pd.DataFrame, optional
-        Historical predictions for backtesting. Required columns:
+        Filtered prediction data for backtesting. Required columns:
         symbol, timestamp (unix seconds), close, prediction, variance.
-    paper_trading : bool
-        If True (default), use PaperBroker from config. If False, pass a broker.
-    broker : BaseBroker, optional
-        Required when paper_trading=False.
     rebalance_interval_hours : float
         Minimum gap between rebalances. 0.0 = every timestamp.
     allow_intraday : bool
@@ -68,26 +63,30 @@ class TradingEngine:
         self.stop_loss_pct = stop_loss_pct
         self.stale_prediction_hours = stale_prediction_hours
         self.policy = policy
-        self.last_prices: Dict[str, float] = {}
         self._last_rebalance_ts: Optional[float] = None
         self._last_equity: Optional[float] = None
         self._peak_equity: Optional[float] = None
         self._halted: bool = False
+        self._needs_liquidation: bool = False
         self._intraday_buys: defaultdict = defaultdict(int)
         self._intraday_sells: defaultdict = defaultdict(int)
 
     # ------------------------------------------------------------------
     # Execution
-    # ------------------------------------------------------------------    
+    # ------------------------------------------------------------------
 
     async def execute_target_exposure(
-        self, symbol: str, target_exposure: float, price: float, equity: float,
+        self,
+        symbol: str,
+        target_exposure: float,
+        price: float,
+        equity: float,
         trade_date: Optional[date] = None,
         trigger: Optional[str] = None,
     ) -> TradeResult:
         """
         Adjust symbol so its market value equals target_exposure * equity.
-        Fetches the current position to compute the required delta, then calls _execute_trade.
+        Fetches the current position to compute the required delta, then calls execute_trade.
         """
         positions = await self.broker.get_positions()
         pos = positions.get(symbol, Position())
@@ -114,7 +113,7 @@ class TradingEngine:
         direction = "BUY" if shares_delta > 0 else "SELL"
         if abs(shares_delta) < 1e-6:
             reason = "no_change"
-        elif self.is_halted and direction == "BUY":
+        elif self._halted and direction == "BUY":
             _log.warning(f"Buy blocked: trading is halted. symbol={symbol}")
             reason = "halted"
         elif direction == "BUY" and symbol in pdt_blocked_buys:
@@ -169,10 +168,9 @@ class TradingEngine:
         ]))
 
     async def _execute_stop_loss_closes(
-        self, symbols: List[str], prices: Dict[str, float]
+        self, symbols: List[str], prices: Dict[str, float], trade_date: date
     ) -> List[TradeResult]:
-        """Force-close all stop-loss-triggered positions"""
-        trade_date = date.today()
+        """Force-close all stop-loss-triggered positions."""
         for sym in symbols:
             _log.warning(f"Stop-loss trigger: closing {sym} @ ${prices[sym]:.2f}.")
         return list(await asyncio.gather(*[
@@ -196,8 +194,6 @@ class TradingEngine:
 
     def _prediction_fresh(self, prediction_ts: Optional[datetime]) -> bool:
         """Return True if prediction_ts is within the staleness threshold, or if None."""
-        # TODO this should have an argument for the backtest timestamp, 
-        # or maybe this check should be skipped if backtesting assumes trade happens on the timestamp of prediction
         if prediction_ts is None:
             return True
         age_h = (datetime.now(timezone.utc) - prediction_ts).total_seconds() / 3600.0
@@ -223,24 +219,26 @@ class TradingEngine:
         ]
         return blocked_buys, blocked_sells
 
-    async def _find_stop_loss_triggers(
-        self, positions: Dict[str, Position], prices: Dict[str, float]
+    def _find_stop_loss_triggers(
+        self, positions: Dict[str, Position], prices: Dict[str, float], equity: float
     ) -> List[str]:
-        """Return symbols whose price is below their stop-loss threshold. 
-        If the drawdown for the whole account exceeds self.max_drawdown_pct, trigger all positions and halt trading"""
-        positions = await self.broker.get_positions()
-        equity = await self.broker.get_equity()
-        if equity / self._peak_equity < (1 - self.max_drawdown_pct):
-            self._halted = True
-            _log.warning(
-                f"TRADING HALTED: equity ${equity:,.2f} dropped "
-                f">{self.max_drawdown_pct:.0%} from peak ${self._peak_equity:,.2f}."
-            )
-            return list(positions.keys())
-        
+        """
+        Return symbols whose price is below their stop-loss threshold.
+        If the account drawdown exceeds max_drawdown_pct, halt trading and return
+        all held symbols for liquidation.
+        """
+        if self._peak_equity is not None and equity < self._peak_equity * (1.0 - self.max_drawdown_pct):
+            if not self._halted:
+                self._halted = True
+                self._needs_liquidation = True
+                _log.warning(
+                    f"TRADING HALTED: equity ${equity:,.2f} dropped "
+                    f">{self.max_drawdown_pct:.0%} from peak ${self._peak_equity:,.2f}."
+                )
+            return [sym for sym, pos in positions.items() if pos.shares > 0]
+
         triggered = []
         for sym, pos in positions.items():
-            # assuming positions includes the current price
             if sym not in prices or pos.shares <= 0 or pos.avg_price <= 0:
                 continue
             if prices[sym] < pos.avg_price * (1.0 - self.stop_loss_pct):
@@ -268,17 +266,19 @@ class TradingEngine:
         self,
         df_ts: pd.DataFrame,
         equity: float,
-        trade_date: date
+        trade_date: date,
     ) -> None:
         """Execute rebalancing trades for one timestamp: sells before buys."""
         positions = await self.broker.get_positions()
         sell_coros, buy_coros = [], []
         for _, row in df_ts.iterrows():
             symbol, price, target_exposure = row["symbol"], row["close"], row["portfolio_weight"]
-            pos = positions.get(symbol)
-            current_exposure = pos.shares * pos.market_value / equity
-            
-            coro = self.execute_target_exposure(symbol, target_exposure, price, equity, trade_date=trade_date)
+            pos = positions.get(symbol, Position())
+            current_exposure = pos.market_value(price) / equity if equity > 0 else 0.0
+
+            coro = self.execute_target_exposure(
+                symbol, target_exposure, price, equity, trade_date=trade_date
+            )
             (sell_coros if target_exposure < current_exposure else buy_coros).append(coro)
         await asyncio.gather(*sell_coros)
         await asyncio.gather(*buy_coros)
@@ -298,8 +298,9 @@ class TradingEngine:
 
     async def step(self, df_ts: pd.DataFrame, adapt_policy: bool = True) -> None:
         """
-        Process one snapshot of weighted recommendations.
-        Checks all symbols for stop losses, then rebalnaces
+        Process one snapshot of weighted recommendations (live trading path).
+
+        Checks all held positions for stop losses, then rebalances if due.
 
         Parameters
         ----------
@@ -309,31 +310,48 @@ class TradingEngine:
         adapt_policy : bool
             If True (default), call policy.adapt() after each tick.
         """
+        ts = float(df_ts["timestamp"].max())
+        trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
 
-        # check for stop losses
-        stop_loss_symbols = await self._find_stop_loss_triggers()
-        await self._execute_stop_loss_closes(stop_loss_symbols)
+        positions = await self.broker.get_positions()
+        prices = {row["symbol"]: row["close"] for _, row in df_ts.iterrows()}
+        equity = await self.broker.get_equity()
 
-        # if total equity decreased by self.max_drawdown_pct, above lines will halt engine
+        if self._peak_equity is None or equity > self._peak_equity:
+            self._peak_equity = equity
+
+        stop_loss_symbols = self._find_stop_loss_triggers(positions, prices, equity)
+
         if self._halted:
+            if self._needs_liquidation:
+                await self._execute_liquidation_sweep(positions, prices)
             return
 
-        ts = float(df_ts["timestamp"].max())
+        await self._execute_stop_loss_closes(stop_loss_symbols, prices, trade_date)
+
         if not self._is_rebalance_due(ts):
             return
 
-        equity = await self.broker.get_equity(self.last_prices)
-        pred_ts = self._parse_prediction_ts(df_ts)
-        trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
-        await self._run_rebalance(df_ts, equity, pred_ts, trade_date)
+        equity = await self.broker.get_equity()
+        df_ts = df_ts.copy()
+        await self._run_rebalance(df_ts, equity, trade_date)
         if adapt_policy:
             await self._run_adapt(df_ts)
         self._last_rebalance_ts = ts
-            
 
     async def backtest(self, adapt_policy: bool = True) -> dict:
         """
-        Run the policy over the full historical DataFrame passed at init.
+        Run the policy over the full historical DataFrame.
+
+        The broker drives the tick loop via advance_time() — it steps through its
+        own price history so TradingEngine has no knowledge of timestamps or prices.
+        Stop-losses run on every tick; rebalancing only happens at timestamps
+        present in self.df (the filtered predictions).
+
+        Parameters
+        ----------
+        adapt_policy : bool
+            If True (default), call policy.adapt() after each rebalance.
 
         Returns
         -------
@@ -341,22 +359,51 @@ class TradingEngine:
         """
         if self.df is None:
             raise ValueError(
-                "df is required for backtest(). Pass df at init, or use step() for production."
+                "df is required for backtest(). Pass df at init, or use step() for live trading."
             )
         if self.policy is None:
             raise ValueError("policy is required for backtest().")
+
         self._last_rebalance_ts = None
         self._last_equity = None
+        self._peak_equity = None
+        self._halted = False
+        self._needs_liquidation = False
         await self.restore_intraday_state()
-        for _, df_ts in self.df.groupby("timestamp", sort=True):
-            df_ts = df_ts.copy()
+
+        pred_timestamps = set(self.df["timestamp"].unique())
+
+        while (ts := self.broker.advance_time()) is not None:
+            trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+
+            positions = await self.broker.get_positions()
+            prices = await self.broker.get_prices_for_positions(positions)
+            equity = await self.broker.get_equity()
+
+            if self._peak_equity is None or equity > self._peak_equity:
+                self._peak_equity = equity
+
+            stop_loss_symbols = self._find_stop_loss_triggers(positions, prices, equity)
+
+            if self._halted:
+                await self._execute_liquidation_sweep(positions, prices)
+                break
+
+            if stop_loss_symbols:
+                await self._execute_stop_loss_closes(stop_loss_symbols, prices, trade_date)
+
+            if ts not in pred_timestamps or not self._is_rebalance_due(ts):
+                continue
+
+            df_ts = self.df[self.df["timestamp"] == ts].copy()
             df_ts["portfolio_weight"] = self.policy.apply(df_ts)
-            await self.step(df_ts, adapt_policy=adapt_policy)
-        equity = (
-            self._last_equity
-            if self._last_equity is not None
-            else await self.broker.get_equity(self.last_prices)
-        )
+            equity = await self.broker.get_equity()
+            await self._run_rebalance(df_ts, equity, trade_date)
+            if adapt_policy:
+                await self._run_adapt(df_ts)
+            self._last_rebalance_ts = ts
+
+        equity = await self.broker.get_equity()
         return {
             "total_equity": equity,
             "policy": self.policy,
@@ -377,11 +424,12 @@ class TradingEngine:
 
 async def train_trading_policy(
     predictions: pd.DataFrame,
+    raw_price_data: pd.DataFrame,
     rebalance_interval_hours: float = 1.0,
     allow_intraday: bool = False,
     max_drawdown_pct: float = 0.10,
     stop_loss_pct: float = 0.05,
-):
+) -> Tuple[StrategyPolicy, float]:
     """
     Train a trading policy via market simulation.
 
@@ -396,6 +444,7 @@ async def train_trading_policy(
 
     cfg = config["trading_rules"]
     broker = PaperBroker(
+        raw_price_data,
         starting_cash=cfg["starting_cash"],
         flat_fee=cfg["flat_fee"],
         percent_fee=cfg["percent_fee"],
@@ -423,7 +472,7 @@ async def train_trading_policy(
 
     result = await engine.backtest()
 
-    starting_cash = config["trading_rules"]["starting_cash"]
+    starting_cash = cfg["starting_cash"]
     returns = result["total_equity"] / starting_cash
     policy = result["policy"]
     return policy, returns
@@ -432,7 +481,7 @@ async def train_trading_policy(
 async def apply_trading_policy(
     predictions: pd.DataFrame,
     policy: StrategyPolicy,
-):
+) -> pd.DataFrame:
     """
     Apply a trained trading policy to new data.
 
@@ -445,5 +494,4 @@ async def apply_trading_policy(
         raise ValueError(f"Predictions missing required columns: {missing}")
     predictions = predictions.copy()
     predictions["portfolio_weight"] = policy.apply(predictions)
-
     return predictions

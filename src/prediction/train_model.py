@@ -65,6 +65,7 @@ async def run_short_genetic_algorithm(
         model.dna = dna
     result = await model.run(mode="train", log_states=log_states, result_name="score")
     model.save()
+    print(result)
 
 
 def create_model_space(max_timestamp, min_timestamp):
@@ -145,9 +146,7 @@ def create_model_space(max_timestamp, min_timestamp):
             "inference": {
                 "func": load_data,
                 "kwargs": {
-                    "min_timestamp": -3600
-                    * 24
-                    * 14,  # TODO find a better way to do this
+                    "min_timestamp": -3600 * 24 * 14,
                     "max_window": "max_window",
                     "num_windows": "num_windows",
                     "num_news": "num_news",
@@ -159,7 +158,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
                     "keep_latest_only": True,
                 },
-                "outputs": ["structured_data", "text_data"],
+                "outputs": ["structured_data", "text_data", "raw_price_data"],
             },
         },
         {
@@ -384,7 +383,7 @@ def create_model_space(max_timestamp, min_timestamp):
             "name": "trading_policy",
             "train": {
                 "func": train_trading_policy,
-                "args": ["predictions"],
+                "args": ["predictions", "raw_price_data"],
                 "kwargs": {
                     "rebalance_interval_hours": 1,
                     "allow_intraday":False,

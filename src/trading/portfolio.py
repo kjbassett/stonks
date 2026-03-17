@@ -20,5 +20,6 @@ class Portfolio:
     def total_equity(self, prices: Dict[str, float]) -> float:
         equity = self.cash
         for sym, pos in self.positions.items():
-            equity += pos.market_value(prices[sym])
+            if sym in prices:
+                equity += pos.market_value(prices[sym])
         return equity

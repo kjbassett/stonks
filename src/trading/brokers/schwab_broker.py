@@ -193,7 +193,7 @@ class SchwabBroker(BaseBroker):
             )
         return result
 
-    async def get_equity(self, _: Dict[str, float]) -> float:
+    async def get_equity(self) -> float:
         """Query Schwab for current account liquidation value."""
         return await self.client.get_account_equity(self.account_number)
 

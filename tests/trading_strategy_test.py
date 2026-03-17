@@ -333,11 +333,12 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
             stop_loss_pct=1.0,
             allow_intraday=True,
         )
-        sim.executor.get_equity = AsyncMock(return_value=1.0)
-        sim.executor.execute_shares = AsyncMock()
+        sim.broker.get_equity = AsyncMock(return_value=1.0)
+        sim.execute_shares = AsyncMock()
         sim.perform_safety_checks = AsyncMock(
             return_value=SafetySignal(
-                is_halted=False, needs_liquidation=False, stop_loss_symbols=[], positions={}
+                is_halted=False, needs_liquidation=False, stop_loss_symbols=[], positions={},
+                pdt_blocked_buys=[], pdt_blocked_sells=[],
             )
         )
 
@@ -348,8 +349,8 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         assert sim.policy.adapt.call_count == expected_iterations - 1
         # get_equity is called twice per rebalancing iteration:
         # once inside the rebalance block (for sizing) and once for the adapt step
-        assert sim.executor.get_equity.call_count == expected_iterations * 2
-        assert sim.executor.execute_shares.call_count == len(df_original.index)
+        assert sim.broker.get_equity.call_count == expected_iterations * 2
+        assert sim.execute_shares.call_count == len(df_original.index)
         assert sim.perform_safety_checks.call_count == expected_iterations
 
     async def test_sim_gives_the_right_result(self):
@@ -382,5 +383,5 @@ class TestTradingEnging(unittest.IsolatedAsyncioTestCase):
         for symbol, value in expected_values.items():
             # price should be $2 each at end of simulation
             self.assertAlmostEqual(
-                result["executor"].broker.portfolio.positions[symbol].shares * 2, value
+                result["broker"].portfolio.positions[symbol].shares * 2, value
             )
