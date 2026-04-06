@@ -1,4 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cu126
+--extra-index-url https://download.pytorch.org/whl/cu130
 pandas
 pandas_market_calendars
 icecream
@@ -22,7 +22,6 @@ MissForest
 lightgbm
 git+https://github.com/kjbassett/webrock@dev
 torch
-torchvision
 tqdm
 httpx
 python-dotenv
