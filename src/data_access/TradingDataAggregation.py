@@ -1,12 +1,27 @@
+from typing import List, Tuple
+
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
 
 
 class TradingDataAggregation(BaseDAO):
+    """DAO for the TradingDataAggregation table."""
+
     def __init__(self, db: AsyncDatabase):
         super().__init__(db, "TradingDataAggregation")
 
-    async def update_missing_hourly_aggregations(self, company_id, start, end):
+    async def update_missing_hourly_aggregations(
+        self, company_ids: List[int], start: int, end: int
+    ) -> None:
+        """Update or insert hourly OHLCV aggregations for a batch of companies.
+
+        Args:
+            company_ids: IDs of the companies to aggregate.
+            start: Unix timestamp for the start of the window (inclusive).
+            end: Unix timestamp for the end of the window (exclusive).
+        """
+        placeholders = ",".join("?" * len(company_ids))
+        params: Tuple = (start, end, *company_ids, start, end, *company_ids)
         query = f"""
     WITH RowCounts AS (
         SELECT
@@ -15,9 +30,9 @@ class TradingDataAggregation(BaseDAO):
             strftime('%H', td.timestamp, 'unixepoch') AS hour,
             COUNT(*) AS row_count
         FROM TradingData td
-        WHERE td.timestamp >= {start} 
-            AND td.timestamp < {end}
-            AND td.company_id = {company_id}
+        WHERE td.timestamp >= ?
+            AND td.timestamp < ?
+            AND td.company_id IN ({placeholders})
         GROUP BY td.company_id, DATE(td.timestamp, 'unixepoch'), strftime('%H', td.timestamp, 'unixepoch')
     ),
     -- Get trading data that has not been aggregated yet.
@@ -41,9 +56,9 @@ class TradingDataAggregation(BaseDAO):
         ON td.company_id = tda.company_id
         AND DATE(td.timestamp, 'unixepoch') = tda.date
         AND strftime('%H', td.timestamp, 'unixepoch') = tda.hour
-        WHERE 
-            (td.timestamp >= {start} AND td.timestamp < {end})
-            AND td.company_id = {company_id}
+        WHERE
+            (td.timestamp >= ? AND td.timestamp < ?)
+            AND td.company_id IN ({placeholders})
             -- only include data if there is more data in the aggregation than the currently saved aggregation
             AND (tda.row_count IS NULL or rc.row_count > tda.row_count)
     ),
@@ -113,7 +128,7 @@ class TradingDataAggregation(BaseDAO):
         cv_volume = excluded.cv_volume,
         row_count = excluded.row_count;
             """
-        await self.db.execute_query(query, query_type="INSERT")
+        await self.db.execute_query(query, params, query_type="INSERT")
 
     async def clean_data(self, min_timestamp: int) -> None:
         # delete old data and data on companies with disabled ticker types
