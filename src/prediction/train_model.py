@@ -141,7 +141,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_avg_volume_ratio": "include_avg_volume_ratio",
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
                 },
-                "outputs": ["structured_data", "text_data"],
+                "outputs": ["structured_data", "text_data", "raw_price_data"],
             },
             "inference": {
                 "func": load_data,
