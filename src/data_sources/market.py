@@ -49,7 +49,7 @@ async def save_data(company_id, data):
 @plugin()
 async def fill_missing(companies: str = ""):
     try:
-        async with StocksClient(config["polygon_io"], True) as client:
+        async with StocksClient(config["polygon_io"], use_async=True) as client:
             await fill_gaps(
                 client,
                 "TradingData",
