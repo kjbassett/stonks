@@ -240,12 +240,16 @@ class SchwabClient:
     # Internal HTTP helpers
     # ------------------------------------------------------------------
 
-    async def _get(self, url: str, params: Optional[Dict] = None) -> Any:
-        resp = await self._client.get(url, params=params)
+    async def _get(self, url: str, params: Optional[Dict] = None, timeout: Optional[int] = 10) -> Any:
+        print(url)
+        print(params)
+        resp = await self._client.get(url, params=params, timeout=timeout)
         self._raise_for_status(resp)
         return resp.json()
 
     async def _raw_post(self, url: str, json: Any) -> httpx.Response:
+        print(url)
+        print(json)
         resp = await self._client.post(url, json=json)
         self._raise_for_status(resp)
         return resp

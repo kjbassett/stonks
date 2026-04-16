@@ -51,6 +51,7 @@ class PaperBroker(BaseBroker):
             {symbol: (timestamps_array, closes_array)} both sorted ascending by timestamp.
         """
         index: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        print(f"df: {df}")
         if df is None or df.empty:
             return index
         for symbol, group in df.groupby("symbol"):

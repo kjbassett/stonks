@@ -26,7 +26,8 @@ from src.utils.project_utilities import config
 
 _AUTH_ENDPOINT = "https://api.schwabapi.com/v1/oauth/authorize"
 _TOKEN_ENDPOINT = "https://api.schwabapi.com/v1/oauth/token"
-_REFRESH_BUFFER_SECONDS = 300  # refresh 5 min before expiry
+_REFRESH_BUFFER_SECONDS = 300  # refresh access token 5 min before expiry
+_REFRESH_TOKEN_BUFFER_SECONDS = 3600  # reauth 1 hour before refresh token expiry
 
 
 class SchwabAuthError(Exception):
@@ -72,11 +73,22 @@ class SchwabAuth:
         print("Authorization successful. Tokens saved.")
 
     async def refresh(self) -> None:
-        """Exchange the refresh token for a new access token and save it."""
+        """Exchange the refresh token for a new access token and save it.
+
+        If the refresh token itself is expired, falls back to the interactive
+        ``authorize()`` flow automatically (opens a browser and prompts for the
+        redirect URL on stdin).
+        """
         tokens = self._load_tokens()
         refresh_token = tokens.get("refresh_token")
-        if not refresh_token:
-            raise SchwabAuthError("No refresh token found. Run authorize() first.")
+        if _is_refresh_expired(tokens):
+            print("\nSchwab refresh token expired — starting reauthorization...")
+            self.authorize()
+            return
+        elif not refresh_token:
+            print("\nNo Schwab refresh token available. Reauthorizing...")
+            self.authorize()
+            return
         new_tokens = await self._post_token(
             {"grant_type": "refresh_token", "refresh_token": refresh_token}
         )
@@ -92,7 +104,10 @@ class SchwabAuth:
         from src.trading.brokers.schwab_client import SchwabClient
 
         tokens = self._load_tokens()
-        if _is_expired(tokens):
+        if not tokens:
+            self.authorize()
+            tokens = self._load_tokens()
+        elif _is_expired(tokens):
             await self.refresh()
             tokens = self._load_tokens()
         return SchwabClient(access_token=tokens["access_token"])
@@ -158,13 +173,11 @@ class SchwabAuth:
 
     def _load_tokens(self) -> Dict[str, Any]:
         """Read token data from the token file."""
+        if not os.path.exists(self._token_file):
+            return None
         try:
             with open(self._token_file, "r") as f:
                 return json.load(f)
-        except FileNotFoundError:
-            raise SchwabAuthError(
-                f"Token file not found at '{self._token_file}'. Run authorize() first."
-            )
         except json.JSONDecodeError as e:
             raise SchwabAuthError(f"Invalid token file '{self._token_file}': {e}")
 
@@ -180,9 +193,13 @@ class SchwabAuth:
 
 
 def _annotate_expiry(token_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Add an absolute expires_at timestamp to a token response dict."""
-    expires_in = token_data.get("expires_in", 1800)
-    token_data["expires_at"] = time.time() + expires_in
+    """Add absolute expiry timestamps for both the access and refresh tokens."""
+    print(token_data)
+    now = time.time()
+    token_data["expires_at"] = now + token_data.get("expires_in", 1800)
+    refresh_expires_in = token_data.get("refresh_token_expires_in")
+    if refresh_expires_in is not None:
+        token_data["refresh_expires_at"] = now + int(refresh_expires_in)
     return token_data
 
 
@@ -190,3 +207,12 @@ def _is_expired(tokens: Dict[str, Any]) -> bool:
     """Return True if the access token is expired or within the refresh buffer."""
     expires_at = tokens.get("expires_at", 0.0)
     return time.time() >= expires_at - _REFRESH_BUFFER_SECONDS
+
+
+def _is_refresh_expired(tokens: Dict[str, Any]) -> bool:
+    """Return True if the refresh token is expired (or expire time not available from older token storage format)
+    """
+    refresh_expires_at = tokens.get("refresh_expires_at")
+    if refresh_expires_at is None:
+        return True
+    return time.time() >= float(refresh_expires_at) - _REFRESH_TOKEN_BUFFER_SECONDS

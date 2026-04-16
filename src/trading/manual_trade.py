@@ -87,7 +87,7 @@ async def _execute_manual_trade(
         f"@ ~${resolved_price:.2f} | timeout={timeout}s | cash_available=${cash:,.2f}"
     )
 
-    engine = TradingEngine(broker=broker, paper_trading=False)
+    engine = TradingEngine(broker=broker)
     await engine.restore_intraday_state()
     result = await engine.execute_trade(symbol, float(shares_delta), resolved_price)
     _log_trade_result(result, direction)
