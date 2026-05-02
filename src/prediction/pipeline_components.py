@@ -50,7 +50,7 @@ async def load_data(
         news_data = await news_data_dao.get_all()
     else:
         news_data = None
-    return structured_data, news_data, structured_data[['symbol', 'timestamp', 'timestamp']]
+    return structured_data, news_data, structured_data[['symbol', 'timestamp', 'close']]
 
 
 def load_short_data(file_name):
