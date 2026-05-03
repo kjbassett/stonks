@@ -42,7 +42,7 @@ async def run_genetic_algorithm(
 async def run_short_genetic_algorithm(
     source_name: str,
     source_version: str = "latest",
-    gene_index: str = None,
+    start_after_gene_index: str = None,
     new_name: str = None,
     new_version: str = None,
     log_states: bool = False,
@@ -52,7 +52,7 @@ async def run_short_genetic_algorithm(
 ):
     from ezmt.organism import Organism
 
-    model = Organism.load(source_name, source_version, gene_index=gene_index)
+    model = Organism.load(source_name, source_version, gene_index=start_after_gene_index)
     model.new_version(name=new_name, version=new_version)
     if recreate_dna:
         from ezmt.model_tuner import choose_dna, validate_config
