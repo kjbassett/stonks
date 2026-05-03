@@ -133,6 +133,58 @@ class NumericalModel(nn.Module):
         return mu, var
 
 
+def _run_validation(
+    model: nn.Module,
+    test_loader: DataLoader,
+    loss_fn: nn.Module,
+    device: torch.device,
+    desc: str = "val",
+) -> tuple[float, pd.DataFrame]:
+    """Run one full validation pass. Returns (val_loss, predictions_df)."""
+    model.eval()
+    val_loss = 0.0
+    preds, variances, targets, symbols, timestamps, closes = [], [], [], [], [], []
+    with torch.no_grad():
+        for x_batch, y_batch, weights, meta in tqdm(test_loader, desc=desc):
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device).unsqueeze(1)
+            weights = weights.to(device)
+
+            mu, var = model(x_batch)
+            loss = loss_fn(mu, y_batch, var)
+            val_loss += (loss * weights).sum().item()
+
+            preds.extend(mu.cpu().numpy().flatten())
+            variances.extend(var.cpu().numpy().flatten())
+            targets.extend(y_batch.cpu().numpy().flatten())
+            symbols.extend(meta["symbol"])
+            timestamps.extend(meta["timestamp"].numpy())
+            closes.extend(meta["close"].numpy())
+
+    val_loss /= len(test_loader.dataset)
+    predictions = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "timestamp": timestamps,
+            "target": targets,
+            "prediction": preds,
+            "variance": variances,
+            "close": closes,
+        }
+    )
+    mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
+    var_mean = float(np.mean(predictions["variance"]))
+    var_p90 = float(np.percentile(predictions["variance"], 90))
+    var_max = float(np.max(predictions["variance"]))
+    optimal_var = mse / var_mean
+    print(
+        f"NLL={val_loss:.4f} MSE={mse:.4f} (MSE should not increase by a lot or be super big)\n"
+        f"var_mean={var_mean:.4e} var_p90={var_p90:.4e} var_max={var_max:.4e} (var_p90 shouldn't be >> var_mean)\n"
+        f"optimality test: {optimal_var:.4f} (should be close to 1 when varianced is reduced as far as it can with the current mu)"
+    )
+    return val_loss, predictions
+
+
 # --- Training loop for numerical-only model ---
 def train_numerical_model(
     model,
@@ -142,7 +194,7 @@ def train_numerical_model(
     epochs,
     optimizer,
     loss_fn,
-    batches_before_validation=2000,
+    batches_before_validation=50,
     patience: int = 5,
 ):
     # --- Initialization of variance_head ---
@@ -185,63 +237,8 @@ def train_numerical_model(
             if global_step % batches_before_validation != 0:
                 continue
 
-            # --- Validation ---
-            model.eval()  # signal to layers like dropout to act differently
-            val_loss = 0.0
-            preds, variances, targets, symbols, timestamps, closes = (
-                [],
-                [],
-                [],
-                [],
-                [],
-                [],
-            )
-            with torch.no_grad():  # no backward passes
-                for x_batch, y_batch, weights, meta in tqdm(
-                    test_loader, desc=f"Epoch {epoch+1} [val]"
-                ):
-                    global_step += 1
-                    x_batch = x_batch.to(device)
-                    y_batch = y_batch.to(device).unsqueeze(1)
-                    weights = weights.to(device)
-
-                    mu, var = model(x_batch)
-                    loss = loss_fn(mu, y_batch, var)
-                    loss = (loss * weights).sum()
-                    val_loss += loss.item()
-
-                    preds.extend(mu.cpu().numpy().flatten())
-                    variances.extend(var.cpu().numpy().flatten())
-                    targets.extend(y_batch.cpu().numpy().flatten())
-                    symbols.extend(meta["symbol"])
-                    timestamps.extend(meta["timestamp"].numpy())
-                    closes.extend(meta["close"].numpy())
-
-            val_loss /= len(test_loader.dataset)
-
-            predictions = pd.DataFrame(
-                {
-                    "symbol": symbols,
-                    "timestamp": timestamps,
-                    "target": targets,
-                    "prediction": preds,
-                    "variance": variances,
-                    "close": closes,
-                }
-            )
-
-            # stats for diagnostics
-            mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
-            var_mean = float(np.mean(predictions["variance"]))
-            var_p90 = float(np.percentile(predictions["variance"], 90))
-            var_max = float(np.max(predictions["variance"]))
-            optimal_var = (
-                mse / var_mean
-            )  # the estimate for variance being the same as the mean squared error
-            print(
-                f"NLL={val_loss:.4f} MSE={mse:.4f} (MSE should not increase by a lot or be super big)\n"
-                f"var_mean={var_mean:.4e} var_p90={var_p90:.4e} var_max={var_max:.4e} (var_p90 shouldn't be >> var_mean)\n"
-                f"optimality test: {optimal_var:.4f} (should be close to 1 when varianced is reduced as far as it can with the current mu)"
+            val_loss, predictions = _run_validation(
+                model, test_loader, loss_fn, device, desc=f"Epoch {epoch+1} [val]"
             )
 
             # --- track best model + optimizer ---
@@ -249,7 +246,7 @@ def train_numerical_model(
                 best_val_loss = val_loss
                 best_state_dict = copy.deepcopy(model.state_dict())
                 best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
-                best_step = global_step
+                best_epoch = epoch + 1
                 best_predictions = predictions
 
                 patience_counter = 0
@@ -257,23 +254,34 @@ def train_numerical_model(
             else:
                 patience_counter += 1
                 print(
-                    f"  ✖ No improvement " f"({patience_counter}/{patience} patience)"
+                    f"  ✖ No improvement ({patience_counter}/{patience} patience)"
                 )
 
                 if patience_counter >= patience:
                     print(
                         f"Early stopping triggered at step {global_step} "
-                        f"(best step was {best_step})"
+                        f"(best epoch was {best_epoch})"
                     )
                     stop_training = True
                     break
 
             model.train()  # switch back to training mode
 
+    # If validation never fired, do a final pass now so we always return a valid checkpoint.
+    if best_state_dict is None:
+        print("Validation never fired during training — running final validation pass.")
+        val_loss, predictions = _run_validation(
+            model, test_loader, loss_fn, device, desc="final val"
+        )
+        best_val_loss = val_loss
+        best_state_dict = copy.deepcopy(model.state_dict())
+        best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
+        best_epoch = epochs
+        best_predictions = predictions
+
     # restore best weights + optimizer state
-    if best_state_dict is not None:
-        model.load_state_dict(best_state_dict)
-        optimizer.load_state_dict(best_optimizer_state_dict)
+    model.load_state_dict(best_state_dict)
+    optimizer.load_state_dict(best_optimizer_state_dict)
 
     return (
         best_state_dict,
@@ -381,6 +389,7 @@ def train_model(
     n_news=0,
     loss_fn=nn.GaussianNLLLoss(reduction="none"),
     lr=1e-4,
+    batches_before_validation=50,
 ):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -394,7 +403,8 @@ def train_model(
     train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
 
     model_state_dict, optimizer_state_dict, epoch, val_loss, predictions = train_fn(
-        model, train_loader, test_loader, device, epochs, optimizer, loss_fn
+        model, train_loader, test_loader, device, epochs, optimizer, loss_fn,
+        batches_before_validation,
     )
 
     return model_state_dict, optimizer_state_dict, epoch, val_loss, predictions
