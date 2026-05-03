@@ -62,6 +62,22 @@ def load_short_data(file_name):
     return structured_data, None
 
 
+def split_data(
+    dataframe: pd.DataFrame, split: float = 0.8
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a dataframe into train and test sets by row order (no shuffle).
+
+    Args:
+        dataframe: The full dataset to split.
+        split: Fraction of rows to use for training.
+
+    Returns:
+        A tuple of (train_df, test_df).
+    """
+    n_train = int(split * len(dataframe))
+    return dataframe.iloc[:n_train].copy(), dataframe.iloc[n_train:].copy()
+
+
 def filter_out_missing_data(
     structured_data, missing_data_threshold, ignore_cols=None, no_tolerance_cols=None
 ):
@@ -107,30 +123,28 @@ def clip_values(df, ignore_cols=None, column_limits=None):
 
 def scale_data(
     dataframe,
+    test_df=None,
     means=None,
     stds=None,
     ignore_cols=None,
     target_col="target",
     target_transform="asinh",
 ):
-    """
-    Standardize the numeric columns of the DataFrame, ignoring object dtype columns.
+    """Standardize numeric columns of ``dataframe``, optionally applying the same
+    transform to ``test_df`` using statistics fit only on ``dataframe``.
 
-    Parameters:
-    - dataframe: pd.DataFrame
-        The input DataFrame to be standardized.
-    - means: dict, optional
-        Precomputed means of the numeric columns. If None, means will be computed.
-    - stds: dict, optional
-        Precomputed stds of the numeric columns. If None, stds will be computed.
+    Args:
+        dataframe: The DataFrame to fit and transform (training data).
+        test_df: Optional test DataFrame to transform using the same statistics.
+            Fit is never performed on this data.
+        means: Precomputed column means. If None, computed from ``dataframe``.
+        stds: Precomputed column stds. If None, computed from ``dataframe``.
+        ignore_cols: Columns to exclude from scaling.
+        target_col: Name of the target column for optional transform.
+        target_transform: Transform to apply to the target before scaling.
 
     Returns:
-    - standardized_df: pd.DataFrame
-        The standardized DataFrame.
-    - means: dict
-        Means of the numeric columns (JSON-serializable).
-    - stds: dict
-        Stds of the numeric columns (JSON-serializable).
+        A 4-tuple ``(dataframe, test_df, means, stds)`` where ``test_df`` may be None.
     """
     ignore_cols = format_ignore_cols(ignore_cols)
     numeric_cols = dataframe.select_dtypes(include=[np.number]).columns.difference(
@@ -146,16 +160,21 @@ def scale_data(
     if stds is None:
         stds = dataframe[numeric_cols].std().replace(0, 1e-8).to_dict()
 
-    # inference doesn't have the target column
-    _means = {k: v for k, v in means.items() if k in numeric_cols}
-    _stds = {k: v for k, v in stds.items() if k in numeric_cols}
+    def _apply(df):
+        cols = df.select_dtypes(include=[np.number]).columns.difference(ignore_cols)
+        _means = {k: v for k, v in means.items() if k in cols}
+        _stds = {k: v for k, v in stds.items() if k in cols}
+        df.loc[:, cols] = (df[cols] - pd.Series(_means)) / pd.Series(_stds)
+        return df
 
-    # Use .loc to avoid SettingWithCopyWarning
-    dataframe.loc[:, numeric_cols] = (
-        dataframe[numeric_cols] - pd.Series(_means)
-    ) / pd.Series(_stds)
+    dataframe = _apply(dataframe)
 
-    return dataframe, means, stds
+    if test_df is not None:
+        if target_transform == "asinh" and target_col in test_df.columns:
+            test_df[target_col] = np.arcsinh(test_df[target_col])
+        test_df = _apply(test_df)
+
+    return dataframe, test_df, means, stds
 
 
 def unscale_data(
@@ -206,34 +225,46 @@ def unscale_data(
     return predictions
 
 
+def _apply_one_hot(
+    dataframe: pd.DataFrame, encoder: OneHotEncoder, ignore_cols: list
+) -> pd.DataFrame:
+    """Apply a fitted encoder to ``dataframe`` and return the transformed DataFrame."""
+    cols_to_encode = dataframe.select_dtypes(include=["object"]).columns.difference(
+        ignore_cols
+    )
+    encoded_data = encoder.transform(dataframe[cols_to_encode])
+    encoded_df = pd.DataFrame(
+        encoded_data.toarray(), columns=encoder.get_feature_names_out(cols_to_encode)
+    )
+    return pd.concat(
+        [
+            dataframe.drop(columns=cols_to_encode).reset_index(drop=True),
+            encoded_df.reset_index(drop=True),
+        ],
+        axis=1,
+    )
+
+
 def one_hot_encode(
     dataframe: pd.DataFrame,
-    encoder=None,
+    test_df: pd.DataFrame | None = None,
+    encoder: OneHotEncoder | None = None,
     ignore_cols: list = None,
     max_categories: int = None,
 ):
-    """
-    Fit and transform the DataFrame using one-hot encoding for all object dtype columns.
-    If an encoder is provided, it will be used to transform the data.
+    """Fit and transform ``dataframe`` using one-hot encoding, optionally applying
+    the same fitted encoder to ``test_df``.
 
-    Parameters:
-    - dataframe: pd.DataFrame
-        The input DataFrame to be one-hot encoded.
-    - encoder: OneHotEncoder, optional
-        A pre-fitted OneHotEncoder. If None, a new encoder will be fitted.
-    - ignore_cols: list, optional
-        List of columns to ignore for encoding.
-    - max_categories: int, optional
-        If provided, limits the number of categories per feature.
-        Rare categories are grouped into 'infrequent' bucket.
+    Args:
+        dataframe: Training DataFrame to fit and transform.
+        test_df: Optional test DataFrame to transform using the fitted encoder.
+            Fit is never performed on this data.
+        encoder: Pre-fitted OneHotEncoder. If None, a new one is fitted on ``dataframe``.
+        ignore_cols: Columns to exclude from encoding.
+        max_categories: Cap on categories per feature; rare ones become 'infrequent'.
 
     Returns:
-    - encoder: OneHotEncoder
-        The fitted OneHotEncoder.
-    - cols_to_encode: list
-        List of columns that were encoded.
-    - transformed_df: pd.DataFrame
-        The DataFrame with one-hot encoded columns.
+        A 3-tuple ``(dataframe, test_df, encoder)`` where ``test_df`` may be None.
     """
     ignore_cols = format_ignore_cols(ignore_cols)
     cols_to_encode = dataframe.select_dtypes(include=["object"]).columns.difference(
@@ -242,59 +273,72 @@ def one_hot_encode(
     if encoder is None:
         encoder = OneHotEncoder(
             handle_unknown="ignore",
-            max_categories=max_categories,  # <-- controls category cap
+            max_categories=max_categories,
         )
-        encoded_data = encoder.fit_transform(dataframe[cols_to_encode])
-    else:
-        encoded_data = encoder.transform(dataframe[cols_to_encode])
+        encoder.fit(dataframe[cols_to_encode])
 
-    encoded_df = pd.DataFrame(
-        encoded_data.toarray(), columns=encoder.get_feature_names_out(cols_to_encode)
+    dataframe = _apply_one_hot(dataframe, encoder, ignore_cols)
+    if test_df is not None:
+        test_df = _apply_one_hot(test_df, encoder, ignore_cols)
+
+    return dataframe, test_df, encoder
+
+
+def _apply_imputer(dataframe: pd.DataFrame, imputer: MissForest, ignore_cols: list) -> pd.DataFrame:
+    """Apply a fitted imputer to ``dataframe`` and return the result."""
+    all_ignore = ignore_cols + (
+        dataframe.select_dtypes(include=["object"]).columns.difference(ignore_cols).tolist()
     )
-    dataframe = pd.concat(
-        [
-            dataframe.drop(columns=cols_to_encode).reset_index(drop=True),
-            encoded_df.reset_index(drop=True),
-        ],
-        axis=1,
+    impute_df = dataframe.drop(columns=all_ignore)
+    ignore_df = dataframe[all_ignore]
+    columns = impute_df.columns
+    imputed = pd.DataFrame(imputer.transform(impute_df), columns=columns)
+    return pd.concat(
+        [imputed.reset_index(drop=True), ignore_df.reset_index(drop=True)], axis=1
     )
 
-    return dataframe, encoder
 
+def impute(
+    dataframe: pd.DataFrame,
+    test_df: pd.DataFrame | None = None,
+    imputer=None,
+    ignore_cols=None,
+):
+    """Impute missing values in ``dataframe``, optionally applying the same fitted
+    imputer to ``test_df``.
 
-def impute(dataframe, imputer=None, ignore_cols=None):
+    Args:
+        dataframe: Training DataFrame to fit and impute.
+        test_df: Optional test DataFrame to impute using the fitted imputer.
+            Fit is never performed on this data.
+        imputer: Pre-fitted MissForest imputer. If None, a new one is fitted on ``dataframe``.
+        ignore_cols: Columns to exclude from imputation.
+
+    Returns:
+        A 3-tuple ``(dataframe, test_df, imputer)`` where ``test_df`` may be None.
+    """
     ignore_cols = format_ignore_cols(ignore_cols)
-    # We can only impute numerical columns
-    # add object cols to ignore_cols if object col is not already in ignore cols
-    ignore_cols += (
+    all_ignore = ignore_cols + (
         dataframe.select_dtypes(include=["object"])
         .columns.difference(ignore_cols)
         .tolist()
     )
 
-    # split data into imputable and non-imputable
-    impute_df = dataframe.drop(columns=ignore_cols)
-    ignore_df = dataframe[ignore_cols]
-    columns = impute_df.columns
+    impute_df = dataframe.drop(columns=all_ignore)
 
-    # check if there are any missing values before doing expensive impute operation
+    # skip expensive imputation if no missing values
     if impute_df.isnull().sum().sum() == 0:
-        return dataframe, None
+        return dataframe, test_df, imputer
 
-    # if an imputer was not supplied, create one and fit it to data
     if imputer is None:
         imputer = MissForest()
         imputer.fit(impute_df)
 
-    # impute data
-    impute_df = imputer.transform(impute_df)
-    impute_df = pd.DataFrame(impute_df, columns=columns)
+    dataframe = _apply_imputer(dataframe, imputer, ignore_cols)
+    if test_df is not None:
+        test_df = _apply_imputer(test_df, imputer, ignore_cols)
 
-    # recombine with non-imputable data
-    dataframe = pd.concat(
-        [impute_df.reset_index(drop=True), ignore_df.reset_index(drop=True)], axis=1
-    )
-    return dataframe, imputer
+    return dataframe, test_df, imputer
 
 
 def save_data(structured_data, news_data, suffix=""):

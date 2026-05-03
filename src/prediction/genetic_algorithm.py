@@ -6,6 +6,7 @@ from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (
     filter_out_missing_data,
+    split_data,
     scale_data,
     one_hot_encode,
     impute,
@@ -215,68 +216,88 @@ def create_model_space(max_timestamp, min_timestamp):
         #     },
         # },
         {
+            "name": "split_data",
+            "train": {
+                "func": split_data,
+                "args": ["structured_data"],
+                "kwargs": {"split": 0.8},
+                "outputs": ["train_data", "test_data"],
+            },
+        },
+        {
             "name": "scale_data",
             "train": {
                 "func": scale_data,
-                "args": ["structured_data"],
+                "args": ["train_data"],
                 "kwargs": {
+                    "test_df": "test_data",
                     "ignore_cols": [
                         "symbol",
                         "timestamp",
                         "hour_cos",
                         "hour_sin",
-                    ]
+                    ],
                 },
-                "outputs": ["structured_data", "means", "stds"],
+                "outputs": ["train_data", "test_data", "means", "stds"],
             },
             "inference": {
                 "func": scale_data,
-                "args": ["structured_data", "means", "stds"],
+                "args": ["structured_data"],
                 "kwargs": {
+                    "means": "means",
+                    "stds": "stds",
                     "ignore_cols": [
                         "symbol",
                         "timestamp",
                         "hour_cos",
                         "hour_sin",
-                    ]
+                    ],
                 },
-                "outputs": ["structured_data", "means", "stds"],
+                "outputs": ["structured_data", "_", "means", "stds"],
             },
         },
         {
             "name": "impute",
             "train": {
                 "func": impute,
-                "args": ["structured_data"],
-                "kwargs": {"ignore_cols": ["target", "symbol", "timestamp"]},
-                "outputs": ["structured_data", "imputer"],
+                "args": ["train_data"],
+                "kwargs": {
+                    "test_df": "test_data",
+                    "ignore_cols": ["target", "symbol", "timestamp"],
+                },
+                "outputs": ["train_data", "test_data", "imputer"],
             },
             "inference": {
                 "func": impute,
-                "args": ["structured_data", "imputer"],
-                "kwargs": {"ignore_cols": ["symbol", "timestamp"]},
-                "outputs": ["structured_data", "imputer"],
+                "args": ["structured_data"],
+                "kwargs": {
+                    "imputer": "imputer",
+                    "ignore_cols": ["symbol", "timestamp"],
+                },
+                "outputs": ["structured_data", "_", "imputer"],
             },
         },
         {
             "name": "one_hot_encode",
             "train": {
                 "func": one_hot_encode,
-                "args": ["structured_data"],
+                "args": ["train_data"],
                 "kwargs": {
+                    "test_df": "test_data",
                     "ignore_cols": ["target", "symbol", "timestamp"],
                     "max_categories": "max_one_hot_categories",
                 },
-                "outputs": ["structured_data", "one_hot_encoder"],
+                "outputs": ["train_data", "test_data", "one_hot_encoder"],
             },
             "inference": {
                 "func": one_hot_encode,
-                "args": ["structured_data", "one_hot_encoder"],
+                "args": ["structured_data"],
                 "kwargs": {
+                    "encoder": "one_hot_encoder",
                     "ignore_cols": ["symbol", "timestamp"],
                     "max_categories": "max_one_hot_categories",
                 },
-                "outputs": ["structured_data", "one_hot_encoder"],
+                "outputs": ["structured_data", "_", "one_hot_encoder"],
             },
         },
         {
@@ -284,12 +305,12 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": create_datasets,
                 "args": [
-                    "structured_data",
+                    "train_data",
                     "text_data",
                     "M-FAC/bert-tiny-finetuned-mrpc",
                     "max_text_length",
                 ],
-                "kwargs": {"split": 0.8},
+                "kwargs": {"test_data": "test_data"},
                 "outputs": ["train_dataset", "test_dataset"],
             },
             "inference": {
@@ -308,7 +329,7 @@ def create_model_space(max_timestamp, min_timestamp):
             "name": "get_structured_input_dim",
             "train": {
                 "func": get_num_x_columns,
-                "args": ["structured_data"],
+                "args": ["train_data"],
                 "kwargs": {"ignore_cols": ["symbol", "timestamp", "target"]},
                 "outputs": "structured_input_dim",
             },
@@ -353,7 +374,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "train_dataset",
                     "test_dataset",
                     "batch_size",
-                    5,  # epochs
+                    20,  # epochs
                     "num_news",
                 ],
                 "outputs": [

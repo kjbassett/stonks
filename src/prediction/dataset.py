@@ -141,31 +141,40 @@ def shuffle(df):
 
 
 async def create_datasets(
-    structured_data,
+    train_data,
     news_data=None,
     tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
     max_text_length=512,
-    split=0,
+    test_data=None,
     use_weights=False,
 ) -> list | Dataset:
-    # split structured data (numerical data)
-    if split:
-        # We don't split news data because it has a one-to-many relationship with structured data.
-        # Later on, we retrieve correct news article(s) as needed.
-        # This saves memory over joining it with the trading data
-        n_train = int(split * len(structured_data))
-        train, test = structured_data.iloc[:n_train], structured_data.iloc[n_train:]
-        # assume that training set uses weights and validation does not
+    """Create PyTorch Dataset(s) from pre-processed DataFrames.
+
+    Args:
+        train_data: Training DataFrame (or the sole DataFrame in inference mode).
+        news_data: Optional news DataFrame for hybrid text+numerical models.
+        tokenizer: HuggingFace tokenizer name for text encoding.
+        max_text_length: Maximum token length for the text encoder.
+        test_data: Pre-split test DataFrame. When provided, returns a list of
+            [train_dataset, test_dataset]. When None, returns a single dataset
+            (inference mode).
+        use_weights: Whether to apply sample weights (inference mode only).
+
+    Returns:
+        A list ``[train_dataset, test_dataset]`` when ``test_data`` is provided,
+        or a single Dataset for inference.
+    """
+    if test_data is not None:
         return [
             create_dataset(
-                train,
+                train_data,
                 use_weights=True,
                 news_data=news_data,
                 tokenizer=tokenizer,
                 max_text_length=max_text_length,
             ),
             create_dataset(
-                test,
+                test_data,
                 use_weights=False,
                 news_data=news_data,
                 tokenizer=tokenizer,
@@ -173,7 +182,7 @@ async def create_datasets(
             ),
         ]
     return create_dataset(
-        structured_data,
+        train_data,
         use_weights=use_weights,
         news_data=news_data,
         tokenizer=tokenizer,
