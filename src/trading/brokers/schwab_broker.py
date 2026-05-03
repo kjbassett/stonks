@@ -170,16 +170,20 @@ class SchwabBroker(BaseBroker):
             self._log.error(
                 f"Order {order_id} ended with terminal status '{fill_status}'"
             )
+            reason = fill_status.lower()
         elif fill_status is None:
             self._log.warning(
                 f"Order {order_id} not confirmed within {self.order_confirm_timeout}s. "
                 f"Attempting to cancel."
             )
             await self._cancel_with_retry(order_id)
+            reason = "timeout"
+        else:
+            reason = "filled"
 
         return TradeResult(
             symbol, float(signed), price, filled,
-            "filled" if filled else "unconfirmed", order_id=order_id,
+            reason, order_id=order_id,
         )
 
     async def get_positions(self) -> Dict[str, Position]:
