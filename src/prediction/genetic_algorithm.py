@@ -56,14 +56,16 @@ async def run_short_genetic_algorithm(
     model = Organism.load(source_name, source_version, gene_index=start_after_gene_index)
     model.new_version(name=new_name, version=new_version)
     if recreate_dna:
-        from ezmt.model_tuner import choose_dna, validate_config
+        from ezmt.model_tuner import choose_dna, validate_config, choose_hyperparams
 
         model_space, hyperparam_space, _ = create_model_space(
             max_timestamp, min_timestamp
         )
         model_space = validate_config(model_space, hyperparam_space)
         dna = choose_dna(model_space)
+        hyperparams = choose_hyperparams(hyperparam_space)
         model.dna = dna
+        model.parameters = hyperparams
     result = await model.run(mode="train", log_states=log_states, result_name="score")
     model.save()
     print(result)
@@ -119,6 +121,12 @@ def create_model_space(max_timestamp, min_timestamp):
         "missing_data_%_threshold": ContinuousRange(
             0, 0.000000001  # 0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
+        "negative_pair_weight": ContinuousRange(
+            0.1, 0.100000001
+        ),  # loss weight when both target and prediction are negative (0 = ignore magnitude)
+        "false_positive_weight": ContinuousRange(
+            2.0, 2.000000001
+        ),  # loss weight when target is negative but prediction is positive (buying a loser)
     }
     save_load_funcs = {
         "model_state_dict": {"save": save_torch_state, "load": load_torch_state},
@@ -377,6 +385,10 @@ def create_model_space(max_timestamp, min_timestamp):
                     20,  # epochs
                     "num_news",
                 ],
+                "kwargs": {
+                    "negative_pair_weight": "negative_pair_weight",
+                    "false_positive_weight": "false_positive_weight",
+                },
                 "outputs": [
                     "model_state_dict",
                     "optimizer_state_dict",

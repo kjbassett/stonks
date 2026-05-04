@@ -6,9 +6,54 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModel
+
+
+def asymmetric_nll_loss(
+    mu: torch.Tensor,
+    target: torch.Tensor,
+    var: torch.Tensor,
+    negative_pair_weight: float = 0.1,
+    false_positive_weight: float = 2.0,
+) -> torch.Tensor:
+    """Gaussian NLL with asymmetric weighting based on prediction/target sign.
+
+    Since we never short stocks, the model only needs to know the sign of negative
+    predictions — not their magnitude. We also upweight the worst trading mistake:
+    predicting a gain on a stock that actually falls (false positive).
+
+    Quadrant weights (target sign, prediction sign):
+      (+, +): 1.0 — normal, rank correctly
+      (+, -): 1.0 — missed opportunity, penalise normally
+      (-, +): false_positive_weight — would buy a loser, most costly
+      (-, -): negative_pair_weight — correct direction, magnitude doesn't matter
+
+    Args:
+        mu: Predicted mean, shape (N, 1).
+        target: Actual target, shape (N, 1).
+        var: Predicted variance, shape (N, 1).
+        negative_pair_weight: Loss weight when both target and prediction are negative.
+        false_positive_weight: Loss weight when target is negative but prediction is positive.
+
+    Returns:
+        Per-sample loss tensor of shape (N, 1).
+    """
+    loss = F.gaussian_nll_loss(mu, target, var, reduction="none")
+    neg_target = target < 0
+    false_positive_mask = neg_target & (mu >= 0)
+    negative_pair_mask = neg_target & (mu < 0)
+
+    # false_positive_weight > 1 must only amplify penalties, not rewards.
+    # NLL can go negative (tight variance), and multiplying a negative loss by a
+    # weight > 1 would make it more negative — rewarding a bad prediction.
+    # Clamp to 0 before amplifying so the false-positive quadrant is always a cost.
+    fp_loss = torch.clamp(loss, min=0) * false_positive_weight
+    loss = torch.where(false_positive_mask, fp_loss, loss)
+    loss = torch.where(negative_pair_mask, loss * negative_pair_weight, loss)
+    return loss
 
 
 class HybridModel(nn.Module):
@@ -391,10 +436,18 @@ def train_model(
     batch_size=32,
     epochs=10,
     n_news=0,
-    loss_fn=nn.GaussianNLLLoss(reduction="none"),
     lr=1e-4,
     batches_before_validation: int | None = None,
+    negative_pair_weight: float = 0.1,
+    false_positive_weight: float = 2.0,
 ):
+    import functools
+
+    loss_fn = functools.partial(
+        asymmetric_nll_loss,
+        negative_pair_weight=negative_pair_weight,
+        false_positive_weight=false_positive_weight,
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
