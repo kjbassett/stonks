@@ -194,9 +194,13 @@ def train_numerical_model(
     epochs,
     optimizer,
     loss_fn,
-    batches_before_validation=50,
+    batches_before_validation: int | None = None,
     patience: int = 5,
 ):
+    # Validate once per epoch by default; caller can override to a fixed interval.
+    if batches_before_validation is None:
+        batches_before_validation = len(train_loader)
+
     # --- Initialization of variance_head ---
     y_all = np.concatenate([y.numpy() for _, y, _, _ in train_loader], axis=0)
     init_var = np.var(y_all) + 1e-6
@@ -389,7 +393,7 @@ def train_model(
     n_news=0,
     loss_fn=nn.GaussianNLLLoss(reduction="none"),
     lr=1e-4,
-    batches_before_validation=50,
+    batches_before_validation: int | None = None,
 ):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
