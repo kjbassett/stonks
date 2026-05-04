@@ -131,19 +131,21 @@ class TradingEngine:
         elif direction == "BUY" and not self._prediction_fresh(prediction_ts):
             _log.warning(f"Stale prediction for {symbol}: blocking buy.")
             reason = "stale_prediction"
+        # if there is a reason to not trade
         if reason is not None:
+            # return TradeResult with 0 shares, not filled
             result = TradeResult(symbol, 0.0, price, False, reason, trigger)
         else:
             result = await self.broker.fill_order(symbol, shares_delta, price)
             result.trigger = trigger
 
-        if result.filled and result.reason != "no_change":
+        if result.filled:
             _log.info(
                 f"Trade executed: {symbol} {direction} {abs(result.shares_delta):.4f} shares "
                 f"@ ${price:.2f} | reason={result.reason}"
             )
             self._record_trade(symbol, trade_date or date.today(), direction)
-        elif not result.filled:
+        elif not result.filled and result.reason != "no_change":
             _log.warning(f"Trade not filled: {symbol} {direction} | reason={result.reason}")
         return result
 
@@ -453,9 +455,9 @@ async def train_trading_policy(
     policy = StrategyPolicy(
         [
             PredictionThresholdRule(
-                threshold=1,
+                threshold=0.125,
                 aggressiveness=1.0,
-                learning_rate=0.01,
+                learning_rate=0,
             )
         ]
     )
