@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from src.trading.brokers.base_broker import BaseBroker, TradeResult
 from src.trading.brokers.paper_broker import PaperBroker
 from src.trading.portfolio import Position
-from src.trading.strategy import StrategyPolicy, PredictionThresholdRule
+from src.trading.strategy import StrategyPolicy, InformationRatioRule
 from src.utils.project_utilities import config
 
 
@@ -454,9 +454,8 @@ async def train_trading_policy(
 
     policy = StrategyPolicy(
         [
-            PredictionThresholdRule(
-                threshold=0.125,
-                aggressiveness=1.0,
+            InformationRatioRule(
+                min_ratio=0,
                 learning_rate=0,
             )
         ]
