@@ -74,6 +74,7 @@ async def run_short_genetic_algorithm(
 def create_model_space(max_timestamp, min_timestamp):
     hyperparam_space = {
         "batch_size": DiscreteOrdinal([64]),  # neural net batch size
+        "text_model_name": DiscreteOrdinal(["M-FAC/bert-tiny-finetuned-mrpc"]),  # HuggingFace tokenizer/encoder
         "max_text_length": DiscreteOrdinal([512]),  # text encoder length
         # for price_change_offset...
         # when aggregation is minutes, seconds ahead of current row for calculating percent changes
@@ -83,7 +84,7 @@ def create_model_space(max_timestamp, min_timestamp):
             [24]  # range(24, 73)
         ),  # maximum row behind current row to see trends
         "num_windows": DiscreteOrdinal(
-            [6]  # [5, 10, 15]
+            [12]  # [5, 10, 15]
         ),  # number of points in time behind current row to compare for trends
         "num_news": DiscreteOrdinal(
             [0]
@@ -104,16 +105,16 @@ def create_model_space(max_timestamp, min_timestamp):
             [True]  # [True, False]
         ),  # include avg volume from past to current
         "include_cv_volume_ratio": DiscreteOrdinal(
-            [False]  # [True, False]
+            [True]  # [True, False]
         ),  # include coef car of volume from past to current
         "max_one_hot_categories": DiscreteOrdinal(
             [20]
         ),  # maximum number of categories/columns will be created per original column when one-hot encoding
         "n_hidden_layers": DiscreteOrdinal(
-            [5]  # [1, 2, 3, 4, 5, 6, 7]
+            [7]  # [1, 2, 3, 4, 5, 6, 7]
         ),  # number of hidden layers in NN
         "hidden_dim": DiscreteOrdinal(
-            [250]  # [100, 250, 500, 750, 1000]
+            [500]  # [100, 250, 500, 750, 1000]
         ),  # number of nodes per hidden layer
         "dropout_rate": ContinuousRange(
             0.3, 0.30000000001  # 4
@@ -122,10 +123,10 @@ def create_model_space(max_timestamp, min_timestamp):
             0, 0.000000001  # 0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
         "negative_pair_weight": ContinuousRange(
-            0.1, 0.100000001
+            0.2, 0.20000001
         ),  # loss weight when both target and prediction are negative (0 = ignore magnitude)
         "false_positive_weight": ContinuousRange(
-            2.0, 2.000000001
+            1.5, 1.50000001
         ),  # loss weight when target is negative but prediction is positive (buying a loser)
     }
     save_load_funcs = {
@@ -315,7 +316,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "args": [
                     "train_data",
                     "text_data",
-                    "M-FAC/bert-tiny-finetuned-mrpc",
+                    "text_model_name",
                     "max_text_length",
                 ],
                 "kwargs": {"test_data": "test_data"},
@@ -326,7 +327,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "args": [
                     "structured_data",
                     "text_data",
-                    "M-FAC/bert-tiny-finetuned-mrpc",
+                    "text_model_name",
                     "max_text_length",
                 ],
                 "kwargs": {"use_weights": False},
@@ -352,7 +353,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "hidden_dim",
                     "dropout_rate",
                     "num_news",
-                    "M-FAC/bert-tiny-finetuned-mrpc",
+                    "text_model_name",
                 ],
                 "outputs": ["model"],
                 "run_in_parent_process": True,  # model is not pickleable
@@ -370,7 +371,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "num_news",
                     "text_model_name",
                 ],
-                "output": ["model", "optimizer", "epoch"],
+                "outputs": ["model", "optimizer", "epoch"],
             },
         },
         {
@@ -386,6 +387,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "num_news",
                 ],
                 "kwargs": {
+                    "batches_before_validation": 1000,
                     "negative_pair_weight": "negative_pair_weight",
                     "false_positive_weight": "false_positive_weight",
                 },
@@ -437,15 +439,11 @@ def create_model_space(max_timestamp, min_timestamp):
 
 
 # TODO
-#  save state dict of model as .pth file (would normally get treated as a dict. it's actually on ordered dict)
-#  Keep symbol and timestamp (fix dataset and training logic)
-#  Add filter to latest timestamp (and age cutoff) by symbol step to inference pipeline until a better solution is found
 #  Fix flow when num_news > 0
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
-#  keep best version of nn based on val loss
-#  pytorch model should not be pickled after training because it an inference function creates it
-
+#  pytorch model should not be pickled after training because an inference function creates it
+#  log states should save entire model, but use should be able to choose after which steps
 
 def plot_moving_average(loss_history, window_size):
     # Convert the list of numbers to a pandas Series
