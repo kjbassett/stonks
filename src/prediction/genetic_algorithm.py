@@ -1,7 +1,8 @@
 import matplotlib.pyplot as plt
-import pandas as pd
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
+from typing import Union
+from plot import plot_training
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (
@@ -20,12 +21,34 @@ from src.trading.trading_engine import train_trading_policy, apply_trading_polic
 from webrock.decorator import plugin
 
 
+def _parse_log_states(value: str) -> Union[bool, int, list]:
+    """Parse a string form value into the type accepted by resolve_log_states.
+
+    Args:
+        value: "true"/"all" to log all states, "false"/"none"/empty to log
+            none, a single integer string, or comma-separated integers.
+
+    Returns:
+        True, False, a single int, or a list of ints.
+    """
+    stripped = value.strip().lower()
+    if stripped in ("true", "all"):
+        return True
+    if stripped in ("false", "none", ""):
+        return False
+    parts = [p.strip() for p in stripped.split(",") if p.strip()]
+    if len(parts) == 1:
+        return int(parts[0])
+    return [int(p) for p in parts]
+
+
 @plugin()
 async def run_genetic_algorithm(
     run_name: str,
     min_timestamp: int = 0,
     max_timestamp: int = 0,
-    log_states: bool = False,
+    log_states: str = "false",
+    organisms_dir: str = "H:/organisms",
 ):
     # define possible choices for all hyperparameters
     model_space, hyperparam_space, save_load_funcs = create_model_space(
@@ -33,9 +56,10 @@ async def run_genetic_algorithm(
     )
     # Run genetic algorithm to tune hyperparameters
     mt = ModelTuner(
-        model_space, hyperparam_space, save_load_funcs, None, "target", 1, 1
+        model_space, hyperparam_space, save_load_funcs, None, "target", 1, 1,
+        directory=organisms_dir,
     )
-    model = await mt.run(run_name, log_states=log_states)
+    model = await mt.run(run_name, log_states=_parse_log_states(log_states))
     model.save()
 
 
@@ -46,14 +70,15 @@ async def run_short_genetic_algorithm(
     start_after_gene_index: str = None,
     new_name: str = None,
     new_version: str = None,
-    log_states: bool = False,
+    log_states: str = "false",
     recreate_dna: bool = False,
     min_timestamp: int = 0,
     max_timestamp: int = 0,
+    organisms_dir: str = "H:/organisms",
 ):
     from ezmt.organism import Organism
 
-    model = Organism.load(source_name, source_version, gene_index=start_after_gene_index)
+    model = Organism.load(source_name, source_version, gene_index=start_after_gene_index, directory=organisms_dir)
     model.new_version(name=new_name, version=new_version)
     if recreate_dna:
         from ezmt.model_tuner import choose_dna, validate_config, choose_hyperparams
@@ -66,9 +91,16 @@ async def run_short_genetic_algorithm(
         hyperparams = choose_hyperparams(hyperparam_space)
         model.dna = dna
         model.parameters = hyperparams
-    result = await model.run(mode="train", log_states=log_states, result_name="score")
+    result = await model.run(mode="train", log_states=_parse_log_states(log_states), result_name="score")
     model.save()
     print(result)
+
+
+def save_figure(folder, key, fig):
+    path = f"{folder}/{key}.png"
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return path
 
 
 def create_model_space(max_timestamp, min_timestamp):
@@ -123,15 +155,18 @@ def create_model_space(max_timestamp, min_timestamp):
             0, 0.000000001  # 0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
         "negative_pair_weight": ContinuousRange(
-            0.2, 0.20000001
+            1, 1.00000001
         ),  # loss weight when both target and prediction are negative (0 = ignore magnitude)
         "false_positive_weight": ContinuousRange(
-            1.5, 1.50000001
+            1.1, 1.10000001
         ),  # loss weight when target is negative but prediction is positive (buying a loser)
     }
     save_load_funcs = {
         "model_state_dict": {"save": save_torch_state, "load": load_torch_state},
         "optimizer_state_dict": {"save": save_torch_state, "load": load_torch_state},
+        "scatter_figure": {"save": save_figure},
+        "pred_hist_figure": {"save": save_figure},
+        "loss_history_figure": {"save": save_figure},
     }
     model_space = [
         {
@@ -397,6 +432,8 @@ def create_model_space(max_timestamp, min_timestamp):
                     "epoch",
                     "val_loss",
                     "predictions",
+                    "train_loss_history",
+                    "val_loss_history",
                 ],
                 "gpu": True,
             },
@@ -413,6 +450,15 @@ def create_model_space(max_timestamp, min_timestamp):
             "outputs": "predictions",
             "run_in_parent_process": True,  # TODO this step should not have to pickle model and pass to another process
             # TODO Also model shouldn't be pickled in the first place
+        },
+        {
+            "name": "plot_training",
+            "train": {
+                "func": plot_training,
+                "args": ["predictions", "train_loss_history", "val_loss_history"],
+                "outputs": ["scatter_figure", "pred_hist_figure", "loss_history_figure"],
+                "run_in_parent_process": True,
+            },
         },
         {
             "name": "trading_policy",
@@ -445,27 +491,3 @@ def create_model_space(max_timestamp, min_timestamp):
 #  pytorch model should not be pickled after training because an inference function creates it
 #  log states should save entire model, but use should be able to choose after which steps
 
-def plot_moving_average(loss_history, window_size):
-    # Convert the list of numbers to a pandas Series
-    series = pd.Series(loss_history)
-
-    # Calculate the moving average
-    moving_average = series.rolling(window=window_size).mean()
-
-    # Plot the original data
-    plt.figure(figsize=(10, 6))
-    plt.plot(series, label="Original Data", color="blue")
-
-    # Plot the moving average
-    plt.plot(
-        moving_average, label=f"Moving Average (window={window_size})", color="red"
-    )
-
-    # Add labels and legend
-    plt.title("Moving Average Plot")
-    plt.xlabel("Index")
-    plt.ylabel("Value")
-    plt.legend()
-
-    # Show the plot
-    plt.savefig("loss_history.png")

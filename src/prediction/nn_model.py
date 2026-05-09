@@ -268,6 +268,9 @@ def train_numerical_model(
     best_epoch = None
     best_predictions = None
 
+    train_loss_history = []
+    val_loss_history = []
+
     global_step = 0
     patience_counter = 0
     stop_training = False
@@ -289,6 +292,7 @@ def train_numerical_model(
             mu, var = model(x_batch)
             loss = loss_fn(mu, y_batch, var)
             loss = (loss * weights).mean()
+            train_loss_history.append(loss.item())
             loss.backward()
             optimizer.step()
 
@@ -299,6 +303,7 @@ def train_numerical_model(
             val_loss, predictions = _run_validation(
                 model, test_loader, loss_fn, device, desc=f"Epoch {epoch+1} [val]"
             )
+            val_loss_history.append((global_step, val_loss))
 
             # --- track best model + optimizer ---
             if val_loss < best_val_loss:
@@ -337,6 +342,7 @@ def train_numerical_model(
         best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
         best_epoch = epochs
         best_predictions = predictions
+        val_loss_history.append((global_step, val_loss))
 
     # restore best weights + optimizer state
     model.load_state_dict(best_state_dict)
@@ -348,6 +354,8 @@ def train_numerical_model(
         best_epoch,
         best_val_loss,
         best_predictions,
+        train_loss_history,
+        val_loss_history,
     )
 
 
@@ -395,7 +403,7 @@ def train_hybrid_model(
         val_loss /= len(test_loader.dataset)
 
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
-    return val_loss
+    return None, None, None, val_loss, None, [], []
 
 
 def save_model(model, model_folder: str = "models", model_name: str = None):
@@ -469,12 +477,12 @@ def train_model(
 
     train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
 
-    model_state_dict, optimizer_state_dict, epoch, val_loss, predictions = train_fn(
+    model_state_dict, optimizer_state_dict, epoch, val_loss, predictions, train_loss_history, val_loss_history = train_fn(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn,
         batches_before_validation,
     )
 
-    return model_state_dict, optimizer_state_dict, epoch, val_loss, predictions
+    return model_state_dict, optimizer_state_dict, epoch, val_loss, predictions, train_loss_history, val_loss_history
 
 
 def load_model(

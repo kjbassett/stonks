@@ -213,10 +213,9 @@ def unscale_data(
         if target_col in predictions.columns:
             print("target untransform is happening!")
             predictions[target_col] = np.sinh(predictions[target_col])
+        mu_asinh = predictions["prediction"].copy()
         predictions["prediction"] = np.sinh(predictions["prediction"])
-
-        # variance stays in transformed space by design
-        # do NOT sinh variance
+        predictions["variance"] = predictions["variance"] * np.cosh(mu_asinh) ** 2
 
     if save_csv:
         dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
