@@ -111,7 +111,7 @@ def construct_inner_query(
     ctes = []  # common table expressions
     columns = ["c.symbol"]
     joins = ["JOIN Company c ON t.company_id = c.id"]
-    filters = []
+    filters = ["c.enabled = 1"]
 
     if aggregation_interval == "minute":
         table = "TradingData"

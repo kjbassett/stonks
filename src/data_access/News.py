@@ -30,7 +30,7 @@ class News(BaseDAO):
             FROM Company 
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
-            WHERE TickerType.enabled <> 1
+            WHERE TickerType.enabled <> 1 OR Company.enabled <> 1
         )"""
         await self.db.execute_query(query)
         # Delete old news items and ones with no rows in NewsCompanyLink table
@@ -43,7 +43,7 @@ class News(BaseDAO):
             FROM Company 
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
-            WHERE TickerType.enabled <> 1
+            WHERE TickerType.enabled <> 1 OR Company.enabled <> 1
         )
         OR end < ?"""
         await self.db.execute_query(query, (min_timestamp,))

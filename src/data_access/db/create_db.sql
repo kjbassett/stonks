@@ -5,6 +5,8 @@ CREATE TABLE Company (
   symbol TEXT UNIQUE NOT NULL,
   industry_id INTEGER,
   ticker_type_id TEXT,
+  primary_exchange TEXT,
+  enabled BIT NOT NULL DEFAULT 1,
   FOREIGN KEY(industry_id) REFERENCES Industry(id),
   FOREIGN KEY(ticker_type_id) REFERENCES TickerType(id)
 );

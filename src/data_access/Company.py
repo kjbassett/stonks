@@ -21,8 +21,8 @@ class Company(BaseDAO):
                 continue
             columns[i] = self.table_name + "." + columns[i]
         columns = ", ".join(columns)
-        if "enabled" not in kwargs:
-            kwargs["enabled"] = 1
+        if "Company.enabled" not in kwargs:
+            kwargs["Company.enabled"] = 1
         qry = f"SELECT {columns} FROM {self.table_name} LEFT JOIN TickerType ON Company.ticker_type_id = TickerType.id"
         params, where_clause = _create_filters(kwargs)
         qry += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""

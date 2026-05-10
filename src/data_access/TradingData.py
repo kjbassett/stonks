@@ -58,7 +58,7 @@ class TradingData(BaseDAO):
             FROM Company 
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
-            WHERE TickerType.enabled <> 1
+            WHERE TickerType.enabled <> 1 OR Company.enabled <> 1
           );
         """
         print(query)
@@ -72,7 +72,7 @@ class TradingData(BaseDAO):
             FROM Company 
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
-            WHERE TickerType.enabled <> 1
+            WHERE TickerType.enabled <> 1 OR Company.enabled <> 1
           );
         """
         print(query)

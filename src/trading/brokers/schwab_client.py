@@ -63,16 +63,28 @@ class SchwabClient:
     # Market data
     # ------------------------------------------------------------------
 
-    async def get_quotes(self, symbols: List[str]) -> Dict[str, Any]:
+    async def get_quotes(
+        self,
+        symbols: List[str],
+        fields: str = "quote,reference",
+    ) -> Dict[str, Any]:
         """
-        Fetch real-time NBBO quotes for one or more symbols.
+        Fetch real-time quotes for one or more symbols.
 
-        Returns a dict keyed by symbol, each value containing:
-          quote.lastPrice, quote.bidPrice, quote.askPrice, quote.closePrice, etc.
+        Args:
+            symbols: List of ticker symbols to query.
+            fields: Comma-separated Schwab field groups to include.
+                Valid values: quote, reference, extended, regular, fundamental.
+                Default returns NBBO quote and reference metadata.
+
+        Returns:
+            Dict keyed by symbol. Each value contains nested dicts for each
+            requested field group, e.g. quote.lastPrice, reference.exchange,
+            fundamental.marketCap.
         """
         return await self._get(
             f"{MARKET_BASE}/quotes",
-            params={"symbols": ",".join(symbols), "fields": "quote,reference"},
+            params={"symbols": ",".join(symbols), "fields": fields},
         )
 
     # ------------------------------------------------------------------

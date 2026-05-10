@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from typing import Union
-from plot import plot_training
+from stonks.src.plot import plot_training
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.prediction.pipeline_components import (

@@ -19,6 +19,7 @@ def convert_result(result):
         "symbol": result["ticker"],
         "industry_id": sic_code,
         "ticker_type_id": result["type"],
+        "primary_exchange": result.get("primary_exchange"),
     }
     return result
 
