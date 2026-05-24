@@ -1,3 +1,7 @@
+webrock.db
+.claude/
+.vscode/
+logs/*
 organisms
 todo.txt
 schwab_tokens.json
