@@ -25,3 +25,4 @@ torch
 tqdm
 httpx
 python-dotenv
+sentence-transformers

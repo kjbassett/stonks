@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoModel
 
 
 def asymmetric_nll_loss(
@@ -54,98 +53,6 @@ def asymmetric_nll_loss(
     loss = torch.where(false_positive_mask, fp_loss, loss)
     loss = torch.where(negative_pair_mask, loss * negative_pair_weight, loss)
     return loss
-
-
-class HybridModel(nn.Module):
-    def __init__(
-        self,
-        structured_input_dim: int,
-        combined_hidden_dim: int,
-        output_dim: int,
-        n_hidden_layers: int = 2,
-        text_model_name: str = "bert-base-uncased",
-        dropout_rate: float = 0.3,
-        output_activation: str = "linear",
-        freeze_text_encoder: bool = True,
-    ):
-        super().__init__()
-
-        # --- Text encoder (HuggingFace) ---
-        self.text_encoder = AutoModel.from_pretrained(text_model_name)
-        if freeze_text_encoder:
-            for param in self.text_encoder.parameters():
-                param.requires_grad = False
-        hidden_size = self.text_encoder.config.hidden_size
-
-        # Optional normalization for pooled embeddings
-        self.text_norm = nn.LayerNorm(hidden_size)
-
-        # --- Structured (numerical) branch ---
-        self.num_encoder = nn.Sequential(
-            nn.Linear(structured_input_dim, combined_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-        )
-
-        # --- Combined MLP ---
-        layers = []
-        input_dim = hidden_size + combined_hidden_dim
-        for _ in range(n_hidden_layers):
-            layers.append(nn.Linear(input_dim, combined_hidden_dim))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(dropout_rate))
-            input_dim = combined_hidden_dim
-        self.fc = nn.Sequential(*layers)
-
-        # --- Output layer ---
-        self.output_layer = nn.Linear(combined_hidden_dim, output_dim)
-        if output_activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif output_activation == "tanh":
-            self.activation = nn.Tanh()
-        elif output_activation == "relu":
-            self.activation = nn.ReLU()
-        else:
-            self.activation = nn.Identity()  # linear
-
-    def forward(self, structured_input, input_ids_list, attention_mask_list):
-        """
-        structured_input: (batch, structured_dim)
-        input_ids_list: list of tensors [(batch, seq_len), ...] for multiple news articles
-        attention_mask_list: list of tensors [(batch, seq_len), ...] matching input_ids_list
-        """
-
-        # --- Encode each article with BERT ---
-        article_embeddings = []
-        for input_ids, attn_mask in zip(input_ids_list, attention_mask_list):
-            outputs = self.text_encoder(input_ids=input_ids, attention_mask=attn_mask)
-            # CLS pooling
-            cls_emb = outputs.last_hidden_state[:, 0, :]  # (batch, hidden_size)
-            cls_emb = self.text_norm(cls_emb)
-            article_embeddings.append(cls_emb)
-
-        # Mean pooling across all articles for each example
-        if len(article_embeddings) > 0:
-            text_emb = torch.stack(article_embeddings, dim=0).mean(
-                dim=0
-            )  # (batch, hidden_size)
-        else:
-            # no news available
-            text_emb = torch.zeros(
-                structured_input.size(0), self.text_encoder.config.hidden_size
-            ).to(structured_input.device)
-
-        # --- Encode structured numeric data ---
-        num_emb = self.num_encoder(structured_input)
-
-        # --- Combine ---
-        combined = torch.cat([text_emb, num_emb], dim=1)
-        combined = self.fc(combined)
-
-        # --- Output ---
-        out = self.output_layer(combined)
-        out = self.activation(out)
-        return out
 
 
 class NumericalModel(nn.Module):
@@ -359,53 +266,6 @@ def train_numerical_model(
     )
 
 
-# --- Training loop for hybrid model (numerical + text) ---
-def train_hybrid_model(
-    model, train_loader, test_loader, device, epochs, optimizer, loss_fn
-):
-    for epoch in range(epochs):
-        model.train()
-        train_loss = 0.0
-        for structured, input_ids_list, attn_mask_list, y in tqdm(
-            train_loader, desc=f"Epoch {epoch+1} [train]"
-        ):
-            structured = structured.to(device)
-            y = y.to(device).unsqueeze(1)
-
-            input_ids_list = [x.to(device) for x in input_ids_list]
-            attn_mask_list = [x.to(device) for x in attn_mask_list]
-
-            optimizer.zero_grad()
-            y_pred = model(structured, input_ids_list, attn_mask_list)
-            loss = loss_fn(y_pred, y)
-            loss.backward()
-            optimizer.step()
-
-            train_loss += loss.item() * structured.size(0)
-        train_loss /= len(train_loader.dataset)
-
-        # --- Validation ---
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for structured, input_ids_list, attn_mask_list, y in tqdm(
-                test_loader, desc=f"Epoch {epoch+1} [val]"
-            ):
-                structured = structured.to(device)
-                y = y.to(device).unsqueeze(1)
-
-                input_ids_list = [x.to(device) for x in input_ids_list]
-                attn_mask_list = [x.to(device) for x in attn_mask_list]
-
-                y_pred = model(structured, input_ids_list, attn_mask_list)
-                loss = loss_fn(y_pred, y)
-                val_loss += loss.item() * structured.size(0)
-        val_loss /= len(test_loader.dataset)
-
-        print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}")
-    return None, None, None, val_loss, None, [], []
-
-
 def save_model(model, model_folder: str = "models", model_name: str = None):
     if model_name is None:
         pid = os.getpid()
@@ -417,48 +277,59 @@ def save_model(model, model_folder: str = "models", model_name: str = None):
 
 
 def create_model(
-    structured_input_dim,
-    n_hidden_layers,
-    hidden_dim,
-    dropout_rate,
-    n_news,
-    text_model_name=None,
-):
+    structured_input_dim: int,
+    n_hidden_layers: int,
+    hidden_dim: int,
+    dropout_rate: float,
+) -> NumericalModel:
+    """Create a NumericalModel with the given architecture.
+
+    Args:
+        structured_input_dim: Total input dimension (numerical + embedding dims).
+        n_hidden_layers: Number of hidden layers.
+        hidden_dim: Width of each hidden layer.
+        dropout_rate: Dropout probability.
+
+    Returns:
+        Initialised NumericalModel.
     """
-    creates the right type of model based on the specified arguments.
-    Current: if news articles -> hybrid model, otherwise -> numerical
-    """
-    if n_news > 0:  # --- Hybrid ---
-        return HybridModel(
-            structured_input_dim,
-            hidden_dim,
-            1,
-            n_hidden_layers,
-            text_model_name=text_model_name,
-            dropout_rate=dropout_rate,
-        )
-    else:
-        return NumericalModel(
-            structured_input_dim,
-            hidden_dim,
-            1,
-            n_hidden_layers,
-            dropout_rate=dropout_rate,
-        )
+    return NumericalModel(
+        structured_input_dim,
+        hidden_dim,
+        1,
+        n_hidden_layers,
+        dropout_rate=dropout_rate,
+    )
 
 
 def train_model(
-    model,
+    model: NumericalModel,
     train_dataset,
     test_dataset,
-    batch_size=32,
-    epochs=10,
-    n_news=0,
-    lr=1e-4,
+    batch_size: int = 32,
+    epochs: int = 10,
+    lr: float = 1e-4,
     batches_before_validation: int | None = None,
     negative_pair_weight: float = 0.1,
     false_positive_weight: float = 2.0,
-):
+) -> tuple:
+    """Train ``model`` and return the best checkpoint.
+
+    Args:
+        model: NumericalModel to train.
+        train_dataset: Training Dataset.
+        test_dataset: Validation Dataset.
+        batch_size: Mini-batch size.
+        epochs: Maximum number of epochs.
+        lr: Adam learning rate.
+        batches_before_validation: Validate every N batches (default: once per epoch).
+        negative_pair_weight: Loss weight when both target and prediction are negative.
+        false_positive_weight: Loss weight when target is negative but prediction positive.
+
+    Returns:
+        7-tuple: (model_state_dict, optimizer_state_dict, epoch, val_loss,
+                  predictions, train_loss_history, val_loss_history).
+    """
     import functools
 
     loss_fn = functools.partial(
@@ -466,52 +337,46 @@ def train_model(
         negative_pair_weight=negative_pair_weight,
         false_positive_weight=false_positive_weight,
     )
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    # TODO already shuffling here. Remove shuffling from create_datasets
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    train_fn = train_hybrid_model if n_news > 0 else train_numerical_model
-
-    model_state_dict, optimizer_state_dict, epoch, val_loss, predictions, train_loss_history, val_loss_history = train_fn(
+    return train_numerical_model(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn,
         batches_before_validation,
     )
 
-    return model_state_dict, optimizer_state_dict, epoch, val_loss, predictions, train_loss_history, val_loss_history
-
 
 def load_model(
-    model_state,
-    optimizer_state,
-    epoch,
-    structured_input_dim,
-    n_hidden_layers,
-    hidden_dim,
-    dropout_rate,
-    n_news,
-    text_model_name=None,
-    lr=1e-4,
-):
-    # recreate architecture
-    model = create_model(
-        structured_input_dim,
-        n_hidden_layers,
-        hidden_dim,
-        dropout_rate,
-        n_news,
-        text_model_name=text_model_name,
-    )
+    model_state: dict,
+    optimizer_state: dict,
+    epoch: int,
+    structured_input_dim: int,
+    n_hidden_layers: int,
+    hidden_dim: int,
+    dropout_rate: float,
+    lr: float = 1e-4,
+) -> tuple:
+    """Recreate a NumericalModel and restore saved weights.
 
-    # load and apply state
+    Args:
+        model_state: state_dict from a previous training run.
+        optimizer_state: optimizer state_dict from a previous training run.
+        epoch: Last training epoch (passed through unchanged).
+        structured_input_dim: Model input dimension.
+        n_hidden_layers: Number of hidden layers.
+        hidden_dim: Width of each hidden layer.
+        dropout_rate: Dropout probability.
+        lr: Adam learning rate.
+
+    Returns:
+        Tuple of (model, optimizer, epoch).
+    """
+    model = create_model(structured_input_dim, n_hidden_layers, hidden_dim, dropout_rate)
     model.load_state_dict(model_state)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     optimizer.load_state_dict(optimizer_state)
-
     return model, optimizer, epoch
 
 
@@ -524,7 +389,7 @@ def infer(model, dataset):
 
     preds, variances, symbols, timestamps, closes = [], [], [], [], []
     with torch.no_grad():
-        for x_batch, _, meta in tqdm(data_loader, desc="Running inference"):
+        for x_batch, _, _weights, meta in tqdm(data_loader, desc="Running inference"):
             x_batch = x_batch.to(device)
             meta = {
                 k: v.numpy() if isinstance(v, torch.Tensor) else v

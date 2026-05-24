@@ -51,7 +51,6 @@ class DataCompiler(BaseDAO):
         for col in data.columns:
             if col[:2] == "rn":
                 data = data.drop(columns=[col])
-        data.to_csv("data.csv", index=False)
         print(data.dtypes)
         return data
 
@@ -167,7 +166,6 @@ def construct_inner_query(
         aggregation_interval,
         num_news,
         news_history_threshold,
-        get_ids=aggregation_interval == "minute",
     )
     ctes += news_cte
     columns += news_cols
@@ -342,15 +340,23 @@ def construct_dt_columns(aggregation_interval):
 
 
 def construct_news_columns(
-    aggregation_interval,
-    num_news,
-    news_history_threshold,
-    get_ids=False,
-):
+    aggregation_interval: str,
+    num_news: int,
+    news_history_threshold: int,
+) -> tuple:
+    """Build CTEs, columns, and joins for news ID, sentiment, and age features.
+
+    Args:
+        aggregation_interval: Aggregation level ('minute' or 'hour').
+        num_news: Number of most-recent news articles to include per row.
+        news_history_threshold: Maximum news age in seconds.
+
+    Returns:
+        A 3-tuple of (ctes, columns, joins) lists.
+    """
     if num_news < 1:
         return [], [], []
 
-    # define which tables and columns to use
     if aggregation_interval == "minute":
         t_col = "t.timestamp"
         table = "TradingData"
@@ -358,13 +364,14 @@ def construct_news_columns(
         t_col = "t.end"
         table = "TradingDataAggregation"
     else:
-        raise ValueError("Unsupported aggregation interval")
+        raise ValueError(f"Unsupported aggregation interval: {aggregation_interval}")
 
     cte = [
         f"""
     RankedNews AS (
     SELECT
-        {'n.id AS news_id' if get_ids else 'n.body AS body'},
+        n.id AS news_id,
+        ncl.sentiment,
         n.timestamp,
         t.company_id,
         {t_col} AS trade_ts,
@@ -372,23 +379,25 @@ def construct_news_columns(
     FROM {table} t
     JOIN NewsCompanyLink ncl ON t.company_id = ncl.company_id
     JOIN News n ON ncl.news_id = n.id
-    WHERE n.timestamp <= {t_col} -- TODO might want to simulate the time between news and trading data irl
+    WHERE n.timestamp <= {t_col}
     AND n.timestamp >= {t_col} - {news_history_threshold}
     )"""
     ]
     columns = []
     joins = []
     for i in range(1, num_news + 1):
-        if get_ids:
-            columns.append(f"n{i}.news_id AS news{i}_id")
-        else:
-            columns.append(
-                f"c.symbol || ' ' || c.name || ' ' || n{i}.body as news{i}"
-            )  # sqlite string concat
-        joins.append(
-            f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
+        columns.append(f"n{i}.news_id AS news{i}_id")
+        columns.append(
+            f"CASE n{i}.sentiment "
+            f"WHEN 'positive' THEN 1.0 "
+            f"WHEN 'negative' THEN -1.0 "
+            f"ELSE 0.0 END AS news{i}_sentiment"
         )
         columns.append(f"{t_col} - n{i}.timestamp AS news{i}_age")
+        joins.append(
+            f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id"
+            f" AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
+        )
     return cte, columns, joins
 
 
@@ -433,15 +442,33 @@ def construct_calculated_columns(
     # first window is always 0, which is just the current row
     windows = windows[1:]
 
+    # Minimum lagged value for cv columns before treating the ratio as NULL.
+    # cv_close can suffer catastrophic cancellation (sqrt(a²-a²) ≈ 1e-8 instead
+    # of 0.0), producing ratios in the hundreds of thousands.  A floor of 1e-4
+    # (well above float noise, well below the typical cv value of 0.001–0.01)
+    # converts those pathological rows to NULL so the missing-data filter drops
+    # them rather than letting them corrupt z-score normalization.
+    _cv_ratio_floor = {
+        "cv_close": 1e-4,
+        "cv_volume": 1e-2,
+    }
+
     # create columns which are comparisons between current data and past data
     calc_columns = []
     for offset in windows:
         for col, include in flag_columns.items():
-            # current price / past price for current company in the past window
-            # "normalize" past data relative to current data
-            calc_columns.append(
-                f"(t.{col} / LAG(t.{col}, {offset}) OVER (PARTITION BY t.company_id ORDER BY {ts_col})) AS {col}_ratio_lag_{offset}"
+            if not include:
+                continue
+            lag = (
+                f"LAG(t.{col}, {offset}) OVER "
+                f"(PARTITION BY t.company_id ORDER BY {ts_col})"
             )
+            floor = _cv_ratio_floor.get(col, 0.0)
+            if floor > 0.0:
+                expr = f"(CASE WHEN {lag} < {floor} THEN NULL ELSE t.{col} / {lag} END)"
+            else:
+                expr = f"(t.{col} / {lag})"
+            calc_columns.append(f"{expr} AS {col}_ratio_lag_{offset}")
     return calc_columns
 
 

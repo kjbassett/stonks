@@ -1,95 +1,101 @@
+import re
+from typing import Dict, List, Optional
+
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
+
+_NEWS_ID_PAT = re.compile(r"^news\d+_id$")
+_NON_X_COLS = {"target", "symbol", "timestamp"}
+
+
+def _news_id_cols(df: pd.DataFrame) -> List[str]:
+    return [c for c in df.columns if _NEWS_ID_PAT.match(c)]
 
 
 class HybridDataset(Dataset):
+    """Dataset for rows with pre-computed news embeddings.
+
+    Structured numeric features and embedding vectors are concatenated into a
+    single flat tensor, matching the NumericalDataset output format so both
+    can be used interchangeably with NumericalModel.
+    """
+
     def __init__(
-        self, data, news_data, tokenizer_name="bert-base-uncased", max_text_length=512
-    ):
-        """
-        data: main DataFrame with numeric features + news id columns + target
-        news_data: DataFrame with columns ['id', 'symbol', 'name', 'body']
+        self,
+        data: pd.DataFrame,
+        embedding_lookup: Dict[str, np.ndarray],
+        use_weights: bool = False,
+        max_weight: float = 10.0,
+        n_bins: int = 50,
+    ) -> None:
+        """Initialise the dataset.
+
+        Args:
+            data: Pre-processed DataFrame (one-hot encoded, scaled).
+            embedding_lookup: Dict mapping news_id -> float32 numpy array.
+            use_weights: Compute inverse-density sample weights.
+            max_weight: Cap on per-sample weight.
+            n_bins: Histogram bins used for density estimation.
         """
         self.data = data.reset_index(drop=True)
-        self.news_data = news_data
-        self.max_text_length = max_text_length
-        self.tokenizer = BertTokenizer.from_pretrained(tokenizer_name)
-        self.news_columns = self._get_news_columns(self.data)
+        self.embedding_lookup = embedding_lookup
+        self.news_id_cols = _news_id_cols(data)
 
-        # Which columns are numeric features?
-        self.numerical_columns = self.data.drop(
-            columns=self.news_columns + ["target"]
-        ).columns
+        first_emb = next(iter(embedding_lookup.values()), None)
+        self.embedding_dim: int = len(first_emb) if first_emb is not None else 0
 
-    def __len__(self):
+        exclude = _NON_X_COLS | set(self.news_id_cols)
+        x_cols = [c for c in data.columns if c not in exclude and data[c].dtype != object]
+        self._x_struct = data[x_cols].fillna(0).values.astype(np.float32)
+
+        self.symbols = data["symbol"].values
+        self.timestamps = data["timestamp"].values
+        self.closes = data["close"].values
+
+        self.y, self.weights = _build_targets_and_weights(
+            data, use_weights, max_weight, n_bins
+        )
+        # Pre-extract news IDs as object array — avoids ambiguous Series indexing
+        n_news = len(self.news_id_cols)
+        self._news_id_arr: np.ndarray = (
+            data[self.news_id_cols].to_numpy()
+            if n_news > 0
+            else np.empty((len(data), 0), dtype=object)
+        )
+
+    def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, idx):
-        row = self.data.iloc[idx]
-
-        # --- Structured numeric features ---
-        x_structured = row[self.numerical_columns].fillna(0).values.astype(np.float32)
-        x_structured = torch.tensor(x_structured, dtype=torch.float)
-
-        # --- News articles for this sample ---
-        input_ids_list, attn_mask_list = [], []
-        for col in self.news_columns:
-            news_id = row[col]
-            if pd.isna(news_id):
-                # Missing article → just pad with zeros
-                input_ids = torch.zeros(self.max_text_length, dtype=torch.long)
-                attn_mask = torch.zeros(self.max_text_length, dtype=torch.long)
+    def __getitem__(self, idx: int) -> tuple:
+        emb_parts = []
+        for j in range(len(self.news_id_cols)):
+            news_id = self._news_id_arr[idx, j]
+            if not isinstance(news_id, str) or news_id not in self.embedding_lookup:
+                emb_parts.append(np.zeros(self.embedding_dim, dtype=np.float32))
             else:
-                news_row = self.news_data[self.news_data["id"] == news_id]
-                if len(news_row) == 0:
-                    text = ""
-                else:
-                    text = f"{news_row.iloc[0]['symbol']} {news_row.iloc[0]['name']} {news_row.iloc[0]['body']}"
+                emb_parts.append(self.embedding_lookup[news_id].astype(np.float32))
 
-                encoded = self.tokenizer.encode_plus(
-                    text,
-                    add_special_tokens=True,
-                    max_length=self.max_text_length,
-                    padding="max_length",
-                    truncation=True,
-                    return_attention_mask=True,
-                    return_tensors="pt",
-                )
-                # get rid of the batch dimension
-                input_ids = encoded["input_ids"].squeeze(0)  # (seq_len,)
-                attn_mask = encoded["attention_mask"].squeeze(0)  # (seq_len,)
-
-            input_ids_list.append(input_ids)
-            attn_mask_list.append(attn_mask)
-
-        # --- Target ---
-        y = torch.tensor(row["target"], dtype=torch.float)
-
-        return x_structured, input_ids_list, attn_mask_list, y
-
-    def _get_news_columns(self, df):
-        cols = []
-        i = 1
-        while True:
-            col = f"news{i}_id"
-            if col not in df.columns:
-                break
-            cols.append(col)
-            i += 1
-        return cols
+        x = np.concatenate([self._x_struct[idx], *emb_parts]) if emb_parts else self._x_struct[idx]
+        meta = {
+            "symbol": self.symbols[idx],
+            "timestamp": self.timestamps[idx],
+            "close": self.closes[idx],
+        }
+        return torch.tensor(x, dtype=torch.float32), self.y[idx], self.weights[idx], meta
 
 
 class NumericalDataset(Dataset):
+    """Dataset for rows with no text features."""
+
     def __init__(
         self,
         data: pd.DataFrame,
         n_bins: int = 50,
         use_weights: bool = False,
         max_weight: float = 10.0,
-    ):
+    ) -> None:
         self.symbols = data["symbol"].values
         self.timestamps = data["timestamp"].values
         self.closes = data["close"].values
@@ -97,36 +103,14 @@ class NumericalDataset(Dataset):
             data[data.columns.difference(["target", "symbol", "timestamp"])].values,
             dtype=torch.float32,
         )
-        if use_weights:
-            # requires target column
-            y_np = data["target"].values.astype(np.float32)
-            self.y = torch.tensor(y_np, dtype=torch.float32)
+        self.y, self.weights = _build_targets_and_weights(
+            data, use_weights, max_weight, n_bins
+        )
 
-            # --- density-aware sample weights ---
-            hist, bin_edges = np.histogram(y_np, bins=n_bins, density=False)
-            bin_idx = np.digitize(y_np, bin_edges[:-1], right=True)
-
-            # avoid zero density
-            hist = hist.astype(np.float32) + 1e-6
-            density = hist[bin_idx - 1]
-
-            weights = 1.0 / density
-            weights = weights / weights.mean()  # keep loss scale stable
-            weights = np.clip(weights, 0.0, max_weight)
-
-            self.weights = torch.tensor(weights, dtype=torch.float32)
-        else:
-            if "target" in data.columns:
-                y_np = data["target"].values.astype(np.float32)
-                self.y = torch.tensor(y_np, dtype=torch.float32)
-            else:
-                self.y = torch.full((len(data),), float("nan"), dtype=torch.float32)
-            self.weights = torch.ones(len(data), dtype=torch.float32)
-
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.x)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> tuple:
         meta = {
             "symbol": self.symbols[idx],
             "timestamp": self.timestamps[idx],
@@ -135,74 +119,94 @@ class NumericalDataset(Dataset):
         return self.x[idx], self.y[idx], self.weights[idx], meta
 
 
-def shuffle(df):
-    # shuffle the dataframe in place, and reset index afterwards
+def _build_targets_and_weights(
+    data: pd.DataFrame,
+    use_weights: bool,
+    max_weight: float,
+    n_bins: int,
+) -> tuple:
+    """Return (y_tensor, weights_tensor) for a dataset.
+
+    Args:
+        data: DataFrame possibly containing a 'target' column.
+        use_weights: Whether to compute inverse-density weights.
+        max_weight: Cap on per-sample weight.
+        n_bins: Histogram bins for density estimation.
+
+    Returns:
+        Tuple of (y, weights) float32 tensors, both shape (N,).
+    """
+    if "target" not in data.columns:
+        y = torch.full((len(data),), float("nan"), dtype=torch.float32)
+        return y, torch.ones(len(data), dtype=torch.float32)
+
+    y_np = data["target"].values.astype(np.float32)
+    y = torch.tensor(y_np, dtype=torch.float32)
+
+    if use_weights:
+        hist, bin_edges = np.histogram(y_np, bins=n_bins, density=False)
+        bin_idx = np.digitize(y_np, bin_edges[:-1], right=True)
+        hist = hist.astype(np.float32) + 1e-6
+        density = hist[bin_idx - 1]
+        weights = np.clip(1.0 / density / (1.0 / density).mean(), 0.0, max_weight)
+        return y, torch.tensor(weights, dtype=torch.float32)
+
+    return y, torch.ones(len(data), dtype=torch.float32)
+
+
+def shuffle(df: pd.DataFrame) -> pd.DataFrame:
+    """Shuffle the DataFrame rows with a fixed seed.
+
+    Args:
+        df: Input DataFrame.
+
+    Returns:
+        Shuffled DataFrame with reset index.
+    """
     return df.sample(frac=1, random_state=42)
 
 
 async def create_datasets(
-    train_data,
-    news_data=None,
-    tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
-    max_text_length=512,
-    test_data=None,
-    use_weights=False,
-) -> list | Dataset:
+    train_data: pd.DataFrame,
+    embedding_lookup: Optional[Dict[str, np.ndarray]] = None,
+    test_data: Optional[pd.DataFrame] = None,
+    use_weights: bool = False,
+) -> "list | Dataset":
     """Create PyTorch Dataset(s) from pre-processed DataFrames.
 
     Args:
-        train_data: Training DataFrame (or the sole DataFrame in inference mode).
-        news_data: Optional news DataFrame for hybrid text+numerical models.
-        tokenizer: HuggingFace tokenizer name for text encoding.
-        max_text_length: Maximum token length for the text encoder.
-        test_data: Pre-split test DataFrame. When provided, returns a list of
-            [train_dataset, test_dataset]. When None, returns a single dataset
-            (inference mode).
-        use_weights: Whether to apply sample weights (inference mode only).
+        train_data: Training DataFrame (or sole DataFrame in inference mode).
+        embedding_lookup: Optional dict of news_id -> embedding array.
+        test_data: Pre-split test DataFrame. When provided returns
+            [train_dataset, test_dataset]. When None returns a single dataset.
+        use_weights: Apply inverse-density sample weights (training only).
 
     Returns:
-        A list ``[train_dataset, test_dataset]`` when ``test_data`` is provided,
-        or a single Dataset for inference.
+        ``[train_dataset, test_dataset]`` when test_data is given, else a single Dataset.
     """
     if test_data is not None:
         return [
-            create_dataset(
-                train_data,
-                use_weights=True,
-                news_data=news_data,
-                tokenizer=tokenizer,
-                max_text_length=max_text_length,
-            ),
-            create_dataset(
-                test_data,
-                use_weights=False,
-                news_data=news_data,
-                tokenizer=tokenizer,
-                max_text_length=max_text_length,
-            ),
+            create_dataset(train_data, use_weights=True, embedding_lookup=embedding_lookup),
+            create_dataset(test_data, use_weights=False, embedding_lookup=embedding_lookup),
         ]
-    return create_dataset(
-        train_data,
-        use_weights=use_weights,
-        news_data=news_data,
-        tokenizer=tokenizer,
-        max_text_length=max_text_length,
-    )
+    return create_dataset(train_data, use_weights=use_weights, embedding_lookup=embedding_lookup)
 
 
 def create_dataset(
-    data,
-    use_weights=False,
-    news_data=None,
-    tokenizer="M-FAC/bert-tiny-finetuned-mrpc",
-    max_text_length=None,
-):
-    if news_data is None:
-        return NumericalDataset(data, use_weights=use_weights)
-    else:
-        return HybridDataset(
-            data,
-            news_data,
-            tokenizer_name=tokenizer,
-            max_text_length=max_text_length,
-        )
+    data: pd.DataFrame,
+    use_weights: bool = False,
+    embedding_lookup: Optional[Dict[str, np.ndarray]] = None,
+) -> Dataset:
+    """Create the appropriate Dataset type based on whether embeddings are provided.
+
+    Args:
+        data: Pre-processed DataFrame.
+        use_weights: Apply inverse-density sample weights.
+        embedding_lookup: If provided, creates a HybridDataset.
+
+    Returns:
+        HybridDataset when embedding_lookup is not None, else NumericalDataset.
+    """
+    if embedding_lookup is not None:
+        return HybridDataset(data, embedding_lookup, use_weights=use_weights)
+    return NumericalDataset(data, use_weights=use_weights)

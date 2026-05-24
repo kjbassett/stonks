@@ -170,3 +170,21 @@ CREATE TABLE TradingDataAttemptedQueries (
   FOREIGN KEY(company_id) REFERENCES Company(id),
   UNIQUE (company_id, start, end)
 );
+
+-- NewsEmbedding Table
+CREATE TABLE NewsEmbedding (
+  news_id   TEXT NOT NULL,
+  model     TEXT NOT NULL,
+  embedding BLOB NOT NULL,
+  PRIMARY KEY (news_id, model),
+  FOREIGN KEY (news_id) REFERENCES News(id) ON DELETE CASCADE
+);
+
+-- StockSplit Table — tracks splits already processed by sync_split_adjustments
+CREATE TABLE StockSplit (
+  ticker          TEXT NOT NULL,
+  execution_date  TEXT NOT NULL,
+  split_from      REAL NOT NULL,
+  split_to        REAL NOT NULL,
+  PRIMARY KEY (ticker, execution_date)
+);

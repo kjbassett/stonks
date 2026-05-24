@@ -1,6 +1,8 @@
 import datetime
 import os
+import re
 import time
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -8,6 +10,8 @@ import torch
 from missforest import MissForest
 from sklearn.preprocessing import OneHotEncoder
 from src.data_access.dao_manager import dao_manager
+
+_NEWS_ID_PAT = re.compile(r"^news\d+_id$")
 
 
 async def load_data(
@@ -24,9 +28,31 @@ async def load_data(
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
     keep_latest_only: bool = False,
-):
+    embedding_model_name: str = "all-MiniLM-L6-v2",
+) -> tuple:
+    """Load structured trading data and pre-computed news embeddings.
+
+    Args:
+        min_timestamp: Earliest row timestamp to include (0 = no limit).
+        max_timestamp: Latest row timestamp to include (0 = no limit).
+        max_window: Largest lag window for ratio features.
+        num_windows: Number of lag windows to generate.
+        num_news: Number of most-recent news articles to attach per row.
+        news_history_threshold: Maximum news age in seconds.
+        include_target: Whether to include the target column.
+        target_offset: Target horizon ('next_close' or integer hours).
+        include_close_ratio: Include close-price lag ratios.
+        include_cv_close_ratio: Include CV-of-close lag ratios.
+        include_avg_volume_ratio: Include average-volume lag ratios.
+        include_cv_volume_ratio: Include CV-of-volume lag ratios.
+        keep_latest_only: Keep only the most recent row per symbol.
+        embedding_model_name: Sentence-transformer model for embedding lookup.
+
+    Returns:
+        Tuple of (structured_data, embedding_lookup, raw_price_data).
+    """
     if min_timestamp < 0:
-        min_timestamp = time.time() + min_timestamp
+        min_timestamp = int(time.time()) + min_timestamp
     structured_data_dao = dao_manager.get_dao("DataCompiler")
     structured_data = await structured_data_dao.get_data(
         "hour",
@@ -46,11 +72,16 @@ async def load_data(
         print_query=True,
     )
     if num_news > 0:
-        news_data_dao = dao_manager.get_dao("News")
-        news_data = await news_data_dao.get_all()
+        news_id_cols = [c for c in structured_data.columns if _NEWS_ID_PAT.match(c)]
+        all_ids = pd.unique(structured_data[news_id_cols].values.ravel("K"))
+        all_ids = [i for i in all_ids if pd.notna(i)]
+        emb_dao = dao_manager.get_dao("NewsEmbedding")
+        embedding_lookup: Optional[Dict] = await emb_dao.get_embeddings(
+            all_ids, embedding_model_name
+        )
     else:
-        news_data = None
-    return structured_data, news_data, structured_data[['symbol', 'timestamp', 'close']]
+        embedding_lookup = None
+    return structured_data, embedding_lookup, structured_data[["symbol", "timestamp", "close"]]
 
 
 def load_short_data(file_name):
@@ -182,8 +213,7 @@ def unscale_data(
     means,
     stds,
     target_col="target",
-    target_transform="asinh",
-    save_csv=True,
+    target_transform="asinh"
 ):
     mean, std = means["target"], stds["target"]  # scaling factors
 
@@ -217,10 +247,6 @@ def unscale_data(
         predictions["prediction"] = np.sinh(predictions["prediction"])
         predictions["variance"] = predictions["variance"] * np.cosh(mu_asinh) ** 2
 
-    if save_csv:
-        dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        predictions.to_csv(f"predictions_{dt}.csv", index=False)
-
     return predictions
 
 
@@ -228,9 +254,10 @@ def _apply_one_hot(
     dataframe: pd.DataFrame, encoder: OneHotEncoder, ignore_cols: list
 ) -> pd.DataFrame:
     """Apply a fitted encoder to ``dataframe`` and return the transformed DataFrame."""
-    cols_to_encode = dataframe.select_dtypes(include=["object"]).columns.difference(
-        ignore_cols
-    )
+    cols_to_encode = [
+        c for c in dataframe.select_dtypes(include=["object"]).columns
+        if c not in ignore_cols and not _NEWS_ID_PAT.match(c)
+    ]
     encoded_data = encoder.transform(dataframe[cols_to_encode])
     encoded_df = pd.DataFrame(
         encoded_data.toarray(), columns=encoder.get_feature_names_out(cols_to_encode)
@@ -254,6 +281,9 @@ def one_hot_encode(
     """Fit and transform ``dataframe`` using one-hot encoding, optionally applying
     the same fitted encoder to ``test_df``.
 
+    News ID columns (matching ``news{n}_id``) are always excluded — they are
+    unique identifiers, not categories, and are consumed by HybridDataset.
+
     Args:
         dataframe: Training DataFrame to fit and transform.
         test_df: Optional test DataFrame to transform using the fitted encoder.
@@ -266,9 +296,10 @@ def one_hot_encode(
         A 3-tuple ``(dataframe, test_df, encoder)`` where ``test_df`` may be None.
     """
     ignore_cols = format_ignore_cols(ignore_cols)
-    cols_to_encode = dataframe.select_dtypes(include=["object"]).columns.difference(
-        ignore_cols
-    )
+    cols_to_encode = [
+        c for c in dataframe.select_dtypes(include=["object"]).columns
+        if c not in ignore_cols and not _NEWS_ID_PAT.match(c)
+    ]
     if encoder is None:
         encoder = OneHotEncoder(
             handle_unknown="ignore",
@@ -346,14 +377,35 @@ def save_data(structured_data, news_data, suffix=""):
         news_data.to_csv("news_data{suffix}.csv", index=False)
 
 
-def get_num_x_columns(structured_data, ignore_cols=None):
+def get_num_x_columns(
+    structured_data: pd.DataFrame,
+    ignore_cols: list = None,
+    num_news: int = 0,
+    embedding_lookup: Optional[Dict] = None,
+) -> int:
+    """Count the number of model input dimensions after preprocessing.
+
+    Object-dtype columns (symbol, news IDs) and ``ignore_cols`` are excluded.
+    When news embeddings are used, each news slot adds ``embedding_dim`` dims.
+
+    Args:
+        structured_data: Pre-processed training DataFrame.
+        ignore_cols: Columns to exclude (e.g. symbol, timestamp, target).
+        num_news: Number of news slots (from hyperparameter).
+        embedding_lookup: Dict returned by load_data; used to infer embedding_dim.
+
+    Returns:
+        Total input dimension for NumericalModel / HybridDataset.
+    """
     ignore_cols = format_ignore_cols(ignore_cols)
-    non_x_cols = [
+    non_x_cols = set([
         *ignore_cols,
         *structured_data.select_dtypes(include="object").columns,
-    ]
-    non_x_cols = set(non_x_cols)
+    ])
     n_cols = structured_data.shape[1] - len(non_x_cols)
+    if num_news > 0 and embedding_lookup:
+        embedding_dim = len(next(iter(embedding_lookup.values())))
+        n_cols += num_news * embedding_dim
     return n_cols
 
 
