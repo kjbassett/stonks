@@ -5,6 +5,7 @@ from typing import Union
 from stonks.src.plot import plot_training
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
+from src.ml_diagnostics.checks import run_data_quality_checks
 from src.prediction.pipeline_components import (
     filter_out_missing_data,
     split_data,
@@ -67,9 +68,9 @@ async def run_genetic_algorithm(
 async def run_short_genetic_algorithm(
     source_name: str,
     source_version: str = "latest",
-    start_after_gene_index: str = None,
-    new_name: str = None,
-    new_version: str = None,
+    start_after_gene_index: str | int | None = None,
+    new_name: str | None = None,
+    new_version: str | None = None,
     log_states: str = "false",
     recreate_dna: bool = False,
     min_timestamp: int = 0,
@@ -77,6 +78,8 @@ async def run_short_genetic_algorithm(
     organisms_dir: str = "H:/organisms",
 ):
     from ezmt.organism import Organism
+    if isinstance(start_after_gene_index, str) and start_after_gene_index.isnumeric():
+        start_after_gene_index = int(start_after_gene_index)
 
     model = Organism.load(source_name, source_version, gene_index=start_after_gene_index, directory=organisms_dir)
     model.new_version(name=new_name, version=new_version)
@@ -91,7 +94,12 @@ async def run_short_genetic_algorithm(
         hyperparams = choose_hyperparams(hyperparam_space)
         model.dna = dna
         model.parameters = hyperparams
-    result = await model.run(mode="train", log_states=_parse_log_states(log_states), result_name="score")
+    result = await model.run(
+        mode="train",
+        log_states=_parse_log_states(log_states),
+        result_name="score",
+        update_knowledge=True,
+    )
     model.save()
     print(result)
 
@@ -106,8 +114,7 @@ def save_figure(folder, key, fig):
 def create_model_space(max_timestamp, min_timestamp):
     hyperparam_space = {
         "batch_size": DiscreteOrdinal([64]),  # neural net batch size
-        "text_model_name": DiscreteOrdinal(["M-FAC/bert-tiny-finetuned-mrpc"]),  # HuggingFace tokenizer/encoder
-        "max_text_length": DiscreteOrdinal([512]),  # text encoder length
+        "embedding_model_name": DiscreteOrdinal(["all-MiniLM-L6-v2"]),  # sentence-transformer model for news
         # for price_change_offset...
         # when aggregation is minutes, seconds ahead of current row for calculating percent changes
         # when aggregation is hours, rows ahead of current row for calculating percent changes
@@ -155,10 +162,10 @@ def create_model_space(max_timestamp, min_timestamp):
             0, 0.000000001  # 0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
         "negative_pair_weight": ContinuousRange(
-            1, 1.00000001
+            0.6, 0.60000001
         ),  # loss weight when both target and prediction are negative (0 = ignore magnitude)
         "false_positive_weight": ContinuousRange(
-            1.1, 1.10000001
+            1.3, 1.30000001
         ),  # loss weight when target is negative but prediction is positive (buying a loser)
     }
     save_load_funcs = {
@@ -185,8 +192,9 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_cv_close_ratio": "include_cv_close_ratio",
                     "include_avg_volume_ratio": "include_avg_volume_ratio",
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
+                    "embedding_model_name": "embedding_model_name",
                 },
-                "outputs": ["structured_data", "text_data", "raw_price_data"],
+                "outputs": ["structured_data", "embedding_lookup", "raw_price_data"],
             },
             "inference": {
                 "func": load_data,
@@ -202,8 +210,9 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_avg_volume_ratio": "include_avg_volume_ratio",
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
                     "keep_latest_only": True,
+                    "embedding_model_name": "embedding_model_name",
                 },
-                "outputs": ["structured_data", "text_data", "raw_price_data"],
+                "outputs": ["structured_data", "embedding_lookup", "raw_price_data"],
             },
         },
         {
@@ -348,23 +357,13 @@ def create_model_space(max_timestamp, min_timestamp):
             "name": "create_datasets",
             "train": {
                 "func": create_datasets,
-                "args": [
-                    "train_data",
-                    "text_data",
-                    "text_model_name",
-                    "max_text_length",
-                ],
+                "args": ["train_data", "embedding_lookup"],
                 "kwargs": {"test_data": "test_data"},
                 "outputs": ["train_dataset", "test_dataset"],
             },
             "inference": {
                 "func": create_datasets,
-                "args": [
-                    "structured_data",
-                    "text_data",
-                    "text_model_name",
-                    "max_text_length",
-                ],
+                "args": ["structured_data", "embedding_lookup"],
                 "kwargs": {"use_weights": False},
                 "outputs": ["inference_dataset"],
             },
@@ -374,7 +373,11 @@ def create_model_space(max_timestamp, min_timestamp):
             "train": {
                 "func": get_num_x_columns,
                 "args": ["train_data"],
-                "kwargs": {"ignore_cols": ["symbol", "timestamp", "target"]},
+                "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp", "target"],
+                    "num_news": "num_news",
+                    "embedding_lookup": "embedding_lookup",
+                },
                 "outputs": "structured_input_dim",
             },
         },
@@ -387,8 +390,6 @@ def create_model_space(max_timestamp, min_timestamp):
                     "n_hidden_layers",
                     "hidden_dim",
                     "dropout_rate",
-                    "num_news",
-                    "text_model_name",
                 ],
                 "outputs": ["model"],
                 "run_in_parent_process": True,  # model is not pickleable
@@ -403,8 +404,6 @@ def create_model_space(max_timestamp, min_timestamp):
                     "n_hidden_layers",
                     "hidden_dim",
                     "dropout_rate",
-                    "num_news",
-                    "text_model_name",
                 ],
                 "outputs": ["model", "optimizer", "epoch"],
             },
@@ -419,7 +418,6 @@ def create_model_space(max_timestamp, min_timestamp):
                     "test_dataset",
                     "batch_size",
                     20,  # epochs
-                    "num_news",
                 ],
                 "kwargs": {
                     "batches_before_validation": 1000,
@@ -461,6 +459,19 @@ def create_model_space(max_timestamp, min_timestamp):
             },
         },
         {
+            "name": "check_data_quality",
+            "train": {
+                "func": run_data_quality_checks,
+                "args": ["train_data", "train_loss_history", "val_loss_history"],
+                "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp", "target"],
+                },
+                "outputs": ["data_quality_report"],
+                "run_in_parent_process": True,
+            },
+            "inference": None,
+        },
+        {
             "name": "trading_policy",
             "train": {
                 "func": train_trading_policy,
@@ -485,7 +496,6 @@ def create_model_space(max_timestamp, min_timestamp):
 
 
 # TODO
-#  Fix flow when num_news > 0
 #  Hyperparams for imputation
 #  See DataCompiler for more to-do items
 #  pytorch model should not be pickled after training because an inference function creates it
