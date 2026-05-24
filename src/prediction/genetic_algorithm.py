@@ -7,6 +7,7 @@ from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.ml_diagnostics.checks import run_data_quality_checks
 from src.prediction.pipeline_components import (
+    clip_values,
     filter_out_missing_data,
     split_data,
     scale_data,
@@ -236,38 +237,6 @@ def create_model_space(max_timestamp, min_timestamp):
                 "outputs": "structured_data",
             },
         },
-        # {
-        #     "name": "clip_values",
-        #     "train": {
-        #         "func": clip_values,
-        #         "args": "structured_data",
-        #         "kwargs": {
-        #             "ignore_cols": [
-        #                 "symbol",
-        #                 "timestamp",
-        #                 "hour",
-        #                 "hour_cos",
-        #                 "hour_sin",
-        #             ]
-        #         },
-        #         "outputs": ["structured_data", "column_limits"],
-        #     },
-        #     "inference": {
-        #         "func": clip_values,
-        #         "args": "structured_data",
-        #         "kwargs": {
-        #             "ignore_cols": [
-        #                 "symbol",
-        #                 "timestamp",
-        #                 "hour",
-        #                 "hour_cos",
-        #                 "hour_sin",
-        #             ],
-        #             "column_limits": "column_limits",
-        #         },
-        #         "outputs": ["structured_data", "column_limits"],
-        #     },
-        # },
         {
             "name": "split_data",
             "train": {
@@ -275,6 +244,27 @@ def create_model_space(max_timestamp, min_timestamp):
                 "args": ["structured_data"],
                 "kwargs": {"split": 0.8},
                 "outputs": ["train_data", "test_data"],
+            },
+        },
+        {
+            "name": "clip_values",
+            "train": {
+                "func": clip_values,
+                "args": ["train_data"],
+                "kwargs": {
+                    "test_df": "test_data",
+                    "ignore_cols": ["symbol", "timestamp", "hour_cos", "hour_sin"],
+                },
+                "outputs": ["train_data", "test_data", "column_limits"],
+            },
+            "inference": {
+                "func": clip_values,
+                "args": ["structured_data"],
+                "kwargs": {
+                    "ignore_cols": ["symbol", "timestamp", "hour_cos", "hour_sin"],
+                    "column_limits": "column_limits",
+                },
+                "outputs": ["structured_data", "_", "column_limits"],
             },
         },
         {

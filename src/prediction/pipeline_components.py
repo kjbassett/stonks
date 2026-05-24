@@ -136,9 +136,36 @@ def filter_out_missing_data(
     return structured_data
 
 
-def clip_values(df, ignore_cols=None, column_limits=None):
+def _apply_clip(
+    df: pd.DataFrame, column_limits: dict, ignore_cols: list
+) -> pd.DataFrame:
+    """Apply pre-computed clip limits to numeric columns of ``df``."""
+    for col, limits in column_limits.items():
+        if col in df.columns:
+            df[col] = df[col].clip(lower=limits["lower"], upper=limits["upper"])
+    return df
+
+
+def clip_values(
+    df: pd.DataFrame,
+    test_df: Optional[pd.DataFrame] = None,
+    ignore_cols: list = None,
+    column_limits: dict = None,
+) -> tuple:
+    """Clip numeric columns to [p1, p99] bounds fitted on ``df``.
+
+    Args:
+        df: DataFrame to fit clip limits on and transform (training data).
+        test_df: Optional test DataFrame to clip using the same limits.
+            Fit is never performed on this data.
+        ignore_cols: Columns to exclude from clipping.
+        column_limits: Pre-computed limits. If None, fitted from ``df``.
+
+    Returns:
+        A 3-tuple ``(df, test_df, column_limits)`` where ``test_df`` may be None.
+    """
     ignore_cols = format_ignore_cols(ignore_cols)
-    if not column_limits:
+    if column_limits is None:
         column_limits = {}
     for col in df.select_dtypes(include=[float, int]).columns.difference(ignore_cols):
         if col not in column_limits:
@@ -146,10 +173,10 @@ def clip_values(df, ignore_cols=None, column_limits=None):
                 "lower": df[col].quantile(0.01),
                 "upper": df[col].quantile(0.99),
             }
-        lower = column_limits[col]["lower"]
-        upper = column_limits[col]["upper"]
-        df[col] = df[col].clip(lower=lower, upper=upper)
-    return df, column_limits
+    df = _apply_clip(df, column_limits, ignore_cols)
+    if test_df is not None:
+        test_df = _apply_clip(test_df, column_limits, ignore_cols)
+    return df, test_df, column_limits
 
 
 def scale_data(
