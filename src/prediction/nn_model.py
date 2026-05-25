@@ -93,13 +93,31 @@ def _run_validation(
     loss_fn: nn.Module,
     device: torch.device,
     desc: str = "val",
+    val_batches: int | None = None,
 ) -> tuple[float, pd.DataFrame]:
-    """Run one full validation pass. Returns (val_loss, predictions_df)."""
+    """Run a validation pass over exactly val_batches batches (or all if None).
+
+    Args:
+        model: Model to evaluate.
+        test_loader: Validation DataLoader (should use shuffle=True for sampling).
+        loss_fn: Loss function.
+        device: Torch device.
+        desc: tqdm description prefix.
+        val_batches: Exact number of batches to process. When set, every checkpoint
+            sees the same sample count, making loss values directly comparable.
+            When None, iterates the full loader.
+
+    Returns:
+        Tuple of (val_loss, predictions_df).
+    """
     model.eval()
     val_loss = 0.0
+    samples_seen = 0
     preds, variances, targets, symbols, timestamps, closes = [], [], [], [], [], []
     with torch.no_grad():
-        for x_batch, y_batch, weights, meta in tqdm(test_loader, desc=desc):
+        for i, (x_batch, y_batch, weights, meta) in enumerate(tqdm(test_loader, desc=desc)):
+            if val_batches is not None and i >= val_batches:
+                break
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device).unsqueeze(1)
             weights = weights.to(device)
@@ -107,6 +125,7 @@ def _run_validation(
             mu, var = model(x_batch)
             loss = loss_fn(mu, y_batch, var)
             val_loss += (loss * weights).sum().item()
+            samples_seen += len(y_batch)
 
             preds.extend(mu.cpu().numpy().flatten())
             variances.extend(var.cpu().numpy().flatten())
@@ -115,7 +134,7 @@ def _run_validation(
             timestamps.extend(meta["timestamp"].numpy())
             closes.extend(meta["close"].numpy())
 
-    val_loss /= len(test_loader.dataset)
+    val_loss /= samples_seen
     predictions = pd.DataFrame(
         {
             "symbol": symbols,
@@ -153,7 +172,8 @@ def train_numerical_model(
     optimizer,
     loss_fn,
     batches_before_validation: int | None = None,
-    patience: int = 5,
+    patience: int = 10,
+    val_batches: int | None = None,
 ):
     # Validate once per epoch by default; caller can override to a fixed interval.
     if batches_before_validation is None:
@@ -204,7 +224,8 @@ def train_numerical_model(
                 continue
 
             val_loss, predictions = _run_validation(
-                model, test_loader, loss_fn, device, desc=f"Epoch {epoch+1} [val]"
+                model, test_loader, loss_fn, device, desc=f"Epoch {epoch+1} [val]",
+                val_batches=val_batches,
             )
             val_loss_history.append((global_step, val_loss))
 
@@ -238,7 +259,7 @@ def train_numerical_model(
     if best_state_dict is None:
         print("Validation never fired during training — running final validation pass.")
         val_loss, predictions = _run_validation(
-            model, test_loader, loss_fn, device, desc="final val"
+            model, test_loader, loss_fn, device, desc="final val", val_batches=val_batches,
         )
         best_val_loss = val_loss
         best_state_dict = copy.deepcopy(model.state_dict())
@@ -308,6 +329,7 @@ def train_model(
     batches_before_validation: int | None = None,
     negative_pair_weight: float = 0.1,
     false_positive_weight: float = 2.0,
+    val_batches: int | None = None,
 ) -> tuple:
     """Train ``model`` and return the best checkpoint.
 
@@ -321,6 +343,9 @@ def train_model(
         batches_before_validation: Validate every N batches (default: once per epoch).
         negative_pair_weight: Loss weight when both target and prediction are negative.
         false_positive_weight: Loss weight when target is negative but prediction positive.
+        val_batches: Exact number of batches per validation pass. When set, the test
+            loader is shuffled so each checkpoint sees a fresh random subset.
+            When None, the full test set is used.
 
     Returns:
         7-tuple: (model_state_dict, optimizer_state_dict, epoch, val_loss,
@@ -335,12 +360,13 @@ def train_model(
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    shuffle_test = val_batches is not None
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle_test)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     return train_numerical_model(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn,
-        batches_before_validation,
+        batches_before_validation, val_batches=val_batches,
     )
 
 

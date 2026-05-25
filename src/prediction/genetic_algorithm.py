@@ -127,7 +127,7 @@ def create_model_space(max_timestamp, min_timestamp):
             [12]  # [5, 10, 15]
         ),  # number of points in time behind current row to compare for trends
         "num_news": DiscreteOrdinal(
-            [0]
+            [1]
         ),  # number of news articles previous to the current row to include
         "news_history_threshold": ContinuousRange(
             24 * 60 * 60, 24 * 60 * 60 + 0.00000001  # 5 * 24 * 60 * 60
@@ -412,7 +412,8 @@ def create_model_space(max_timestamp, min_timestamp):
                 ],
                 "kwargs": {
                     "lr": "learning_rate",
-                    "batches_before_validation": 1000,
+                    "batches_before_validation": 250,
+                    "val_batches": 50,
                     "negative_pair_weight": "negative_pair_weight",
                     "false_positive_weight": "false_positive_weight",
                 },
