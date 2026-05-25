@@ -112,16 +112,25 @@ def plot_loss_history(train_loss_history, val_loss_history, window_size=100):
     val_steps = [step for step, _ in val_loss_history]
     val_losses = [loss for _, loss in val_loss_history]
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(train_series.index, train_series, color="steelblue", alpha=0.3, linewidth=0.5, label="Train loss (raw)")
-    ax.plot(moving_avg.index, moving_avg, color="steelblue", linewidth=1.5, label=f"Train loss (MA {window_size})")
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    ax1.plot(train_series.index, train_series, color="steelblue", alpha=0.3, linewidth=0.5, label="Train loss (raw)")
+    ax1.plot(moving_avg.index, moving_avg, color="steelblue", linewidth=1.5, label=f"Train loss (MA {window_size})")
+    ax1.set_xlabel("Batch step")
+    ax1.set_ylabel("Train Loss", color="steelblue")
+    ax1.tick_params(axis="y", labelcolor="steelblue")
+
+    lines, labels = ax1.get_legend_handles_labels()
     if val_steps:
-        ax.plot(val_steps, val_losses, color="darkorange", linewidth=1.5, marker="o", markersize=4, label="Val loss")
-    ax.set_xlabel("Batch step")
-    ax.set_ylabel("Loss")
-    ax.set_title("Training & Validation Loss")
-    ax.legend()
-    ax.grid(True)
+        ax2 = ax1.twinx()
+        ax2.plot(val_steps, val_losses, color="darkorange", linewidth=1.5, marker="o", markersize=4, label="Val loss")
+        ax2.set_ylabel("Val Loss", color="darkorange")
+        ax2.tick_params(axis="y", labelcolor="darkorange")
+        val_lines, val_labels = ax2.get_legend_handles_labels()
+        lines, labels = lines + val_lines, labels + val_labels
+
+    ax1.set_title("Training & Validation Loss")
+    ax1.legend(lines, labels)
+    ax1.grid(True)
     fig.tight_layout()
     return fig
 
