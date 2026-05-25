@@ -159,6 +159,7 @@ def create_model_space(max_timestamp, min_timestamp):
         "dropout_rate": ContinuousRange(
             0.3, 0.30000000001  # 4
         ),  # chance of dropout per dropout layer in NN
+        "learning_rate": ContinuousRange(1e-5, 1e-5 + 1e-10),
         "missing_data_%_threshold": ContinuousRange(
             0, 0.000000001  # 0.5, 0.75
         ),  # threshold of % of missing data to remove pt.
@@ -410,6 +411,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     20,  # epochs
                 ],
                 "kwargs": {
+                    "lr": "learning_rate",
                     "batches_before_validation": 1000,
                     "negative_pair_weight": "negative_pair_weight",
                     "false_positive_weight": "false_positive_weight",
@@ -462,31 +464,31 @@ def create_model_space(max_timestamp, min_timestamp):
             },
             "inference": None,
         },
-        {
-            "name": "score_placeholder",
-            "func": lambda x: 1,
-            "outputs": "score"
-        }
         # {
-        #     "name": "trading_policy",
-        #     "train": {
-        #         "func": train_trading_policy,
-        #         "args": ["predictions", "raw_price_data"],
-        #         "kwargs": {
-        #             "rebalance_interval_hours": 1,
-        #             "allow_intraday":False,
-        #             "stop_loss_pct": 0.1,
-        #         },
-        #         "outputs": ["policy", "score"],
-        #         "run_in_parent_process": True,
-        #     },
-        #     "inference": {
-        #         "func": apply_trading_policy,
-        #         "args": ["predictions", "policy"],
-        #         "outputs": ["recommendations"],
-        #         "run_in_parent_process": True,
-        #     },
-        # },
+        #     "name": "score_placeholder",
+        #     "func": lambda x: 1,
+        #     "outputs": "score"
+        # }
+        {
+            "name": "trading_policy",
+            "train": {
+                "func": train_trading_policy,
+                "args": ["predictions", "raw_price_data"],
+                "kwargs": {
+                    "rebalance_interval_hours": 1,
+                    "allow_intraday":False,
+                    "stop_loss_pct": 0.1,
+                },
+                "outputs": ["policy", "score"],
+                "run_in_parent_process": True,
+            },
+            "inference": {
+                "func": apply_trading_policy,
+                "args": ["predictions", "policy"],
+                "outputs": ["recommendations"],
+                "run_in_parent_process": True,
+            },
+        },
     ]
     return model_space, hyperparam_space, save_load_funcs
 

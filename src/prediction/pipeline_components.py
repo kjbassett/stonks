@@ -22,7 +22,7 @@ async def load_data(
     num_news: int = 0,
     news_history_threshold: int = 24 * 60 * 60,
     include_target: bool = True,
-    target_offset: any = "next_close",
+    target_offset: int|str = "next_close",
     include_close_ratio: bool = True,
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
