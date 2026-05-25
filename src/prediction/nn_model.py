@@ -1,3 +1,4 @@
+import collections
 import copy
 import datetime
 import os
@@ -174,6 +175,7 @@ def train_numerical_model(
     batches_before_validation: int | None = None,
     patience: int = 10,
     val_batches: int | None = None,
+    val_smoothing_window: int = 3,
 ):
     # Validate once per epoch by default; caller can override to a fixed interval.
     if batches_before_validation is None:
@@ -185,7 +187,7 @@ def train_numerical_model(
     with torch.no_grad():
         model.variance_head.bias.data.fill_(init_var)
 
-    best_val_loss = float("inf")
+    best_smoothed_loss = float("inf")
     best_state_dict = None
     best_optimizer_state_dict = None
     best_epoch = None
@@ -193,6 +195,7 @@ def train_numerical_model(
 
     train_loss_history = []
     val_loss_history = []
+    val_loss_window: collections.deque = collections.deque(maxlen=val_smoothing_window)
 
     global_step = 0
     patience_counter = 0
@@ -229,20 +232,23 @@ def train_numerical_model(
             )
             val_loss_history.append((global_step, val_loss))
 
-            # --- track best model + optimizer ---
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            # --- Trailing-average best-model selection ---
+            val_loss_window.append(val_loss)
+            smoothed = sum(val_loss_window) / len(val_loss_window)
+            if smoothed < best_smoothed_loss:
+                best_smoothed_loss = smoothed
                 best_state_dict = copy.deepcopy(model.state_dict())
                 best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
                 best_epoch = epoch + 1
                 best_predictions = predictions
 
                 patience_counter = 0
-                print(f"  ✔ New best model at step {global_step}")
+                print(f"  ✔ New best model at step {global_step} (smoothed={smoothed:.4f})")
             else:
                 patience_counter += 1
                 print(
                     f"  ✖ No improvement ({patience_counter}/{patience} patience)"
+                    f" smoothed={smoothed:.4f}"
                 )
 
                 if patience_counter >= patience:
@@ -261,7 +267,7 @@ def train_numerical_model(
         val_loss, predictions = _run_validation(
             model, test_loader, loss_fn, device, desc="final val", val_batches=val_batches,
         )
-        best_val_loss = val_loss
+        best_smoothed_loss = val_loss
         best_state_dict = copy.deepcopy(model.state_dict())
         best_optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
         best_epoch = epochs
@@ -276,7 +282,7 @@ def train_numerical_model(
         best_state_dict,
         best_optimizer_state_dict,
         best_epoch,
-        best_val_loss,
+        best_smoothed_loss,
         best_predictions,
         train_loss_history,
         val_loss_history,
@@ -330,6 +336,7 @@ def train_model(
     negative_pair_weight: float = 0.1,
     false_positive_weight: float = 2.0,
     val_batches: int | None = None,
+    val_smoothing_window: int = 3,
 ) -> tuple:
     """Train ``model`` and return the best checkpoint.
 
@@ -346,9 +353,11 @@ def train_model(
         val_batches: Exact number of batches per validation pass. When set, the test
             loader is shuffled so each checkpoint sees a fresh random subset.
             When None, the full test set is used.
+        val_smoothing_window: Number of recent val losses to average for best-model
+            selection and early-stopping patience.
 
     Returns:
-        7-tuple: (model_state_dict, optimizer_state_dict, epoch, val_loss,
+        7-tuple: (model_state_dict, optimizer_state_dict, epoch, smoothed_val_loss,
                   predictions, train_loss_history, val_loss_history).
     """
     import functools
@@ -367,6 +376,7 @@ def train_model(
     return train_numerical_model(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn,
         batches_before_validation, val_batches=val_batches,
+        val_smoothing_window=val_smoothing_window,
     )
 
 
