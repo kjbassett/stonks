@@ -93,6 +93,7 @@ class TradingEngine:
         shares_delta = (equity * target_exposure - pos.shares * price) / price
         return await self.execute_trade(
             symbol, shares_delta, price, trade_date, trigger=trigger,
+            current_shares=pos.shares,
         )
 
     async def execute_trade(
@@ -103,10 +104,12 @@ class TradingEngine:
         trade_date: Optional[date] = None,
         prediction_ts: Optional[datetime] = None,
         trigger: Optional[str] = None,
+        current_shares: float = 0.0,
     ) -> TradeResult:
         """
         Apply per-trade safety filters, then execute.
         trigger is stamped onto the TradeResult for audit purposes.
+        current_shares is used to suppress no-op logs for flat positions.
         """
         pdt_blocked_buys, pdt_blocked_sells = self._find_pdt_blocks(trade_date)
         reason = None
@@ -131,22 +134,31 @@ class TradingEngine:
         elif direction == "BUY" and not self._prediction_fresh(prediction_ts):
             _log.warning(f"Stale prediction for {symbol}: blocking buy.")
             reason = "stale_prediction"
-        # if there is a reason to not trade
         if reason is not None:
-            # return TradeResult with 0 shares, not filled
             result = TradeResult(symbol, 0.0, price, False, reason, trigger)
         else:
             result = await self.broker.fill_order(symbol, shares_delta, price)
             result.trigger = trigger
 
-        if result.filled:
+        is_no_change = result.reason == "no_change" or (
+            result.filled and abs(result.shares_delta) < 1e-6
+        )
+        if is_no_change:
+            if current_shares > 0:
+                _log.info(
+                    f"No change: {symbol} holding {current_shares:.4f} shares "
+                    f"@ ${price:.2f} | date={trade_date}"
+                )
+        elif result.filled:
             _log.info(
                 f"Trade executed: {symbol} {direction} {abs(result.shares_delta):.4f} shares "
-                f"@ ${price:.2f} | reason={result.reason}"
+                f"@ ${price:.2f} | date={trade_date} | reason={result.reason}"
             )
             self._record_trade(symbol, trade_date or date.today(), direction)
-        elif not result.filled and result.reason != "no_change":
-            _log.warning(f"Trade not filled: {symbol} {direction} | reason={result.reason}")
+        else:
+            _log.warning(
+                f"Trade not filled: {symbol} {direction} | reason={result.reason} | date={trade_date}"
+            )
         return result
 
     # ------------------------------------------------------------------
@@ -246,6 +258,26 @@ class TradingEngine:
             if prices[sym] < pos.avg_price * (1.0 - self.stop_loss_pct):
                 triggered.append(sym)
         return triggered
+
+    def _log_daily_snapshot(
+        self,
+        trade_date: date,
+        equity: float,
+        positions: Dict[str, Position],
+        prices: Dict[str, float],
+    ) -> None:
+        """Log equity and open positions at the start of a new trading day."""
+        held = {s: p for s, p in positions.items() if p.shares > 0}
+        if held:
+            parts = [
+                f"{s}: {p.shares:.2f}sh @ ${prices.get(s, 0.0):.2f}"
+                f" = ${p.market_value(prices.get(s, 0.0)):,.2f}"
+                for s, p in held.items()
+            ]
+            pos_str = ", ".join(parts)
+        else:
+            pos_str = "no open positions"
+        _log.info(f"[{trade_date}] Day start: equity=${equity:,.2f} | {pos_str}")
 
     def reset_halt(self) -> None:
         """Clear the drawdown halt so automated trading can resume."""
@@ -374,6 +406,7 @@ class TradingEngine:
         await self.restore_intraday_state()
 
         pred_timestamps = set(self.df["timestamp"].unique())
+        current_day: Optional[date] = None
 
         while (ts := self.broker.advance_time()) is not None:
             trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
@@ -381,6 +414,10 @@ class TradingEngine:
             positions = await self.broker.get_positions()
             prices = await self.broker.get_prices_for_positions(positions)
             equity = await self.broker.get_equity()
+
+            if trade_date != current_day:
+                current_day = trade_date
+                self._log_daily_snapshot(trade_date, equity, positions, prices)
 
             if self._peak_equity is None or equity > self._peak_equity:
                 self._peak_equity = equity
