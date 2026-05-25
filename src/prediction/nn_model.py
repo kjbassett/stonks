@@ -10,6 +10,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from src.ml_diagnostics.checks import _compute_classification_metrics
+
 
 def asymmetric_nll_loss(
     mu: torch.Tensor,
@@ -124,25 +126,19 @@ def _run_validation(
             "close": closes,
         }
     )
-    pred_sign = predictions["prediction"] >= 0
-    target_sign = predictions["target"] >= 0
-    pct_positive_preds = pred_sign.mean()
-    pct_positive_targets = target_sign.mean()
-    true_positive_rate = (pred_sign & target_sign).sum() / target_sign.sum() if target_sign.any() else float("nan")
-    false_positive_rate = (pred_sign & ~target_sign).sum() / (~target_sign).sum() if (~target_sign).any() else float("nan")
-
     mse = ((predictions["target"] - predictions["prediction"]) ** 2).mean()
     var_mean = float(np.mean(predictions["variance"]))
     var_p90 = float(np.percentile(predictions["variance"], 90))
     var_max = float(np.max(predictions["variance"]))
     optimal_var = mse / var_mean
+    m = _compute_classification_metrics(predictions)
     print(
-        f"NLL={val_loss:.4f} MSE={mse:.4f} (MSE should not increase by a lot or be super big)\n"
-        f"var_mean={var_mean:.4e} var_p90={var_p90:.4e} var_max={var_max:.4e} (var_p90 shouldn't be >> var_mean)\n"
-        f"optimality test: {optimal_var:.4f} (should be close to 1 when varianced is reduced as far as it can with the current mu)\n"
-        f"sign: {pct_positive_preds:.1%} predicted positive, {pct_positive_targets:.1%} actually positive | "
-        f"TPR={true_positive_rate:.1%} FPR={false_positive_rate:.1%} "
-        f"(watch FPR; if predicted-positive collapses toward 0% the model is over-conservative)"
+        f"NLL={val_loss:.4f} | MSE={mse:.4f} | optimality={optimal_var:.4f} (ideal≈1)\n"
+        f"var: mean={var_mean:.4e}  p90={var_p90:.4e}  max={var_max:.4e}\n"
+        f"TP={m['true_positive_pct']:.1%}  FP={m['false_positive_pct']:.1%}  "
+        f"TN={m['true_negative_pct']:.1%}  FN={m['false_negative_pct']:.1%} | "
+        f"precision={m['precision']:.1%}  recall={m['recall']:.1%}  "
+        f"accuracy={m['accuracy']:.1%}  F1={m['f1_score']:.3f}"
     )
     return val_loss, predictions
 

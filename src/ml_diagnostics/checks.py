@@ -1,5 +1,7 @@
 """Data quality checks for ML training pipelines."""
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
@@ -176,6 +178,41 @@ def check_loss_spikes(
     return results
 
 
+def _compute_classification_metrics(predictions: pd.DataFrame) -> dict:
+    """Compute binary classification metrics treating prediction > 0 as positive.
+
+    Args:
+        predictions: DataFrame with 'prediction' and 'target' columns.
+
+    Returns:
+        Dict of TP/FP/TN/FN percentages, precision, recall, accuracy, f1_score.
+    """
+    df = predictions[["prediction", "target"]].dropna()
+    if df.empty:
+        return {}
+    pred_pos = df["prediction"] > 0
+    tgt_pos = df["target"] > 0
+    n = len(df)
+    tp = int((pred_pos & tgt_pos).sum())
+    fp = int((pred_pos & ~tgt_pos).sum())
+    tn = int((~pred_pos & ~tgt_pos).sum())
+    fn = int((~pred_pos & tgt_pos).sum())
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    return {
+        "true_positive_pct": tp / n,
+        "false_positive_pct": fp / n,
+        "true_negative_pct": tn / n,
+        "false_negative_pct": fn / n,
+        "precision": precision,
+        "recall": recall,
+        "accuracy": (tp + tn) / n,
+        "f1_score": f1,
+        "n": n,
+    }
+
+
 def _summarize(feature_report: dict, loss_report: dict) -> str:
     """Generate a one-line human-readable summary of the combined report."""
     n_fail = sum(1 for v in feature_report.values() if v["status"] == "fail")
@@ -195,6 +232,7 @@ def run_data_quality_checks(
     train_loss_history: list,
     val_loss_history: list | None = None,
     ignore_cols: list | None = None,
+    predictions: pd.DataFrame | None = None,
 ) -> dict:
     """Run all data quality checks and return a JSON-serializable report.
 
@@ -208,9 +246,12 @@ def run_data_quality_checks(
         train_loss_history: Per-batch training losses from the most recent run.
         val_loss_history: Per-batch validation losses (optional).
         ignore_cols: Column names to exclude from feature checks.
+        predictions: Unscaled predictions DataFrame with 'prediction' and 'target'
+            columns; used to compute classification metrics (optional).
 
     Returns:
-        Report dict: {overall_status, feature_checks, loss_spike_check, summary}.
+        Report dict: {overall_status, feature_checks, loss_spike_check, summary,
+        classification_metrics (if predictions provided)}.
     """
     effective_ignore = ignore_cols or ["symbol", "timestamp", "target"]
     feature_report = check_features(train_data, effective_ignore)
@@ -218,9 +259,12 @@ def run_data_quality_checks(
     feature_statuses = [v["status"] for v in feature_report.values()]
     loss_statuses = [v["status"] for v in loss_report.values()]
     overall = _worst_status(feature_statuses + loss_statuses)
-    return {
+    result = {
         "overall_status": overall,
         "feature_checks": feature_report,
         "loss_spike_check": loss_report,
         "summary": _summarize(feature_report, loss_report),
     }
+    if predictions is not None:
+        result["classification_metrics"] = _compute_classification_metrics(predictions)
+    return result

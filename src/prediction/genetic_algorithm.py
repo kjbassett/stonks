@@ -455,6 +455,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "args": ["train_data", "train_loss_history", "val_loss_history"],
                 "kwargs": {
                     "ignore_cols": ["symbol", "timestamp", "target"],
+                    "predictions": "predictions",
                 },
                 "outputs": ["data_quality_report"],
                 "run_in_parent_process": True,
@@ -462,25 +463,30 @@ def create_model_space(max_timestamp, min_timestamp):
             "inference": None,
         },
         {
-            "name": "trading_policy",
-            "train": {
-                "func": train_trading_policy,
-                "args": ["predictions", "raw_price_data"],
-                "kwargs": {
-                    "rebalance_interval_hours": 1,
-                    "allow_intraday":False,
-                    "stop_loss_pct": 0.1,
-                },
-                "outputs": ["policy", "score"],
-                "run_in_parent_process": True,
-            },
-            "inference": {
-                "func": apply_trading_policy,
-                "args": ["predictions", "policy"],
-                "outputs": ["recommendations"],
-                "run_in_parent_process": True,
-            },
-        },
+            "name": "score_placeholder",
+            "func": lambda x: 1,
+            "outputs": "score"
+        }
+        # {
+        #     "name": "trading_policy",
+        #     "train": {
+        #         "func": train_trading_policy,
+        #         "args": ["predictions", "raw_price_data"],
+        #         "kwargs": {
+        #             "rebalance_interval_hours": 1,
+        #             "allow_intraday":False,
+        #             "stop_loss_pct": 0.1,
+        #         },
+        #         "outputs": ["policy", "score"],
+        #         "run_in_parent_process": True,
+        #     },
+        #     "inference": {
+        #         "func": apply_trading_policy,
+        #         "args": ["predictions", "policy"],
+        #         "outputs": ["recommendations"],
+        #         "run_in_parent_process": True,
+        #     },
+        # },
     ]
     return model_space, hyperparam_space, save_load_funcs
 

@@ -14,6 +14,7 @@ from src.ml_diagnostics.checks import (
     OUTLIER_Z_THRESHOLD,
     _check_outlier_fraction,
     _check_post_scale_range,
+    _compute_classification_metrics,
     check_features,
     check_loss_spikes,
     run_data_quality_checks,
@@ -266,6 +267,92 @@ class TestRunDataQualityChecks(unittest.TestCase):
             df, self._good_loss(), ignore_cols=["symbol", "timestamp", "target", "my_id"]
         )
         self.assertNotIn("my_id", report["feature_checks"])
+
+
+class TestComputeClassificationMetrics(unittest.TestCase):
+    def _make_predictions(self, pred, target) -> pd.DataFrame:
+        return pd.DataFrame({"prediction": pred, "target": target})
+
+    # --- happy path ---
+
+    def test_perfect_classifier_has_precision_recall_one(self):
+        pred =   [1.0,  1.0, -1.0, -1.0]
+        target = [1.0,  1.0, -1.0, -1.0]
+        m = _compute_classification_metrics(self._make_predictions(pred, target))
+        self.assertAlmostEqual(m["precision"], 1.0)
+        self.assertAlmostEqual(m["recall"], 1.0)
+        self.assertAlmostEqual(m["accuracy"], 1.0)
+        self.assertAlmostEqual(m["f1_score"], 1.0)
+
+    def test_worst_classifier_all_false_positives(self):
+        pred =   [1.0,  1.0,  1.0,  1.0]
+        target = [-1.0, -1.0, -1.0, -1.0]
+        m = _compute_classification_metrics(self._make_predictions(pred, target))
+        self.assertAlmostEqual(m["true_positive_pct"], 0.0)
+        self.assertAlmostEqual(m["false_positive_pct"], 1.0)
+        self.assertAlmostEqual(m["accuracy"], 0.0)
+        self.assertAlmostEqual(m["f1_score"], 0.0)
+
+    def test_mixed_results_metrics_sum_to_one(self):
+        pred =   [1.0, 1.0, -1.0, -1.0]
+        target = [1.0, -1.0,  1.0, -1.0]
+        m = _compute_classification_metrics(self._make_predictions(pred, target))
+        total = m["true_positive_pct"] + m["false_positive_pct"] + m["true_negative_pct"] + m["false_negative_pct"]
+        self.assertAlmostEqual(total, 1.0)
+
+    # --- edge cases ---
+
+    def test_no_positive_predictions_precision_zero(self):
+        pred =   [-1.0, -1.0, -1.0]
+        target = [ 1.0, -1.0, -1.0]
+        m = _compute_classification_metrics(self._make_predictions(pred, target))
+        self.assertAlmostEqual(m["precision"], 0.0)
+        self.assertAlmostEqual(m["f1_score"], 0.0)
+
+    def test_all_positive_targets_recall_one(self):
+        pred =   [1.0, 1.0, 1.0]
+        target = [1.0, 1.0, 1.0]
+        m = _compute_classification_metrics(self._make_predictions(pred, target))
+        self.assertAlmostEqual(m["recall"], 1.0)
+        self.assertAlmostEqual(m["true_negative_pct"], 0.0)
+
+    # --- invalid input ---
+
+    def test_empty_dataframe_returns_empty_dict(self):
+        df = pd.DataFrame({"prediction": [], "target": []})
+        m = _compute_classification_metrics(df)
+        self.assertEqual(m, {})
+
+    def test_predictions_with_nans_ignored(self):
+        pred =   [1.0, float("nan"), -1.0]
+        target = [1.0, 1.0,          -1.0]
+        m = _compute_classification_metrics(self._make_predictions(pred, target))
+        self.assertEqual(m["n"], 2)
+
+    def test_classification_metrics_included_in_report_when_predictions_passed(self):
+        df = pd.DataFrame({
+            "feature_a": np.random.default_rng(1).normal(0, 1, 300),
+            "symbol": ["X"] * 300,
+            "timestamp": list(range(300)),
+            "target": np.random.default_rng(2).normal(0, 1, 300),
+        })
+        preds = pd.DataFrame({
+            "prediction": np.random.default_rng(3).normal(0, 1, 300),
+            "target": np.random.default_rng(4).normal(0, 1, 300),
+        })
+        report = run_data_quality_checks(df, list(np.linspace(5, 0.01, 300)), predictions=preds)
+        self.assertIn("classification_metrics", report)
+        self.assertIn("f1_score", report["classification_metrics"])
+
+    def test_no_predictions_excludes_classification_metrics(self):
+        df = pd.DataFrame({
+            "feature_a": np.random.default_rng(5).normal(0, 1, 300),
+            "symbol": ["X"] * 300,
+            "timestamp": list(range(300)),
+            "target": np.random.default_rng(6).normal(0, 1, 300),
+        })
+        report = run_data_quality_checks(df, list(np.linspace(5, 0.01, 300)))
+        self.assertNotIn("classification_metrics", report)
 
 
 if __name__ == "__main__":
