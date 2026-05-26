@@ -480,7 +480,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "allow_intraday":False,
                     "stop_loss_pct": 0.1,
                 },
-                "outputs": ["policy", "score"],
+                "outputs": ["policy", "score", "trade_log"],
                 "run_in_parent_process": True,
             },
             "inference": {

@@ -70,6 +70,8 @@ class TradingEngine:
         self._needs_liquidation: bool = False
         self._intraday_buys: defaultdict = defaultdict(int)
         self._intraday_sells: defaultdict = defaultdict(int)
+        self._trade_log: list = []
+        self._last_tick_ts: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Execution
@@ -155,6 +157,16 @@ class TradingEngine:
                 f"@ ${price:.2f} | date={trade_date} | reason={result.reason}"
             )
             self._record_trade(symbol, trade_date or date.today(), direction)
+            self._trade_log.append({
+                "ts": self._last_tick_ts,
+                "date": str(trade_date),
+                "symbol": symbol,
+                "direction": direction,
+                "shares": abs(result.shares_delta),
+                "price": price,
+                "value": abs(result.shares_delta) * price,
+                "trigger": trigger,
+            })
         else:
             _log.warning(
                 f"Trade not filled: {symbol} {direction} | reason={result.reason} | date={trade_date}"
@@ -403,12 +415,15 @@ class TradingEngine:
         self._peak_equity = None
         self._halted = False
         self._needs_liquidation = False
+        self._trade_log = []
+        self._last_tick_ts = None
         await self.restore_intraday_state()
 
         pred_timestamps = set(self.df["timestamp"].unique())
         current_day: Optional[date] = None
 
         while (ts := self.broker.advance_time()) is not None:
+            self._last_tick_ts = ts
             trade_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
 
             positions = await self.broker.get_positions()
@@ -448,6 +463,7 @@ class TradingEngine:
             "policy": self.policy,
             "broker": self.broker,
             "fees_paid": self.broker.get_fees_paid(),
+            "trade_log": self._trade_log,
         }
 
     @staticmethod
@@ -468,13 +484,15 @@ async def train_trading_policy(
     allow_intraday: bool = False,
     max_drawdown_pct: float = 0.10,
     stop_loss_pct: float = 0.05,
-) -> Tuple[StrategyPolicy, float]:
+) -> Tuple[StrategyPolicy, float, pd.DataFrame]:
     """
     Train a trading policy via market simulation.
 
     Returns:
         policy: StrategyPolicy (stateful, trained)
         fitness: float (final equity / starting_cash)
+        trade_log: DataFrame of filled trades with columns ts, date, symbol,
+            direction, shares, price, value, trigger — serialized as CSV by ThePickler
     """
     required_cols = {"symbol", "timestamp", "close", "prediction", "variance"}
     missing = required_cols - set(predictions.columns)
@@ -513,7 +531,8 @@ async def train_trading_policy(
     starting_cash = cfg["starting_cash"]
     returns = result["total_equity"] / starting_cash
     policy = result["policy"]
-    return policy, returns
+    trade_log = pd.DataFrame(result["trade_log"])
+    return policy, returns, trade_log
 
 
 async def apply_trading_policy(
