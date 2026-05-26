@@ -314,18 +314,31 @@ class TradingEngine:
         equity: float,
         trade_date: date,
     ) -> None:
-        """Execute rebalancing trades for one timestamp: sells before buys."""
+        """Execute rebalancing trades for one timestamp: sells before buys.
+
+        PDT-blocked symbols are silently skipped before any coroutine is created.
+        The first attempt for a newly blocked symbol still fires execute_trade
+        (which records the block and logs a WARNING); subsequent rebalance ticks
+        that day are suppressed here.
+        """
         positions = await self.broker.get_positions()
+        pdt_blocked_buys, pdt_blocked_sells = self._find_pdt_blocks(trade_date)
         sell_coros, buy_coros = [], []
         for _, row in df_ts.iterrows():
             symbol, price, target_exposure = row["symbol"], row["close"], row["portfolio_weight"]
             pos = positions.get(symbol, Position())
             current_exposure = pos.market_value(price) / equity if equity > 0 else 0.0
+            is_sell = target_exposure < current_exposure
+
+            if is_sell and symbol in pdt_blocked_sells:
+                continue
+            if not is_sell and symbol in pdt_blocked_buys:
+                continue
 
             coro = self.execute_target_exposure(
                 symbol, target_exposure, price, equity, trade_date=trade_date
             )
-            (sell_coros if target_exposure < current_exposure else buy_coros).append(coro)
+            (sell_coros if is_sell else buy_coros).append(coro)
         await asyncio.gather(*sell_coros)
         await asyncio.gather(*buy_coros)
 
