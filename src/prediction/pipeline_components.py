@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import re
 import time
@@ -12,6 +13,7 @@ from sklearn.preprocessing import OneHotEncoder
 from src.data_access.dao_manager import dao_manager
 
 _NEWS_ID_PAT = re.compile(r"^news\d+_id$")
+_log = logging.getLogger("prediction.pipeline")
 
 
 async def load_data(
@@ -79,6 +81,19 @@ async def load_data(
         embedding_lookup: Optional[Dict] = await emb_dao.get_embeddings(
             all_ids, embedding_model_name
         )
+        if not embedding_lookup:
+            raise ValueError(
+                f"num_news={num_news} but no embeddings found in the database for "
+                f"model '{embedding_model_name}'. Run the compute_news_embeddings() "
+                f"plugin to populate the NewsEmbedding table before training."
+            )
+        n_found = len(embedding_lookup)
+        n_requested = len(all_ids)
+        if n_found < n_requested:
+            _log.warning(
+                f"Partial embedding coverage: {n_found}/{n_requested} news IDs have "
+                f"embeddings. Missing IDs will use zero vectors."
+            )
     else:
         embedding_lookup = None
     return structured_data, embedding_lookup, structured_data[["symbol", "timestamp", "close"]]
