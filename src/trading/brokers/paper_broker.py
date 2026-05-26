@@ -114,7 +114,7 @@ class PaperBroker(BaseBroker):
         shares_delta: float,
         price: float,
     ) -> TradeResult:
-        """Fill an order at the given price, capping buys to available cash."""
+        """Fill an order at the given price, capping buys to cash and sells to owned shares."""
         async with self._lock:
             if symbol not in self.portfolio.positions:
                 self.portfolio.positions[symbol] = Position()
@@ -135,6 +135,10 @@ class PaperBroker(BaseBroker):
                     )
                     shares_delta = affordable / price
                     fee = self.flat_fee + affordable * self.percent_fee
+            else:
+                max_sell = -pos.shares
+                if shares_delta < max_sell:
+                    shares_delta = max_sell
 
             if abs(shares_delta) < 1e-6:
                 return TradeResult(symbol, 0.0, price, True, "no_change")

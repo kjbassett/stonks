@@ -414,5 +414,86 @@ class TestBacktest(unittest.IsolatedAsyncioTestCase):
             await engine.backtest()
 
 
+# ---------------------------------------------------------------------------
+# Trade log
+# ---------------------------------------------------------------------------
+
+
+class TestTradeLog(unittest.IsolatedAsyncioTestCase):
+
+    async def test_trade_log_contains_only_filled_trades(self):
+        """PDT-blocked and other unfilled trades must not appear in _trade_log."""
+        engine = _make_engine(allow_intraday=False)
+        today = date(2026, 2, 15)
+        engine._last_tick_ts = 1_000.0
+
+        # BUY fills → should be logged
+        await engine.execute_trade("AAPL", 5.0, 100.0, today)
+        # SELL is PDT-blocked (same day as the buy) → must NOT be logged
+        blocked = await engine.execute_trade("AAPL", -5.0, 100.0, today)
+
+        self.assertEqual(blocked.reason, "pdt_blocked")
+        self.assertEqual(len(engine._trade_log), 1)
+        self.assertEqual(engine._trade_log[0]["symbol"], "AAPL")
+        self.assertEqual(engine._trade_log[0]["direction"], "BUY")
+
+    async def test_trade_log_entry_has_required_fields(self):
+        """Each trade log entry must contain ts, date, symbol, direction, shares, price, value, trigger."""
+        engine = _make_engine()
+        engine._last_tick_ts = 2_000.0
+        today = date(2026, 2, 15)
+
+        await engine.execute_trade("MSFT", 2.0, 50.0, today, trigger="rebalance")
+
+        entry = engine._trade_log[0]
+        for field in ("ts", "date", "symbol", "direction", "shares", "price", "value", "trigger"):
+            self.assertIn(field, entry)
+        self.assertAlmostEqual(entry["ts"], 2_000.0)
+        self.assertEqual(entry["date"], "2026-02-15")
+        self.assertEqual(entry["symbol"], "MSFT")
+        self.assertAlmostEqual(entry["shares"], 2.0)
+        self.assertAlmostEqual(entry["value"], 100.0)
+        self.assertEqual(entry["trigger"], "rebalance")
+
+
+# ---------------------------------------------------------------------------
+# PDT rebalance pre-screening
+# ---------------------------------------------------------------------------
+
+
+class TestPDTRebalancePrescreening(unittest.IsolatedAsyncioTestCase):
+
+    async def test_pdt_rebalance_prescreening_skips_silently(self):
+        """After a BUY is recorded, a second rebalance attempt to SELL should be
+        silently skipped without calling execute_target_exposure."""
+        engine = _make_engine(allow_intraday=False)
+        today = date(2026, 2, 15)
+
+        # Record a BUY so that selling AAPL today would be a PDT round-trip
+        engine._record_trade("AAPL", today, "BUY")
+        engine.broker.portfolio.positions["AAPL"] = Position(shares=5, avg_price=100.0)
+
+        # df_ts wants 0% allocation → would be a sell
+        df_ts = pd.DataFrame([{"symbol": "AAPL", "close": 100.0, "portfolio_weight": 0.0}])
+        engine.execute_target_exposure = AsyncMock()
+
+        await engine._run_rebalance(df_ts, equity=1_000.0, trade_date=today)
+
+        engine.execute_target_exposure.assert_not_called()
+
+    async def test_non_blocked_symbol_still_executes(self):
+        """Symbols that are NOT PDT-blocked must still be traded during rebalance."""
+        engine = _make_engine(allow_intraday=False)
+        today = date(2026, 2, 15)
+
+        # No trades recorded for MSFT, so it is not PDT-blocked
+        df_ts = pd.DataFrame([{"symbol": "MSFT", "close": 50.0, "portfolio_weight": 0.5}])
+        engine.execute_target_exposure = AsyncMock(return_value=None)
+
+        await engine._run_rebalance(df_ts, equity=1_000.0, trade_date=today)
+
+        engine.execute_target_exposure.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

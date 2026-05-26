@@ -267,6 +267,27 @@ class TestFillOrder(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(broker.portfolio.cash, 898.0)
         self.assertAlmostEqual(broker.portfolio.fees_paid, 2.0)
 
+    async def test_sell_capped_to_available_shares(self):
+        """Selling more shares than owned is capped to the owned amount."""
+        broker = _make_broker(starting_cash=0.0)
+        broker.portfolio.positions["AAPL"] = Position(shares=3, avg_price=100.0)
+        # Attempt to sell 10 shares but only 3 are owned
+        result = await broker.fill_order("AAPL", -10.0, 100.0)
+        self.assertTrue(result.filled)
+        self.assertAlmostEqual(result.shares_delta, -3.0)
+        self.assertAlmostEqual(broker.portfolio.positions["AAPL"].shares, 0.0)
+        # Cash must never go negative (position value of 3 shares @ $100 = $300)
+        self.assertGreaterEqual(broker.portfolio.cash, 0.0)
+
+    async def test_cash_never_goes_negative(self):
+        """A series of over-budget buys should never produce negative cash."""
+        broker = _make_broker(starting_cash=150.0)
+        # Three separate buy attempts each requesting more than remaining cash
+        await broker.fill_order("AAPL", 5.0, 100.0)   # $500 requested; ~1 share affordable
+        await broker.fill_order("MSFT", 5.0, 100.0)   # cash is ~0 after first fill
+        await broker.fill_order("GOOG", 5.0, 100.0)   # still no cash
+        self.assertGreaterEqual(broker.portfolio.cash, 0.0)
+
 
 # ---------------------------------------------------------------------------
 # empty price_history edge case
