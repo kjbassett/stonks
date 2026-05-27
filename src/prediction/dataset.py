@@ -170,24 +170,36 @@ async def create_datasets(
     train_data: pd.DataFrame,
     embedding_lookup: Optional[Dict[str, np.ndarray]] = None,
     test_data: Optional[pd.DataFrame] = None,
+    test_split_frac: float = 0.5,
     use_weights: bool = False,
 ) -> "list | Dataset":
     """Create PyTorch Dataset(s) from pre-processed DataFrames.
+
+    When test_data is provided, it is split chronologically at test_split_frac
+    into a test set (early stopping) and a validation set (backtest eval).
+    This ensures the validation set is never touched during model training or selection.
 
     Args:
         train_data: Training DataFrame (or sole DataFrame in inference mode).
         embedding_lookup: Optional dict of news_id -> embedding array.
         test_data: Pre-split test DataFrame. When provided returns
-            [train_dataset, test_dataset]. When None returns a single dataset.
+            [train_dataset, test_dataset, validation_dataset]. When None returns a single dataset.
+        test_split_frac: Fraction of test_data to use as the test set (early stopping);
+            the remainder becomes the validation set. Default 0.5 gives 50/50.
         use_weights: Apply inverse-density sample weights (training only).
 
     Returns:
-        ``[train_dataset, test_dataset]`` when test_data is given, else a single Dataset.
+        ``[train_dataset, test_dataset, validation_dataset]`` when test_data is given,
+        else a single Dataset.
     """
     if test_data is not None:
+        n_test = int(test_split_frac * len(test_data))
+        test_split = test_data.iloc[:n_test].reset_index(drop=True)
+        validation_split = test_data.iloc[n_test:].reset_index(drop=True)
         return [
             create_dataset(train_data, use_weights=True, embedding_lookup=embedding_lookup),
-            create_dataset(test_data, use_weights=False, embedding_lookup=embedding_lookup),
+            create_dataset(test_split, use_weights=False, embedding_lookup=embedding_lookup),
+            create_dataset(validation_split, use_weights=False, embedding_lookup=embedding_lookup),
         ]
     return create_dataset(train_data, use_weights=use_weights, embedding_lookup=embedding_lookup)
 

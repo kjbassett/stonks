@@ -350,7 +350,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": create_datasets,
                 "args": ["train_data", "embedding_lookup"],
                 "kwargs": {"test_data": "test_data"},
-                "outputs": ["train_dataset", "test_dataset"],
+                "outputs": ["train_dataset", "test_dataset", "validation_dataset"],
             },
             "inference": {
                 "func": create_datasets,
@@ -465,6 +465,24 @@ def create_model_space(max_timestamp, min_timestamp):
             },
             "inference": None,
         },
+        {
+            "name": "infer_validation",
+            "train": {
+                "func": infer,
+                "args": ["model", "validation_dataset"],
+                "outputs": "validation_predictions",
+                "run_in_parent_process": True,
+            },
+        },
+        {
+            "name": "unscale_validation",
+            "train": {
+                "func": unscale_data,
+                "args": ["validation_predictions", "means", "stds"],
+                "outputs": "validation_predictions",
+                "run_in_parent_process": True,
+            },
+        },
         # {
         #     "name": "score_placeholder",
         #     "func": lambda x: 1,
@@ -474,7 +492,7 @@ def create_model_space(max_timestamp, min_timestamp):
             "name": "trading_policy",
             "train": {
                 "func": train_trading_policy,
-                "args": ["predictions", "raw_price_data"],
+                "args": ["validation_predictions", "raw_price_data"],
                 "kwargs": {
                     "rebalance_interval_hours": 1,
                     "allow_intraday":False,
