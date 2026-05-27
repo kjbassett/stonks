@@ -503,7 +503,8 @@ async def train_trading_policy(
 
     Returns:
         policy: StrategyPolicy (stateful, trained)
-        fitness: float (final equity / starting_cash)
+        fitness: float — annualized return ((total_equity/starting_cash)^(1/years) - 1),
+            normalised by calendar time so runs of different lengths are comparable.
         trade_log: DataFrame of filled trades with columns ts, date, symbol,
             direction, shares, price, value, trigger — serialized as CSV by ThePickler
     """
@@ -542,10 +543,20 @@ async def train_trading_policy(
     result = await engine.backtest()
 
     starting_cash = cfg["starting_cash"]
-    returns = result["total_equity"] / starting_cash
     policy = result["policy"]
     trade_log = pd.DataFrame(result["trade_log"])
-    return policy, returns, trade_log
+
+    cumulative = result["total_equity"] / starting_cash
+    time_span_s = float(
+        predictions["timestamp"].max() - predictions["timestamp"].min()
+    )
+    calendar_years = time_span_s / (365.25 * 24 * 3600)
+    if calendar_years > 1e-9 and cumulative > 0:
+        annualized_return = cumulative ** (1.0 / calendar_years) - 1.0
+    else:
+        annualized_return = 0.0
+
+    return policy, annualized_return, trade_log
 
 
 async def apply_trading_policy(
