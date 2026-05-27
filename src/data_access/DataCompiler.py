@@ -127,7 +127,7 @@ def construct_inner_query(
         start_col = "t.start"
         end_col = "t.end"
         columns += [
-            f"{start_col} AS timestamp",  # pipeline expects column called timestamp
+            f"{end_col} AS timestamp",  # bar end — when all bar features are available
             "t.open",
             "t.low",
             "t.close",
@@ -184,7 +184,7 @@ def construct_inner_query(
 
     # Add filters
     if min_timestamp != 0:
-        filters.append(f"{start_col} >= {min_timestamp}")
+        filters.append(f"{end_col} >= {min_timestamp}")
     if max_timestamp > 0:
         filters.append(f"{end_col} <= {max_timestamp}")
     if aggregation_interval != "minute":
