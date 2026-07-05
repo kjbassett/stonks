@@ -1,77 +1,115 @@
 import asyncio
+import logging
+from typing import List, Optional
 
-import polygon
+from massive import WebSocketClient
+from massive.websocket.models import EquityAgg, Feed, Market
+
 from src.data_access.Company import Company
+from src.data_sources.watchlist import get_watchlist_symbols
 from src.utils.project_utilities import config
 from webrock.decorator import plugin
 
+_log = logging.getLogger("data_sources.stream")
 
-# Async function for WebSocket client
-@plugin(companies={"ui_element": "textbox", "default": "all"})
-async def main(db, companies: list | None = None):
-    # incoming data handler
-    async def process_and_store_data(data):
-        cid = await Company(db).get_or_create_company(data["sym"])
-        data = [
-            {
-                "company_id": cid,
-                "open": d["o"],
-                "high": d["h"],
-                "low": d["l"],
-                "close": d["c"],
-                "vw_average": d["vw"],
-                "volume": d["v"],
-                "timestamp": d["s"] // 1000,
-            }
-            for d in data
-        ]
-        await db.insert("TradingData", data)
+RECONNECT_DELAY_S = 5
+WATCHLIST_POLL_INTERVAL_S = 1800  # re-check watchlist every 30 minutes
 
+
+@plugin(symbols={"ui_element": "textbox", "default": "watchlist"})
+async def stream_price_data(db, symbols: str = "watchlist") -> None:
+    """Stream Massive minute-bar data and persist to TradingData.
+
+    Reconnects automatically on error.  Every ``WATCHLIST_POLL_INTERVAL_S``
+    seconds the stream restarts to pick up watchlist changes.
+
+    Args:
+        db: AsyncDatabase instance injected by webrock.
+        symbols: Comma-separated tickers, or ``"watchlist"`` to load from DB.
+    """
     api_key = config["polygon_io"]
-    stream_client = polygon.AsyncStreamClient(api_key, "stocks")
+    while True:
+        stream_client: Optional[WebSocketClient] = None
+        try:
+            tickers = await _resolve_symbols(db, symbols)
+            _log.info("Streaming %d symbols.", len(tickers))
+            subs = [f"AM.{t}" for t in tickers]
+            stream_client = WebSocketClient(
+                api_key=api_key,
+                feed=Feed.RealTime,
+                market=Market.Stocks,
+                subscriptions=subs,
+            )
+            await asyncio.wait_for(
+                stream_client.connect(processor=_make_bar_handler(db)),
+                timeout=WATCHLIST_POLL_INTERVAL_S,
+            )
+        except asyncio.TimeoutError:
+            pass  # intentional reconnect to refresh watchlist
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _log.exception("Stream error, reconnecting in %ds.", RECONNECT_DELAY_S)
+            await asyncio.sleep(RECONNECT_DELAY_S)
+        finally:
+            await _safe_close(stream_client)
 
+
+async def _resolve_symbols(db, symbols_param: str) -> List[str]:
+    """Return the list of tickers to subscribe to.
+
+    Args:
+        db: AsyncDatabase instance used to look up the watchlist.
+        symbols_param: ``"watchlist"`` or a comma-separated ticker string.
+
+    Returns:
+        List of uppercase ticker symbols.
+    """
+    if symbols_param.strip().lower() == "watchlist":
+        return await get_watchlist_symbols()
+    return [s.strip().upper() for s in symbols_param.split(",") if s.strip()]
+
+
+def _make_bar_handler(db):
+    """Return an async handler that stores Massive minute bars to TradingData.
+
+    Args:
+        db: AsyncDatabase instance for DB writes.
+
+    Returns:
+        Async handler coroutine factory.
+    """
+    async def _handler(msgs: list) -> None:
+        for bar in msgs:
+            if not isinstance(bar, EquityAgg):
+                continue
+            cid = await Company(db).get_or_create_company(bar.symbol)
+            await db.insert(
+                "TradingData",
+                {
+                    "company_id": cid,
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "vw_average": bar.vwap,
+                    "volume": bar.volume,
+                    "timestamp": bar.start_timestamp // 1000,
+                },
+            )
+
+    return _handler
+
+
+async def _safe_close(stream_client: Optional[WebSocketClient]) -> None:
+    """Close the stream client, ignoring errors.
+
+    Args:
+        stream_client: Client to close, or None (no-op).
+    """
+    if stream_client is None:
+        return
     try:
-        await stream_client.subscribe_stock_minute_aggregates(
-            companies, handler_function=process_and_store_data
-        )
-    except asyncio.CancelledError:
+        await stream_client.close()
+    except Exception:
         pass
-    finally:
-        await stream_client.close_stream()
-
-
-# test function for all template input types
-@plugin(
-    date={"ui_element": "date"},
-    slider={"ui_element": "slider", "default": 50, "min": 0, "max": 100},
-    color={"ui_element": "color", "default": "#000000"},
-    datetime_local={"ui_element": "datetime_local", "default": "2021-01-01T00:00"},
-    email={"ui_element": "email"},
-    file={"ui_element": "file"},
-    month={"ui_element": "month"},
-    password={"ui_element": "password"},
-)
-async def test_ui_elements(
-    text: str,
-    check: bool,
-    integer: int,
-    date: str,
-    slider: int,
-    color: str,
-    datetime_local: str,
-    email: str,
-    file: str,
-    month: str,
-    password: str,
-):
-    print(f"text: {text}")
-    print(f"check: {check}")
-    print(f"integer: {integer}")
-    print(f"date: {date}")
-    print(f"slider: {slider}")
-    print(f"color: {color}")
-    print(f"datetime_local: {datetime_local}")
-    print(f"email: {email}")
-    print(f"file: {file}")
-    print(f"month: {month}")
-    print(f"password: {password}")

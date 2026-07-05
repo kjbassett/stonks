@@ -13,6 +13,8 @@ from src.utils.market_calendar import (
 )
 from src.utils.project_utilities import call_limiter
 
+WATCHLIST_KEYWORD = "watchlist"
+
 cmp = dao_manager.get_dao("Company")
 
 
@@ -203,7 +205,12 @@ async def fill_gaps(
     max_gap_size: int = 0,
     adjust_for_market_hours=False,
 ):
-    if companies:
+    if companies == WATCHLIST_KEYWORD:
+        from src.data_sources.watchlist import get_watchlist_and_held_symbols
+        symbols = await get_watchlist_and_held_symbols()
+        all_companies = await cmp.get()
+        companies = all_companies[all_companies["symbol"].isin(symbols)]
+    elif companies:
         companies = await cmp.get(symbol=companies)
     else:
         companies = await cmp.get()
