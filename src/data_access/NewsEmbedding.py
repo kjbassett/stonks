@@ -72,3 +72,15 @@ class NewsEmbedding(BaseDAO):
         )
         rows = await self.db.execute_query(query, (model,))
         return [row[0] for row in rows]
+
+    async def clean_data(self, min_timestamp: int) -> None:
+        """Delete embeddings for news articles older than min_timestamp or that no longer exist.
+
+        Args:
+            min_timestamp: Unix timestamp cutoff; embeddings for older or deleted news are removed.
+        """
+        query = (
+            "DELETE FROM NewsEmbedding"
+            " WHERE news_id NOT IN (SELECT id FROM News WHERE timestamp >= ?)"
+        )
+        await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")
