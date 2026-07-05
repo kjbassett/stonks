@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 import numpy as np
 import pandas as pd
 
@@ -26,6 +28,7 @@ class DataCompiler(BaseDAO):
         include_cv_volume_ratio: bool = True,
         keep_latest_only: bool = False,
         print_query: bool = False,
+        symbols: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         query = construct_query(
             aggregation_interval,
@@ -43,10 +46,15 @@ class DataCompiler(BaseDAO):
             include_cv_volume_ratio,
             keep_latest_only=keep_latest_only,
         )
+        params: tuple = ()
+        if symbols and isinstance(symbols, list):
+            placeholders = ",".join("?" * len(symbols))
+            query = f"SELECT * FROM ({query}) WHERE symbol IN ({placeholders})"
+            params = tuple(symbols)
         if print_query:
             print(query)
         data = await self.db.execute_query(
-            query, query_type="SELECT", return_type="DataFrame", print_query=print_query
+            query, params, query_type="SELECT", return_type="DataFrame", print_query=print_query
         )
         for col in data.columns:
             if col[:2] == "rn":
@@ -109,8 +117,11 @@ def construct_inner_query(
 ) -> str:
     ctes = []  # common table expressions
     columns = ["c.symbol"]
-    joins = ["JOIN Company c ON t.company_id = c.id"]
-    filters = ["c.enabled = 1"]
+    joins = [
+        "JOIN Company c ON t.company_id = c.id",
+        "LEFT JOIN Exchange e ON c.primary_exchange = e.market_id",
+    ]
+    filters = ["c.enabled = 1", "e.active IS NOT 0"]
 
     if aggregation_interval == "minute":
         table = "TradingData"

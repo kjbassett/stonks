@@ -23,9 +23,14 @@ class Company(BaseDAO):
         columns = ", ".join(columns)
         if "Company.enabled" not in kwargs:
             kwargs["Company.enabled"] = 1
-        qry = f"SELECT {columns} FROM {self.table_name} LEFT JOIN TickerType ON Company.ticker_type_id = TickerType.id"
+        qry = (
+            f"SELECT {columns} FROM {self.table_name}"
+            f" LEFT JOIN TickerType ON Company.ticker_type_id = TickerType.id"
+            f" LEFT JOIN Exchange ON Company.primary_exchange = Exchange.market_id"
+        )
         params, where_clause = _create_filters(kwargs)
-        qry += f" WHERE {' AND '.join(where_clause)}" if where_clause else ""
+        where_clause.append("Exchange.active IS NOT 0")
+        qry += f" WHERE {' AND '.join(where_clause)}"
 
         print(qry)
 

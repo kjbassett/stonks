@@ -1,3 +1,10 @@
+-- Exchange Table
+CREATE TABLE Exchange (
+    market_id TEXT PRIMARY KEY,
+    market_name TEXT,
+    active BIT NOT NULL DEFAULT 1
+);
+
 -- Company Table
 CREATE TABLE Company (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8,7 +15,8 @@ CREATE TABLE Company (
   primary_exchange TEXT,
   enabled BIT NOT NULL DEFAULT 1,
   FOREIGN KEY(industry_id) REFERENCES Industry(id),
-  FOREIGN KEY(ticker_type_id) REFERENCES TickerType(id)
+  FOREIGN KEY(ticker_type_id) REFERENCES TickerType(id),
+  FOREIGN KEY(primary_exchange) REFERENCES Exchange(market_id)
 );
 
 CREATE TABLE Industry (

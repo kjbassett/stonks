@@ -1,3 +1,12 @@
+INSERT INTO Exchange (market_id, market_name, active) VALUES
+    ('XNAS', 'NASDAQ', 1),
+    ('XNYS', 'New York Stock Exchange', 1),
+    ('XASE', 'NYSE American', 1),
+    ('ARCX', 'NYSE Arca', 1),
+    ('BATS', 'CBOE BZX (BATS)', 1),
+    ('OTC Link', 'OTC Link', 0),
+    ('Grey Market', 'Grey Market', 0);
+
 INSERT INTO IndustryOffice (name) VALUES
     ('Industrial Applications and Services'),
     ('Energy & Transportation'),

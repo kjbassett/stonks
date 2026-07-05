@@ -53,12 +53,11 @@ class TradingData(BaseDAO):
         DELETE FROM {self.table_name} 
           WHERE timestamp <=? 
           OR company_id in (
-            SELECT Company.
-            id 
-            FROM Company 
-            LEFT JOIN TickerType
-            ON Company.ticker_type_id = TickerType.id
-            WHERE TickerType.enabled <> 1 OR Company.enabled <> 1
+            SELECT Company.id
+            FROM Company
+            LEFT JOIN TickerType ON Company.ticker_type_id = TickerType.id
+            LEFT JOIN Exchange ON Company.primary_exchange = Exchange.market_id
+            WHERE TickerType.enabled <> 1 OR Company.enabled <> 1 OR Exchange.active IS 0
           );
         """
         print(query)
