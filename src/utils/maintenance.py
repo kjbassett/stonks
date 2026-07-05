@@ -8,9 +8,14 @@ async def clean_data():
     await dao_manager.clean_data(earliest_market_time())
 
 
-@plugin()
-async def backup_db():
-    await dao_manager.db.backup()
+@plugin(backup_path={"ui_element": "textbox", "default": "H:/databases"})
+async def backup_db(backup_path: str = "H:/databases") -> None:
+    """Back up the database to a timestamped file in backup_path.
+
+    Args:
+        backup_path: Directory to write the backup into. Defaults to H:/databases.
+    """
+    await dao_manager.db.backup(backup_path)
 
 
 @plugin()

@@ -25,6 +25,8 @@ class AsyncDatabase:
     async def connect(self):
         if self.conn is None:
             self.conn = await aiosqlite.connect(self.db_path)
+            await self.conn.execute("PRAGMA journal_mode = WAL;")
+            await self.conn.execute("PRAGMA synchronous = NORMAL;")
 
     async def close(self):
         if self.conn is not None:
@@ -102,7 +104,6 @@ class AsyncDatabase:
             await cursor.close()
             return result
         else:
-            await self.conn.commit()
             rowcount = cursor.rowcount
             await cursor.close()
             return rowcount  # Return number of rows affected
@@ -149,7 +150,13 @@ class AsyncDatabase:
                 print(f"❌ Failed to recreate index {name}: {e}")
         print("\nAll indices processed.")
 
-    async def backup(self):
+    async def backup(self, destination: str = None) -> None:
+        """Copy the database file to a timestamped backup.
+
+        Args:
+            destination: Directory to write the backup into.  Defaults to the
+                same directory as the database file.
+        """
         self.backup_in_progress.clear()  # Block new operations
         try:
             now = datetime.datetime.now()
@@ -171,7 +178,7 @@ class AsyncDatabase:
                 f'{now.strftime("%Y-%m-%d %H:%M:%S")} All db operations finished. Starting backup...'
             )
             await self.close()
-            await self._backup()
+            await self._backup(destination)
             await self.connect()
             duration = (datetime.datetime.now() - now).total_seconds()
             print(
@@ -180,17 +187,23 @@ class AsyncDatabase:
         finally:
             self.backup_in_progress.set()  # Allow operations after backup
 
-    async def _backup(self):
-        import shutil
+    async def _backup(self, destination: str = None) -> None:
+        """Copy the database file to a timestamped path.
+
+        Args:
+            destination: Directory to write the backup into.  Defaults to the
+                same directory as the database file.
+        """
         import os
+        import shutil
 
         now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        root, extension = os.path.splitext(self.db_path)
-        backup_path = f"{root}_{now}{extension}"
-        # Get the current event loop
+        fname = os.path.basename(self.db_path)
+        root, extension = os.path.splitext(fname)
+        dest_dir = destination if destination else os.path.dirname(self.db_path)
+        os.makedirs(dest_dir, exist_ok=True)
+        backup_path = os.path.join(dest_dir, f"{root}_{now}{extension}")
         loop = asyncio.get_running_loop()
-
-        # Run the blocking function in a thread pool and get a Future object
         await loop.run_in_executor(None, shutil.copy, self.db_path, backup_path)
 
     async def optimize(self):
