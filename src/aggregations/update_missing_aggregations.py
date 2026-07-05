@@ -7,33 +7,50 @@ from webrock.decorator import plugin
 
 from src.utils.market_calendar import earliest_market_time
 
+WATCHLIST_KEYWORD = "watchlist"
+
 
 @plugin()
 async def update_hourly_aggregations(
-    companies: str = None,
+    companies: str = "",
     hours_per_query: int = 1440,
     companies_per_query: int = 10,
+    lookback_hours: int = 0,
 ) -> None:
     """Update missing hourly OHLCV aggregations for all (or selected) companies.
 
     Args:
-        companies: Comma-separated ticker symbols to process. Omit to process all.
+        companies: Comma-separated ticker symbols, ``"watchlist"``, or empty for all.
         hours_per_query: Size of each time window in hours.
         companies_per_query: Number of companies to process per DB call.
+        lookback_hours: Only aggregate this many hours back from now. 0 = all time.
     """
-    # TODO src/aggregations folder appears before the data_access folder, so dao_manager had no daos until I put dao manager here.
+    # Deferred import: aggregations/ loads before data_access/ so dao_manager has
+    # no DAOs yet at import time.
     from src.data_access.dao_manager import dao_manager
 
     cmp = dao_manager.get_dao("Company")
     tda = dao_manager.get_dao("TradingDataAggregation")
     window = 3600 * hours_per_query
-    earliest_timestamp = earliest_market_time()
 
-    all_companies = (
-        await cmp.get(symbol=companies) if companies else await cmp.get()
+    if companies == WATCHLIST_KEYWORD:
+        from src.data_sources.watchlist import get_watchlist_and_held_symbols
+        symbols = await get_watchlist_and_held_symbols()
+        all_companies = await cmp.get()
+        all_companies = all_companies[all_companies["symbol"].isin(symbols)]
+    elif companies:
+        all_companies = await cmp.get(symbol=companies)
+    else:
+        all_companies = await cmp.get()
+
+    now = int(datetime.now().timestamp())
+    earliest_timestamp = (
+        max(earliest_market_time(), now - lookback_hours * 3600)
+        if lookback_hours
+        else earliest_market_time()
     )
-    chunks = _split_chunks(all_companies, companies_per_query)
 
+    chunks = _split_chunks(all_companies, companies_per_query)
     for chunk in chunks:
         await _process_chunk(tda, chunk, earliest_timestamp, window)
 

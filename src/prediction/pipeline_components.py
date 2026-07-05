@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import time
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,7 @@ async def load_data(
     include_cv_volume_ratio: bool = True,
     keep_latest_only: bool = False,
     embedding_model_name: str = "all-MiniLM-L6-v2",
+    symbols: Optional[List] = None,
 ) -> tuple:
     """Load structured trading data and pre-computed news embeddings.
 
@@ -55,6 +56,10 @@ async def load_data(
     """
     if min_timestamp < 0:
         min_timestamp = int(time.time()) + min_timestamp
+    # Use actively set symbols filter when no explicit list was supplied.
+    if symbols is None or not isinstance(symbols, list):
+        from src.data_sources.watchlist import get_active_symbols
+        symbols = get_active_symbols()
     structured_data_dao = dao_manager.get_dao("DataCompiler")
     structured_data = await structured_data_dao.get_data(
         "hour",
@@ -72,6 +77,7 @@ async def load_data(
         include_cv_volume_ratio,
         keep_latest_only,
         print_query=True,
+        symbols=symbols,
     )
     if num_news > 0:
         news_id_cols = [c for c in structured_data.columns if _NEWS_ID_PAT.match(c)]
