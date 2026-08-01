@@ -165,9 +165,10 @@ class AsyncDatabase:
             )
             t = time.time()
             while time.time() - t < 3600 * 3:
-                async with self.operation_lock:  # lock to access self.active_operations
+                async with self.operation_lock:
                     if self.active_operations == 0:
                         break
+                await asyncio.sleep(0.5)
             else:
                 print(
                     f'{now.strftime("%Y-%m-%d %H:%M:%S")} Waiting for all db operations to finish timed out.'
