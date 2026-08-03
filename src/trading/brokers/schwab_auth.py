@@ -28,6 +28,7 @@ _AUTH_ENDPOINT = "https://api.schwabapi.com/v1/oauth/authorize"
 _TOKEN_ENDPOINT = "https://api.schwabapi.com/v1/oauth/token"
 _REFRESH_BUFFER_SECONDS = 300  # refresh access token 5 min before expiry
 _REFRESH_TOKEN_BUFFER_SECONDS = 3600  # reauth 1 hour before refresh token expiry
+_REFRESH_TOKEN_LIFETIME_SECONDS = 7 * 24 * 3600  # Schwab refresh tokens last 7 days
 
 
 class SchwabAuthError(Exception):
@@ -75,20 +76,16 @@ class SchwabAuth:
     async def refresh(self) -> None:
         """Exchange the refresh token for a new access token and save it.
 
-        If the refresh token itself is expired, falls back to the interactive
-        ``authorize()`` flow automatically (opens a browser and prompts for the
-        redirect URL on stdin).
+        Raises:
+            SchwabAuthError: If the refresh token is missing or expired.
+                Run ``authorize()`` from a terminal to re-authenticate.
         """
         tokens = self._load_tokens()
-        refresh_token = tokens.get("refresh_token")
-        if _is_refresh_expired(tokens):
-            print("\nSchwab refresh token expired — starting reauthorization...")
-            self.authorize()
-            return
-        elif not refresh_token:
-            print("\nNo Schwab refresh token available. Reauthorizing...")
-            self.authorize()
-            return
+        refresh_token = tokens.get("refresh_token") if tokens else None
+        if not refresh_token or _is_refresh_expired(tokens):
+            raise SchwabAuthError(
+                "Schwab refresh token expired or missing. Run authorize() from a terminal."
+            )
         new_tokens = await self._post_token(
             {"grant_type": "refresh_token", "refresh_token": refresh_token}
         )
@@ -96,18 +93,20 @@ class SchwabAuth:
         self._save_tokens(new_tokens)
 
     async def get_client(self) -> "SchwabClient":  # noqa: F821
-        """
-        Return an authenticated SchwabClient, refreshing the token if needed.
+        """Return an authenticated SchwabClient, refreshing the access token if needed.
 
-        Raises SchwabAuthError if no token file exists — run authorize() first.
+        Raises:
+            SchwabAuthError: If no token file exists or the refresh token is expired.
+                Run ``authorize()`` from a terminal to re-authenticate.
         """
         from src.trading.brokers.schwab_client import SchwabClient
 
         tokens = self._load_tokens()
         if not tokens:
-            self.authorize()
-            tokens = self._load_tokens()
-        elif _is_expired(tokens):
+            raise SchwabAuthError(
+                "No Schwab token file found. Run authorize() from a terminal."
+            )
+        if _is_expired(tokens):
             await self.refresh()
             tokens = self._load_tokens()
         return SchwabClient(access_token=tokens["access_token"])
@@ -194,12 +193,10 @@ class SchwabAuth:
 
 def _annotate_expiry(token_data: Dict[str, Any]) -> Dict[str, Any]:
     """Add absolute expiry timestamps for both the access and refresh tokens."""
-    print(token_data)
     now = time.time()
     token_data["expires_at"] = now + token_data.get("expires_in", 1800)
-    refresh_expires_in = token_data.get("refresh_token_expires_in")
-    if refresh_expires_in is not None:
-        token_data["refresh_expires_at"] = now + int(refresh_expires_in)
+    refresh_expires_in = token_data.get("refresh_token_expires_in", _REFRESH_TOKEN_LIFETIME_SECONDS)
+    token_data["refresh_expires_at"] = now + int(refresh_expires_in)
     return token_data
 
 
