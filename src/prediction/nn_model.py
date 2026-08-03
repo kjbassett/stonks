@@ -2,6 +2,7 @@ import collections
 import copy
 import datetime
 import os
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -88,13 +89,14 @@ class NumericalModel(nn.Module):
         return mu, var
 
 
-def _run_validation(
+async def _run_validation(
     model: nn.Module,
     test_loader: DataLoader,
     loss_fn: nn.Module,
     device: torch.device,
     desc: str = "val",
     val_batches: int | None = None,
+    pause_check: Optional[Callable] = None,
 ) -> tuple[float, pd.DataFrame]:
     """Run a validation pass over exactly val_batches batches (or all if None).
 
@@ -119,6 +121,8 @@ def _run_validation(
         for i, (x_batch, y_batch, weights, meta) in enumerate(tqdm(test_loader, desc=desc)):
             if val_batches is not None and i >= val_batches:
                 break
+            if pause_check is not None:
+                await pause_check()
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device).unsqueeze(1)
             weights = weights.to(device)
@@ -164,7 +168,7 @@ def _run_validation(
 
 
 # --- Training loop for numerical-only model ---
-def train_numerical_model(
+async def train_numerical_model(
     model,
     train_loader,
     test_loader,
@@ -176,6 +180,7 @@ def train_numerical_model(
     patience: int = 10,
     val_batches: int | None = None,
     val_smoothing_window: int = 3,
+    pause_check: Optional[Callable] = None,
 ):
     # Validate once per epoch by default; caller can override to a fixed interval.
     if batches_before_validation is None:
@@ -204,6 +209,8 @@ def train_numerical_model(
     for epoch in range(epochs):
         if stop_training:
             break
+        if pause_check is not None:
+            await pause_check()
         # --- Training ---
         model.train()  # signal to layers like dropout to act differently
         for x_batch, y_batch, weights, _ in tqdm(
@@ -226,9 +233,9 @@ def train_numerical_model(
             if global_step % batches_before_validation != 0:
                 continue
 
-            val_loss, predictions = _run_validation(
+            val_loss, predictions = await _run_validation(
                 model, test_loader, loss_fn, device, desc=f"Epoch {epoch+1} [val]",
-                val_batches=val_batches,
+                val_batches=val_batches, pause_check=pause_check,
             )
             val_loss_history.append((global_step, val_loss))
 
@@ -264,8 +271,9 @@ def train_numerical_model(
     # If validation never fired, do a final pass now so we always return a valid checkpoint.
     if best_state_dict is None:
         print("Validation never fired during training — running final validation pass.")
-        val_loss, predictions = _run_validation(
+        val_loss, predictions = await _run_validation(
             model, test_loader, loss_fn, device, desc="final val", val_batches=val_batches,
+            pause_check=pause_check,
         )
         best_smoothed_loss = val_loss
         best_state_dict = copy.deepcopy(model.state_dict())
@@ -325,7 +333,7 @@ def create_model(
     )
 
 
-def train_model(
+async def train_model(
     model: NumericalModel,
     train_dataset,
     test_dataset,
@@ -337,6 +345,7 @@ def train_model(
     false_positive_weight: float = 2.0,
     val_batches: int | None = None,
     val_smoothing_window: int = 3,
+    pause_check: Optional[Callable] = None,
 ) -> tuple:
     """Train ``model`` and return the best checkpoint.
 
@@ -373,10 +382,10 @@ def train_model(
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle_test)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    return train_numerical_model(
+    return await train_numerical_model(
         model, train_loader, test_loader, device, epochs, optimizer, loss_fn,
         batches_before_validation, val_batches=val_batches,
-        val_smoothing_window=val_smoothing_window,
+        val_smoothing_window=val_smoothing_window, pause_check=pause_check,
     )
 
 
@@ -433,7 +442,7 @@ def infer(model, dataset):
             variances.extend(var.cpu().numpy().flatten())
             symbols.extend(meta["symbol"])
             timestamps.extend(meta["timestamp"])
-            closes.extend(meta["close"].numpy())
+            closes.extend(meta["close"])
 
     predictions = pd.DataFrame(
         {
