@@ -92,10 +92,16 @@ def setup_logging(log_dir: str | None = None) -> None:
 
     queue_handler = logging.handlers.QueueHandler(log_queue)
 
-    # Root logger: receives everything
+    # Root logger: receives everything; clear any pre-existing handlers (e.g. Sanic's basicConfig handler)
     root = logging.getLogger()
+    root.handlers.clear()
     root.setLevel(logging.DEBUG)
     root.addHandler(queue_handler)
+
+    # Silence noisy third-party library loggers — they flood DEBUG even at root INFO
+    for _lib in ("httpx", "urllib3", "sanic", "sanic.access", "asyncio", "aiosqlite",
+                 "websockets", "asyncpraw", "sentence_transformers", "transformers"):
+        logging.getLogger(_lib).setLevel(logging.WARNING)
 
     # trading.* logger: routed separately, does not propagate to root
     trading_logger = logging.getLogger("trading")
