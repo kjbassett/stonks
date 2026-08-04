@@ -123,8 +123,9 @@ def construct_inner_query(
     joins = [
         "JOIN Company c ON t.company_id = c.id",
         "LEFT JOIN Exchange e ON c.primary_exchange = e.market_id",
+        "LEFT JOIN TickerType tt ON c.ticker_type_id = tt.id",
     ]
-    filters = ["c.enabled = 1", "e.active IS NOT 0"]
+    filters = ["c.enabled = 1", "e.active IS NOT 0", "tt.enabled IS NOT 0"]
 
     if aggregation_interval == "minute":
         table = "TradingData"
