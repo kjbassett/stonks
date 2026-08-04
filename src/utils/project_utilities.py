@@ -12,6 +12,10 @@ with open("config.json", "r") as f:
 
 call_limiter = asyncio.Semaphore(32)
 
+# Set up file+console logging as early as possible; safe to call multiple times (no-op after first).
+from src.utils.log_config import setup_logging  # noqa: E402
+setup_logging()
+
 
 def make_rest_client(concurrency: int = 10) -> RESTClient:
     """Create a Massive RESTClient sized for concurrent use.
