@@ -33,6 +33,7 @@ class Company(BaseDAO):
         )
         params, where_clause = _create_filters(kwargs)
         where_clause.append("Exchange.active IS NOT 0")
+        where_clause.append("TickerType.enabled IS NOT 0")
         qry += f" WHERE {' AND '.join(where_clause)}"
 
         _log.debug("Query: %s", qry)
