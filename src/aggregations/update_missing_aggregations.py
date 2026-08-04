@@ -56,9 +56,10 @@ async def update_hourly_aggregations(
     )
 
     chunks = _split_chunks(all_companies, companies_per_query)
-    for chunk in chunks:
+    n_chunks = len(chunks)
+    for i, chunk in enumerate(chunks, 1):
         await wait_if_paused(UPDATE_HOURLY_PLUGIN_ID)
-        await _process_chunk(tda, chunk, earliest_timestamp, window)
+        await _process_chunk(tda, chunk, earliest_timestamp, window, i, n_chunks)
 
     _log.info("Hourly aggregations updated")
 
@@ -84,6 +85,8 @@ async def _process_chunk(
     chunk: pd.DataFrame,
     earliest_timestamp: int,
     window: int,
+    chunk_index: int,
+    n_chunks: int,
 ) -> None:
     """Aggregate all time windows for a chunk of companies concurrently.
 
@@ -92,11 +95,13 @@ async def _process_chunk(
         chunk: Subset of the companies DataFrame to process.
         earliest_timestamp: Earliest unix timestamp to aggregate from.
         window: Time window size in seconds.
+        chunk_index: 1-based index of this chunk.
+        n_chunks: Total number of chunks.
     """
     company_ids: List[int] = list(chunk["id"])
     symbols: List[str] = list(chunk["symbol"])
     current_iter_start = int(datetime.now().timestamp())
-    _log.info("Processing chunk %s", symbols)
+    _log.info("[%d/%d] Processing chunk %s", chunk_index, n_chunks, symbols)
 
     tasks = [
         asyncio.create_task(
@@ -107,4 +112,4 @@ async def _process_chunk(
     await asyncio.gather(*tasks)
 
     elapsed = datetime.now().timestamp() - current_iter_start
-    _log.info("Finished chunk %s in %.1fs", symbols, elapsed)
+    _log.info("[%d/%d] Finished chunk %s in %.1fs", chunk_index, n_chunks, symbols, elapsed)

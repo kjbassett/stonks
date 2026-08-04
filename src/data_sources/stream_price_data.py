@@ -14,6 +14,7 @@ _log = logging.getLogger("data_sources.stream")
 
 RECONNECT_DELAY_S = 5
 WATCHLIST_POLL_INTERVAL_S = 1800  # re-check watchlist every 30 minutes
+_BAR_LOG_INTERVAL = 100  # log a summary every N bars received
 
 
 @plugin(symbols={"ui_element": "textbox", "default": "watchlist"})
@@ -45,7 +46,7 @@ async def stream_price_data(db, symbols: str = "watchlist") -> None:
                 timeout=WATCHLIST_POLL_INTERVAL_S,
             )
         except asyncio.TimeoutError:
-            pass  # intentional reconnect to refresh watchlist
+            _log.info("Watchlist refresh interval reached — reconnecting.")
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -79,10 +80,16 @@ def _make_bar_handler(db):
     Returns:
         Async handler coroutine factory.
     """
+    bars_received = 0
+
     async def _handler(msgs: list) -> None:
+        nonlocal bars_received
         for bar in msgs:
             if not isinstance(bar, EquityAgg):
                 continue
+            bars_received += 1
+            if bars_received % _BAR_LOG_INTERVAL == 0:
+                _log.info("Received %d bars (latest: %s @ %.2f).", bars_received, bar.symbol, bar.close)
             cid = await Company(db).get_or_create_company(bar.symbol)
             await db.insert(
                 "TradingData",

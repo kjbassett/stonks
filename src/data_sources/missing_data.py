@@ -219,7 +219,7 @@ async def fill_gaps(
     else:
         companies = await cmp.get()
     n_cpy = len(companies)
-    for c, cpy in companies.iterrows():
+    for i, (c, cpy) in enumerate(companies.iterrows(), 1):
         if pause_check is not None:
             await pause_check()
         min_market_ts = earliest_market_time()
@@ -229,8 +229,7 @@ async def fill_gaps(
         if max_gap_size:
             gaps = break_large_gaps(gaps, max_gap_size)
         n_gaps = len(gaps)
-        if n_gaps:
-            _log.info("%s: filling %d gap(s)", cpy["symbol"], n_gaps)
+        _log.info("[%d/%d] %s: %d gap(s)", i, n_cpy, cpy["symbol"], n_gaps)
         company_tasks = []
         for gap in gaps:
             _log.debug(
