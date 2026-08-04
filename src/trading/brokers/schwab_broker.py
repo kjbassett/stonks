@@ -273,7 +273,7 @@ class SchwabBroker(BaseBroker):
         while time.monotonic() < deadline:
             try:
                 order = await self.client.get_order(self.account_number, order_id)
-                print(order)
+                self._log.debug("Order status poll: %s", order)
                 status = order.get("status", "")
                 if status == _FILLED_STATUS or status in _FAILED_STATUSES:
                     return status

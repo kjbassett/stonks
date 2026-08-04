@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 
 import numpy as np
@@ -5,6 +6,8 @@ import pandas as pd
 
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
+
+_log = logging.getLogger("data_access.data_compiler")
 
 
 class DataCompiler(BaseDAO):
@@ -52,14 +55,14 @@ class DataCompiler(BaseDAO):
             query = f"SELECT * FROM ({query}) WHERE symbol IN ({placeholders})"
             params = tuple(symbols)
         if print_query:
-            print(query)
+            _log.debug("Query: %s", query)
         data = await self.db.execute_query(
-            query, params, query_type="SELECT", return_type="DataFrame", print_query=print_query
+            query, params, query_type="SELECT", return_type="DataFrame"
         )
         for col in data.columns:
             if col[:2] == "rn":
                 data = data.drop(columns=[col])
-        print(data.dtypes)
+        _log.debug("Data dtypes: %s", data.dtypes.to_dict())
         return data
 
 
@@ -125,7 +128,7 @@ def construct_inner_query(
 
     if aggregation_interval == "minute":
         table = "TradingData"
-        print("minute aggregations are untested!")
+        _log.warning("Minute aggregations are untested")
         start_col = end_col = "t.timestamp"
         columns += [
             start_col,
@@ -430,9 +433,7 @@ def construct_calculated_columns(
     if aggregation_interval == "minute":
         ts_col = "t.timestamp"
         if include_cv_close_ratio:
-            print(
-                "Coefficient of Variation calculation not supported for data by minute. Turning off cv flag"
-            )
+            _log.warning("CV calculation not supported for minute data — disabling include_cv_close_ratio")
             include_cv_close_ratio = False
     elif aggregation_interval == "hour":
         ts_col = "t.end"

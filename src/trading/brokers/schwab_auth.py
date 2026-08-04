@@ -14,6 +14,7 @@ Typical usage::
 
 import base64
 import json
+import logging
 import os
 import time
 import webbrowser
@@ -23,6 +24,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 
 from src.utils.project_utilities import config
+
+_log = logging.getLogger("trading.schwab_auth")
 
 _AUTH_ENDPOINT = "https://api.schwabapi.com/v1/oauth/authorize"
 _TOKEN_ENDPOINT = "https://api.schwabapi.com/v1/oauth/token"
@@ -60,8 +63,8 @@ class SchwabAuth:
         it when prompted. Tokens are saved to the configured token file.
         """
         auth_url = self._build_auth_url()
-        print("\nOpening Schwab authorization page...")
-        print(f"If your browser does not open, visit:\n  {auth_url}\n")
+        _log.info("Opening Schwab authorization page")
+        _log.info("If browser does not open, visit: %s", auth_url)
         webbrowser.open(auth_url)
         print(
             "After authorizing, you will see a connection error page.\n"
@@ -71,7 +74,7 @@ class SchwabAuth:
         code = self._parse_code_from_url(redirect_url)
         tokens = self._exchange_code(code)
         self._save_tokens(tokens)
-        print("Authorization successful. Tokens saved.")
+        _log.info("Authorization successful — tokens saved")
 
     async def refresh(self) -> None:
         """Exchange the refresh token for a new access token and save it.

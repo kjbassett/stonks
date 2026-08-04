@@ -1,7 +1,10 @@
+import logging
 import pandas as pd
 
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
+
+_log = logging.getLogger("data_access.trading_data")
 
 
 class TradingData(BaseDAO):
@@ -60,19 +63,19 @@ class TradingData(BaseDAO):
             WHERE TickerType.enabled <> 1 OR Company.enabled <> 1 OR Exchange.active IS 0
           );
         """
-        print(query)
+        _log.debug("Delete query: %s", query)
         await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")
         # delete old attempted queries and queries on companies with disabled ticker types
         query = f"""
-        DELETE FROM TradingDataAttemptedQueries 
+        DELETE FROM TradingDataAttemptedQueries
         WHERE end <=?
         OR company_id in (
-            SELECT Company.id 
-            FROM Company 
+            SELECT Company.id
+            FROM Company
             LEFT JOIN TickerType
             ON Company.ticker_type_id = TickerType.id
             WHERE TickerType.enabled <> 1 OR Company.enabled <> 1
           );
         """
-        print(query)
+        _log.debug("Delete query: %s", query)
         await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")

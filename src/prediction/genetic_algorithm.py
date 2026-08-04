@@ -1,7 +1,10 @@
+import logging
 import matplotlib.pyplot as plt
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
 from typing import Union
+
+_log = logging.getLogger("prediction.genetic_algorithm")
 from stonks.src.plot import plot_training
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
@@ -102,7 +105,7 @@ async def run_short_genetic_algorithm(
         update_knowledge=True,
     )
     model.save()
-    print(result)
+    _log.info("GA run complete: %s", result)
 
 
 def save_figure(folder, key, fig):

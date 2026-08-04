@@ -1,7 +1,10 @@
+import logging
 from typing import List, Tuple
 
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
+
+_log = logging.getLogger("data_access.trading_data_aggregation")
 
 
 class TradingDataAggregation(BaseDAO):
@@ -143,5 +146,5 @@ class TradingDataAggregation(BaseDAO):
             WHERE TickerType.enabled <> 1 OR Company.enabled <> 1 OR Exchange.active IS 0
           );
         """
-        print(query)
+        _log.debug("Delete query: %s", query)
         await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")

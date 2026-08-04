@@ -1,13 +1,15 @@
 import asyncio
+import logging
 
 import pandas as pd
 from async_lru import alru_cache
-from icecream import ic
 from massive import RESTClient
 from massive.exceptions import BadResponse
 from src.data_access.dao_manager import dao_manager
 from src.utils.project_utilities import call_limiter, make_rest_client
 from webrock.decorator import plugin
+
+_log = logging.getLogger("data_sources.tickers")
 
 _UPDATE_COLS = ["name", "industry_id", "ticker_type_id", "primary_exchange"]
 
@@ -42,20 +44,19 @@ async def fetch_and_update(client: RESTClient, row):
     """
     cmp = dao_manager.get_dao("Company")
     async with call_limiter:
-        print("Starting " + row["symbol"])
+        _log.debug("Fetching details for %s", row["symbol"])
         try:
             result = await asyncio.to_thread(client.get_ticker_details, row["symbol"])
         except BadResponse as e:
             if "NOT_FOUND" in str(e):
                 await cmp.delete(row["id"])
             else:
-                ic(e)
-            print("Finished " + row["symbol"])
+                _log.warning("Unexpected API error for %s: %s", row["symbol"], e)
             return
         await cmp.insert(
             convert_result(result), on_conflict="UPDATE", update_cols=_UPDATE_COLS
         )
-        print("Finished " + row["symbol"])
+        _log.debug("Updated %s", row["symbol"])
 
 
 @plugin()

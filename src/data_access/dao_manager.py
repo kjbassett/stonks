@@ -1,13 +1,15 @@
 # dao_manager.py
 import importlib.util
+import logging
 import os
 
-from icecream import ic
 from src.data_access.base_dao import BaseDAO
 from src.data_access.db.async_database import AsyncDatabase
 from src.utils.market_calendar import earliest_market_time
 from src.utils.project_utilities import config
 from webrock.decorator import plugin, init, shutdown
+
+_log = logging.getLogger("data_access.dao_manager")
 
 
 class DAOManager:
@@ -26,7 +28,7 @@ class DAOManager:
         await self.load_default_daos()
         await self.load_custom_daos()
 
-        ic(self.daos)
+        _log.debug("Loaded DAOs: %s", list(self.daos))
 
     async def load_custom_daos(self):
         # Read in any custom data access objects, potentially overwriting the base ones
@@ -34,7 +36,7 @@ class DAOManager:
         # Get folder of this file
         dao_folder = os.path.split(os.path.abspath(__file__))[0]
         relative_path = os.path.relpath(dao_folder, os.getcwd())
-        print(f"Relative path: {relative_path}")
+        _log.debug("DAO folder relative path: %s", relative_path)
         if relative_path == ".":
             relative_path = ""
         else:
@@ -59,12 +61,11 @@ class DAOManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
-            print(f"Loading user-defined DAO: {dao_name}")
+            _log.info("Loading user-defined DAO: %s", dao_name)
             try:
                 dao_class = getattr(module, dao_name)
             except Exception as e:
-
-                print(f"Failed to import {dao_file}: {e}")
+                _log.error("Failed to import %s: %s", dao_file, e)
                 continue
             self.daos[dao_name] = dao_class(self.db)
             await self.daos[dao_name].init2()
@@ -88,7 +89,7 @@ class DAOManager:
             min_timestamp = earliest_market_time()
         for table, dao in self.daos.items():
             if hasattr(dao, "clean_data"):
-                print(f"Cleaning data from {table} dao...")
+                _log.info("Cleaning data from %s dao", table)
                 await dao.clean_data(min_timestamp)
 
 
@@ -109,7 +110,7 @@ async def shutdown_dao_manager():
 @plugin()
 async def query_db(sql: str):
     result = await dao_manager.db.execute_query(sql)
-    print(result)
+    _log.info("Query result: %s", result)
     return result
 
 

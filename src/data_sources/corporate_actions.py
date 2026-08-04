@@ -1,4 +1,5 @@
 import datetime
+import logging
 from typing import List
 
 from massive import RESTClient
@@ -6,6 +7,8 @@ from src.data_access.dao_manager import dao_manager
 from src.utils.market_calendar import earliest_market_time
 from src.utils.project_utilities import call_limiter, config, make_rest_client
 from webrock.decorator import plugin
+
+_log = logging.getLogger("data_sources.corporate_actions")
 
 
 async def _get_recent_splits(client: RESTClient, since_date: str) -> list:
@@ -113,7 +116,7 @@ async def sync_split_adjustments(since_days: int = 0) -> str:
         await _clear_company_price_data(company_id)
         await dao_manager.get_dao("StockSplit").insert(split_row)
         cleared.append(ticker)
-        print(f"Cleared price data for {ticker} (split {execution_date})")
+        _log.info("Cleared price data for %s (split %s)", ticker, execution_date)
 
     cleared_str = ", ".join(cleared) if cleared else "none"
     return (

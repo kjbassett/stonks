@@ -1,8 +1,11 @@
 import collections
 import copy
 import datetime
+import logging
 import os
 from typing import Callable, Optional
+
+_log = logging.getLogger("prediction.nn_model")
 
 import numpy as np
 import pandas as pd
@@ -156,13 +159,16 @@ async def _run_validation(
     var_max = float(np.max(predictions["variance"]))
     optimal_var = mse / var_mean
     m = _compute_classification_metrics(predictions)
-    print(
-        f"NLL={val_loss:.4f} | MSE={mse:.4f} | optimality={optimal_var:.4f} (ideal≈1)\n"
-        f"var: mean={var_mean:.4e}  p90={var_p90:.4e}  max={var_max:.4e}\n"
-        f"TP={m['true_positive_pct']:.1%}  FP={m['false_positive_pct']:.1%}  "
-        f"TN={m['true_negative_pct']:.1%}  FN={m['false_negative_pct']:.1%} | "
-        f"precision={m['precision']:.1%}  recall={m['recall']:.1%}  "
-        f"accuracy={m['accuracy']:.1%}  F1={m['f1_score']:.3f}"
+    _log.info(
+        "NLL=%.4f | MSE=%.4f | optimality=%.4f (ideal≈1) | "
+        "var: mean=%.4e p90=%.4e max=%.4e | "
+        "TP=%.1f%% FP=%.1f%% TN=%.1f%% FN=%.1f%% | "
+        "precision=%.1f%% recall=%.1f%% accuracy=%.1f%% F1=%.3f",
+        val_loss, mse, optimal_var,
+        var_mean, var_p90, var_max,
+        m["true_positive_pct"] * 100, m["false_positive_pct"] * 100,
+        m["true_negative_pct"] * 100, m["false_negative_pct"] * 100,
+        m["precision"] * 100, m["recall"] * 100, m["accuracy"] * 100, m["f1_score"],
     )
     return val_loss, predictions
 
@@ -250,18 +256,18 @@ async def train_numerical_model(
                 best_predictions = predictions
 
                 patience_counter = 0
-                print(f"  ✔ New best model at step {global_step} (smoothed={smoothed:.4f})")
+                _log.info("New best model at step %d (smoothed=%.4f)", global_step, smoothed)
             else:
                 patience_counter += 1
-                print(
-                    f"  ✖ No improvement ({patience_counter}/{patience} patience)"
-                    f" smoothed={smoothed:.4f}"
+                _log.info(
+                    "No improvement (%d/%d patience) smoothed=%.4f",
+                    patience_counter, patience, smoothed,
                 )
 
                 if patience_counter >= patience:
-                    print(
-                        f"Early stopping triggered at step {global_step} "
-                        f"(best epoch was {best_epoch})"
+                    _log.info(
+                        "Early stopping at step %d (best epoch was %s)",
+                        global_step, best_epoch,
                     )
                     stop_training = True
                     break
@@ -270,7 +276,7 @@ async def train_numerical_model(
 
     # If validation never fired, do a final pass now so we always return a valid checkpoint.
     if best_state_dict is None:
-        print("Validation never fired during training — running final validation pass.")
+        _log.info("Validation never fired — running final validation pass.")
         val_loss, predictions = await _run_validation(
             model, test_loader, loss_fn, device, desc="final val", val_batches=val_batches,
             pause_check=pause_check,

@@ -7,8 +7,8 @@ Tests do NOT call this; they use unittest's assertLogs() instead.
 Log routing
 -----------
   trading.*  ->  logs/trading_logs/trading.log   (daily rotation, 30 days retained)
-  everything ->  logs/app.log                     (10 MB rotation, 5 backups)
-  WARNING+   ->  stderr console
+  everything ->  logs/app.log                     (rotating file handler)
+  INFO+      ->  stderr console
 
 All file handlers are wrapped in QueueHandler + QueueListener so logging calls
 return immediately without waiting for disk I/O (the Listener drains the queue
@@ -24,14 +24,33 @@ import queue
 _listener: logging.handlers.QueueListener | None = None
 
 
-def setup_logging(log_dir: str = "logs") -> None:
+def setup_logging(log_dir: str | None = None) -> None:
     """
     Configure application-wide logging. Safe to call multiple times — subsequent
     calls are no-ops once the listener is running.
+
+    Reads settings from config["logging"] if available:
+        log_dir      — directory for log files (default: "logs")
+        max_bytes    — max size of app.log before rotation (default: 10 MB)
+        backup_count — number of rotated app.log backups to keep (default: 5)
+        level        — minimum log level name (default: "INFO")
     """
     global _listener
     if _listener is not None:
         return  # Already configured
+
+    try:
+        from src.utils.project_utilities import config as _cfg
+        log_cfg = _cfg.get("logging", {})
+    except Exception:
+        log_cfg = {}
+
+    if log_dir is None:
+        log_dir = log_cfg.get("log_dir", "logs")
+    max_bytes = int(log_cfg.get("max_bytes", 10 * 1024 * 1024))
+    backup_count = int(log_cfg.get("backup_count", 5))
+    level_name = log_cfg.get("level", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
 
     trading_dir = os.path.join(log_dir, "trading_logs")
     os.makedirs(trading_dir, exist_ok=True)
@@ -41,7 +60,7 @@ def setup_logging(log_dir: str = "logs") -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # --- File handlers (the actual sinks) ---
+    # --- File handlers ---
     trading_file = logging.handlers.TimedRotatingFileHandler(
         filename=os.path.join(trading_dir, "trading.log"),
         when="midnight",
@@ -53,15 +72,15 @@ def setup_logging(log_dir: str = "logs") -> None:
 
     app_file = logging.handlers.RotatingFileHandler(
         filename=os.path.join(log_dir, "app.log"),
-        maxBytes=10 * 1024 * 1024,  # 10 MB
-        backupCount=5,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
         encoding="utf-8",
     )
     app_file.setLevel(logging.DEBUG)
     app_file.setFormatter(fmt)
 
     console = logging.StreamHandler()
-    console.setLevel(logging.WARNING)
+    console.setLevel(level)
     console.setFormatter(fmt)
 
     # --- Queue-backed non-blocking listener ---
@@ -73,7 +92,7 @@ def setup_logging(log_dir: str = "logs") -> None:
 
     queue_handler = logging.handlers.QueueHandler(log_queue)
 
-    # Root logger: receives everything EXCEPT trading.* (propagate=False there)
+    # Root logger: receives everything
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     root.addHandler(queue_handler)

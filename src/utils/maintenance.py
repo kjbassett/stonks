@@ -26,5 +26,4 @@ async def recreate_indices():
 @plugin()
 async def optimize_db():
     result = await dao_manager.db.optimize()
-    print(result)
     return result

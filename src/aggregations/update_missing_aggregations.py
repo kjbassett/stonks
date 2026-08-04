@@ -1,13 +1,18 @@
 import asyncio
+import logging
 from datetime import datetime
 from typing import List
 
 import pandas as pd
 from webrock.decorator import plugin
+from webrock.pause import wait_if_paused
 
 from src.utils.market_calendar import earliest_market_time
 
+_log = logging.getLogger("aggregations.update")
+
 WATCHLIST_KEYWORD = "watchlist"
+UPDATE_HOURLY_PLUGIN_ID = "src.aggregations.update_missing_aggregations.update_hourly_aggregations"
 
 
 @plugin()
@@ -52,9 +57,10 @@ async def update_hourly_aggregations(
 
     chunks = _split_chunks(all_companies, companies_per_query)
     for chunk in chunks:
+        await wait_if_paused(UPDATE_HOURLY_PLUGIN_ID)
         await _process_chunk(tda, chunk, earliest_timestamp, window)
 
-    print("Missing hourly aggregations updated.")
+    _log.info("Hourly aggregations updated")
 
 
 def _split_chunks(companies: pd.DataFrame, companies_per_query: int) -> List[pd.DataFrame]:
@@ -90,7 +96,7 @@ async def _process_chunk(
     company_ids: List[int] = list(chunk["id"])
     symbols: List[str] = list(chunk["symbol"])
     current_iter_start = int(datetime.now().timestamp())
-    print(f"Processing chunk {symbols}")
+    _log.info("Processing chunk %s", symbols)
 
     tasks = [
         asyncio.create_task(
@@ -101,4 +107,4 @@ async def _process_chunk(
     await asyncio.gather(*tasks)
 
     elapsed = datetime.now().timestamp() - current_iter_start
-    print(f"Finished chunk {symbols}. Time taken: {elapsed:.1f}s")
+    _log.info("Finished chunk %s in %.1fs", symbols, elapsed)

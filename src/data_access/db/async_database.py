@@ -1,12 +1,14 @@
 import asyncio
 import datetime
+import logging
 import time
 from typing import Tuple, Union, List
 
 import aiosqlite
 import pandas as pd
 from async_lru import alru_cache
-from icecream import ic
+
+_log = logging.getLogger("data_access.db")
 
 
 class AsyncDatabase:
@@ -87,8 +89,7 @@ class AsyncDatabase:
         print_query=False,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
         if print_query:
-            print(f"Executing query:\n{query}")
-            ic(params)
+            _log.debug("Executing query:\n%s\nparams: %s", query, params)
 
         if many:  # TODO detect this automatically somehow
             cursor = await self.conn.executemany(query, params)
@@ -133,22 +134,20 @@ class AsyncDatabase:
         )
 
         if not indices:
-            print("No user-defined indices found.")
+            _log.info("No user-defined indices found")
             return
 
         for name, sql in indices:
-            print(f"\nRecreating index: {name}")
-            print(f"Original SQL: {sql}")
-
+            _log.info("Recreating index: %s", name)
             try:
                 await self.execute_query(
                     f"DROP INDEX IF EXISTS {name}", query_type="DELETE"
                 )
                 await self.execute_query(sql, query_type="INSERT")
-                print("✅ Recreated successfully")
+                _log.info("Recreated index %s", name)
             except Exception as e:
-                print(f"❌ Failed to recreate index {name}: {e}")
-        print("\nAll indices processed.")
+                _log.error("Failed to recreate index %s: %s", name, e)
+        _log.info("All indices processed")
 
     async def backup(self, destination: str = None) -> None:
         """Copy the database file to a timestamped backup.
@@ -160,9 +159,7 @@ class AsyncDatabase:
         self.backup_in_progress.clear()  # Block new operations
         try:
             now = datetime.datetime.now()
-            print(
-                f'{now.strftime("%Y-%m-%d %H:%M:%S")} Backup waiting for all db operations to finish...'
-            )
+            _log.info("Backup waiting for all db operations to finish")
             t = time.time()
             while time.time() - t < 3600 * 3:
                 async with self.operation_lock:
@@ -170,21 +167,15 @@ class AsyncDatabase:
                         break
                 await asyncio.sleep(0.5)
             else:
-                print(
-                    f'{now.strftime("%Y-%m-%d %H:%M:%S")} Waiting for all db operations to finish timed out.'
-                )
+                _log.warning("Timed out waiting for db operations to finish — backup aborted")
                 return
             now = datetime.datetime.now()
-            print(
-                f'{now.strftime("%Y-%m-%d %H:%M:%S")} All db operations finished. Starting backup...'
-            )
+            _log.info("All db operations finished — starting backup")
             await self.close()
             await self._backup(destination)
             await self.connect()
             duration = (datetime.datetime.now() - now).total_seconds()
-            print(
-                f'{now.strftime("%Y-%m-%d %H:%M:%S")} Backup completed after {duration} seconds.'
-            )
+            _log.info("Backup completed in %.1f seconds", duration)
         finally:
             self.backup_in_progress.set()  # Allow operations after backup
 
@@ -221,7 +212,7 @@ class AsyncDatabase:
         self.backup_in_progress.clear()
 
         try:
-            print("🔧 Starting database optimization...")
+            _log.info("Starting database optimization")
 
             # Wait for active operations to finish
             t0 = time.time()
@@ -230,7 +221,7 @@ class AsyncDatabase:
                     if self.active_operations == 0:
                         break
                 if time.time() - t0 > 3600:
-                    print("⚠️ Timeout waiting for active operations to finish")
+                    _log.warning("Timeout waiting for active operations — optimization aborted")
                     return
                 await asyncio.sleep(0.5)
 
@@ -245,10 +236,9 @@ class AsyncDatabase:
                 await cursor.close()
 
                 fragmentation = freelist_count / page_count if page_count > 0 else 0.0
-
-                print(
-                    f"📊 Fragmentation: {fragmentation:.2%} "
-                    f"({freelist_count}/{page_count} pages)"
+                _log.info(
+                    "Fragmentation: %.2f%% (%d/%d pages)",
+                    fragmentation * 100, freelist_count, page_count,
                 )
 
                 # --- WAL checkpoint before vacuum ---
@@ -258,20 +248,20 @@ class AsyncDatabase:
 
                 # --- VACUUM only if needed ---
                 if fragmentation > 0.10:
-                    print("🧹 Fragmentation high — running VACUUM...")
+                    _log.info("Fragmentation high — running VACUUM")
                     await self.conn.execute("VACUUM;")
-                    print("✅ VACUUM completed")
+                    _log.info("VACUUM completed")
                 else:
-                    print("✅ Fragmentation acceptable — skipping VACUUM")
+                    _log.info("Fragmentation acceptable — skipping VACUUM")
 
                 # --- Optimize query planner ---
-                print("⚙️ Running PRAGMA optimize...")
+                _log.info("Running PRAGMA optimize")
                 await self.conn.execute("PRAGMA optimize;")
-                print("✅ PRAGMA optimize completed")
+                _log.info("PRAGMA optimize completed")
 
                 await self.conn.commit()
 
-            print("🎉 Database optimization finished")
+            _log.info("Database optimization finished")
 
         finally:
             # Allow operations again

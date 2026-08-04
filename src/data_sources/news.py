@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
+
+_log = logging.getLogger("data_sources.news")
 
 from massive import RESTClient
 from src.data_access.dao_manager import dao_manager
@@ -82,7 +85,7 @@ async def save_data(company_id: int, data: list) -> int:
     n = await news.insert(news_data)
     await nc_link.insert(n_c_link_data)
     if n > 0:
-        print(f"{n} rows inserted into News")
+        _log.info("%d rows inserted into News", n)
     return n
 
 

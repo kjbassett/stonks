@@ -1,6 +1,10 @@
 import asyncio
 import datetime
 from functools import partial
+import logging
+from typing import Callable, Optional
+
+_log = logging.getLogger("data_sources.missing_data")
 
 import pandas as pd
 from httpx import ReadTimeout
@@ -42,8 +46,7 @@ async def find_gaps(
         prev = pd.to_datetime(current_data.previous, unit="s", utc=True)
     except FloatingPointError as e:
         current_data.to_csv("to_datetime_bad_data.csv")
-        print(f"ERROR: {e}")
-        print(current_data)
+        _log.error("Bad timestamp data: %s", e)
         return pd.DataFrame({"start": [], "end": []})
 
     # these two columns are needed for the adjust gap function
@@ -170,7 +173,7 @@ async def fill_gap(
         try:
             data = await get_data_func(client, cpy["symbol"], int(start), int(end))
         except ReadTimeout:
-            print("Getting data timed out")
+            _log.warning("Data fetch timed out for %s", cpy.get("symbol", "unknown"))
             return
 
         # save_new_data returns the number of rows inserted, so if it's 0,
@@ -203,7 +206,8 @@ async def fill_gaps(
     companies: str = "",
     min_gap_size: int = 1800,
     max_gap_size: int = 0,
-    adjust_for_market_hours=False,
+    adjust_for_market_hours: bool = False,
+    pause_check: Optional[Callable] = None,
 ):
     if companies == WATCHLIST_KEYWORD:
         from src.data_sources.watchlist import get_watchlist_and_held_symbols
@@ -214,28 +218,30 @@ async def fill_gaps(
         companies = await cmp.get(symbol=companies)
     else:
         companies = await cmp.get()
-    tasks = []
     n_cpy = len(companies)
     for c, cpy in companies.iterrows():
+        if pause_check is not None:
+            await pause_check()
         min_market_ts = earliest_market_time()
-        print(f"Company {c + 1}/{n_cpy}, {cpy['symbol']}")
         current_data = await load_data_func(cpy["id"], min_market_ts)
         gaps = await find_gaps(current_data, min_gap_size, adjust_for_market_hours)
         gaps = await filter_out_past_queries(table, gaps, cpy["id"], min_market_ts)
         if max_gap_size:
             gaps = break_large_gaps(gaps, max_gap_size)
         n_gaps = len(gaps)
-        for g, gap in enumerate(gaps):
-            # print company and gap index out of total
-            print(
-                f"Gap {g + 1}/{n_gaps}, {gap['start']} - {gap['end']}, {gap['end'] - gap['start']} seconds"
+        if n_gaps:
+            _log.info("%s: filling %d gap(s)", cpy["symbol"], n_gaps)
+        company_tasks = []
+        for gap in gaps:
+            _log.debug(
+                "%s: gap %s - %s (%ds)",
+                cpy["symbol"], gap["start"], gap["end"], gap["end"] - gap["start"],
             )
-            # Create a task for each gap handling
-            task = asyncio.create_task(
-                fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
+            company_tasks.append(
+                asyncio.create_task(
+                    fill_gap(client, table, get_data_func, save_data_func, cpy, gap)
+                )
             )
-            tasks.append(task)
-    # Wait for all tasks to complete
-    print("WAITING FOR TASKS")
-    await asyncio.gather(*tasks)
-    print("TASKS COMPLETE")
+        if company_tasks:
+            await asyncio.gather(*company_tasks)
+    _log.info("Gap filling complete")

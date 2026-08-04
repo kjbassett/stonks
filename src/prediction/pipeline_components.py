@@ -106,11 +106,10 @@ async def load_data(
 
 
 def load_short_data(file_name):
-    print("loading data")
     t = time.time()
-    # load csv of saved data from some intermediate step
+    _log.info("Loading data from %s", file_name)
     structured_data = pd.read_csv(file_name, index_col=None).reset_index(drop=True)
-    print(f"data loaded after {int(time.time() - t)} seconds")
+    _log.info("Data loaded in %ds", int(time.time() - t))
     return structured_data, None
 
 
@@ -153,7 +152,7 @@ def filter_out_missing_data(
         structured_data = structured_data[
             ~structured_data[no_tolerance_cols].isnull().any(axis=1)
         ]
-    print(f"Removed {n - len(structured_data)} rows")
+    _log.info("Removed %d rows (missing data threshold)", n - len(structured_data))
     return structured_data
 
 
@@ -231,7 +230,7 @@ def scale_data(
     )
 
     if target_transform == "asinh" and target_col in dataframe.columns:
-        print("target transform is happening!")
+        _log.debug("Applying asinh transform to target")
         dataframe[target_col] = np.arcsinh(dataframe[target_col])
 
     if means is None:
@@ -289,7 +288,7 @@ def unscale_data(
     # --- inverse target transform ---
     if target_transform == "asinh":
         if target_col in predictions.columns:
-            print("target untransform is happening!")
+            _log.debug("Applying inverse asinh transform to target")
             predictions[target_col] = np.sinh(predictions[target_col])
         mu_asinh = predictions["prediction"].copy()
         predictions["prediction"] = np.sinh(predictions["prediction"])

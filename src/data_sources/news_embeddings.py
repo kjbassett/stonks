@@ -1,7 +1,10 @@
+import logging
 from typing import List
 
 from src.data_access.dao_manager import dao_manager
 from webrock.decorator import plugin
+
+_log = logging.getLogger("data_sources.news_embeddings")
 
 _BATCH_SIZE = 256
 
@@ -75,7 +78,7 @@ async def compute_news_embeddings(
 
         embedded += len(rows)
         skipped += len(batch_ids) - len(rows)
-        print(f"Embedded {embedded}/{len(unembedded_ids)} articles...")
+        _log.info("Embedded %d/%d articles", embedded, len(unembedded_ids))
 
     return (
         f"Done. {embedded} articles embedded, {skipped} skipped"

@@ -1,7 +1,10 @@
 import asyncpraw
+import logging
 from src.data_access.dao_manager import dao_manager
 from src.utils.project_utilities import config
 from webrock.decorator import plugin
+
+_log = logging.getLogger("data_sources.reddit")
 
 reddit_dao = dao_manager.get_dao("Reddit")
 
@@ -11,7 +14,7 @@ async def fetch_posts_and_comments(reddit, subreddits):
     i = 0
     async for submission in subreddits.top(time_filter="hour"):
         i += 1
-        print(i)
+        _log.debug("Fetched submission %d", i)
         data = [submission]
 
         comments = await submission.comments()  # get first layer of comments

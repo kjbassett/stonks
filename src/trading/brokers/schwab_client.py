@@ -11,9 +11,12 @@ Pass the access_token to SchwabClient. Token refresh is the caller's responsibil
 Rate limit: ~35,000 requests per 10 minutes per the developer portal.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+_log = logging.getLogger("trading.schwab_client")
 
 MARKET_BASE = "https://api.schwabapi.com/marketdata/v1"
 TRADER_BASE = "https://api.schwabapi.com/trader/v1"
@@ -253,15 +256,13 @@ class SchwabClient:
     # ------------------------------------------------------------------
 
     async def _get(self, url: str, params: Optional[Dict] = None, timeout: Optional[int] = 10) -> Any:
-        print(url)
-        print(params)
+        _log.debug("GET %s params=%s", url, params)
         resp = await self._client.get(url, params=params, timeout=timeout)
         self._raise_for_status(resp)
         return resp.json()
 
     async def _raw_post(self, url: str, json: Any) -> httpx.Response:
-        print(url)
-        print(json)
+        _log.debug("POST %s body=%s", url, json)
         resp = await self._client.post(url, json=json)
         self._raise_for_status(resp)
         return resp

@@ -1,11 +1,17 @@
 import asyncio
 import datetime
+import logging
 
 from massive import RESTClient
 from src.data_access.dao_manager import dao_manager
 from src.data_sources.missing_data import fill_gaps
 from src.utils.project_utilities import config, make_rest_client
 from webrock.decorator import plugin
+from webrock.pause import wait_if_paused
+
+_log = logging.getLogger("data_sources.market")
+
+FILL_MISSING_PLUGIN_ID = "src.data_sources.market.fill_missing"
 
 
 async def _get_data(client: RESTClient, symbol: str, start: int, end: int):
@@ -56,12 +62,10 @@ async def save_data(company_id: int, data: list) -> int:
             for d in data
         ]
     except (AttributeError, TypeError) as e:
-        print("MARKET DATA ERROR")
-        print(e)
-        print(data)
+        _log.error("Market data error: %s", e)
         return 1
     n = await td.insert(rows)
-    print(f"{n} rows inserted into TradingData")
+    _log.info("%d rows inserted into TradingData", n)
     return n
 
 
@@ -72,22 +76,20 @@ async def fill_missing(companies: str = ""):
     Args:
         companies: Comma-separated ticker symbols, ``"watchlist"``, or empty for all.
     """
-    try:
-        td = dao_manager.get_dao("TradingData")
-        client = make_rest_client(32)
-        await fill_gaps(
-            client,
-            "TradingData",
-            td.get_timestamps_by_company,
-            _get_data,
-            save_data,
-            companies,
-            min_gap_size=1800,  # 30 minutes
-            max_gap_size=86400 * 30,  # 30 days
-            adjust_for_market_hours=True,
-        )
-    except asyncio.CancelledError:
-        return
+    td = dao_manager.get_dao("TradingData")
+    client = make_rest_client(32)
+    await fill_gaps(
+        client,
+        "TradingData",
+        td.get_timestamps_by_company,
+        _get_data,
+        save_data,
+        companies,
+        min_gap_size=1800,  # 30 minutes
+        max_gap_size=86400 * 30,  # 30 days
+        adjust_for_market_hours=True,
+        pause_check=lambda: wait_if_paused(FILL_MISSING_PLUGIN_ID),
+    )
 
 
 @plugin()
