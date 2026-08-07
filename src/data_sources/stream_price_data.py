@@ -5,7 +5,8 @@ from typing import List, Optional
 from massive import WebSocketClient
 from massive.websocket.models import EquityAgg, Feed, Market
 
-from src.data_access.Company import Company
+from src.data_access.dao_manager import dao_manager
+from src.data_sources.tickers import get_or_create_company
 from src.data_sources.watchlist import get_watchlist_symbols
 from src.utils.project_utilities import config
 from webrock.decorator import plugin
@@ -18,21 +19,20 @@ _BAR_LOG_INTERVAL = 100  # log a summary every N bars received
 
 
 @plugin(symbols={"ui_element": "textbox", "default": "watchlist"})
-async def stream_price_data(db, symbols: str = "watchlist") -> None:
+async def stream_price_data(symbols: str = "watchlist") -> None:
     """Stream Massive minute-bar data and persist to TradingData.
 
     Reconnects automatically on error.  Every ``WATCHLIST_POLL_INTERVAL_S``
     seconds the stream restarts to pick up watchlist changes.
 
     Args:
-        db: AsyncDatabase instance injected by webrock.
         symbols: Comma-separated tickers, or ``"watchlist"`` to load from DB.
     """
     api_key = config["polygon_io"]
     while True:
         stream_client: Optional[WebSocketClient] = None
         try:
-            tickers = await _resolve_symbols(db, symbols)
+            tickers = await _resolve_symbols(symbols)
             _log.info("Streaming %d symbols.", len(tickers))
             subs = [f"AM.{t}" for t in tickers]
             stream_client = WebSocketClient(
@@ -42,7 +42,7 @@ async def stream_price_data(db, symbols: str = "watchlist") -> None:
                 subscriptions=subs,
             )
             await asyncio.wait_for(
-                stream_client.connect(processor=_make_bar_handler(db)),
+                stream_client.connect(processor=_make_bar_handler()),
                 timeout=WATCHLIST_POLL_INTERVAL_S,
             )
         except asyncio.TimeoutError:
@@ -56,11 +56,10 @@ async def stream_price_data(db, symbols: str = "watchlist") -> None:
             await _safe_close(stream_client)
 
 
-async def _resolve_symbols(db, symbols_param: str) -> List[str]:
+async def _resolve_symbols(symbols_param: str) -> List[str]:
     """Return the list of tickers to subscribe to.
 
     Args:
-        db: AsyncDatabase instance used to look up the watchlist.
         symbols_param: ``"watchlist"`` or a comma-separated ticker string.
 
     Returns:
@@ -71,28 +70,25 @@ async def _resolve_symbols(db, symbols_param: str) -> List[str]:
     return [s.strip().upper() for s in symbols_param.split(",") if s.strip()]
 
 
-def _make_bar_handler(db):
+def _make_bar_handler():
     """Return an async handler that stores Massive minute bars to TradingData.
 
-    Args:
-        db: AsyncDatabase instance for DB writes.
-
     Returns:
-        Async handler coroutine factory.
+        Async handler coroutine.
     """
     bars_received = 0
 
     async def _handler(msgs: list) -> None:
         nonlocal bars_received
+        td = dao_manager.get_dao("TradingData")
         for bar in msgs:
             if not isinstance(bar, EquityAgg):
                 continue
             bars_received += 1
             if bars_received % _BAR_LOG_INTERVAL == 0:
                 _log.info("Received %d bars (latest: %s @ %.2f).", bars_received, bar.symbol, bar.close)
-            cid = await Company(db).get_or_create_company(bar.symbol)
-            await db.insert(
-                "TradingData",
+            cid = await get_or_create_company(bar.symbol)
+            await td.insert(
                 {
                     "company_id": cid,
                     "open": bar.open,
@@ -102,7 +98,7 @@ def _make_bar_handler(db):
                     "vw_average": bar.vwap,
                     "volume": bar.volume,
                     "timestamp": bar.start_timestamp // 1000,
-                },
+                }
             )
 
     return _handler
