@@ -109,9 +109,9 @@ async def get_or_create_company(
         raise ValueError("Please provide either a symbol or a name.")
     company = None
     if symbol:
-        company = await cpy.get(symbol=symbol)
+        company = await cpy.get(symbol=symbol, include_all=True)
     elif name:
-        company = await cpy.get(name=name)
+        company = await cpy.get(name=name, include_all=True)
 
     if (isinstance(company, pd.DataFrame) and company.empty) or company is None:
         if symbol:
@@ -123,7 +123,7 @@ async def get_or_create_company(
                     "ticker_type_id": ticker_type_id,
                 }
             )
-            company = await cpy.get(symbol=symbol)
+            company = await cpy.get(symbol=symbol, include_all=True)
         else:
             raise ValueError(
                 "No company found, and no symbol provided to create new company."

@@ -14,7 +14,7 @@ class Company(BaseDAO):
         super().__init__(db, "Company")
 
     async def get(
-        self, columns: list | tuple | str = "*", **kwargs
+        self, columns: list | tuple | str = "*", include_all: bool = False, **kwargs
     ) -> Union[pd.DataFrame, List[Tuple]]:
         if isinstance(columns, str):
             columns = columns.replace(" ", "").split(",")
@@ -24,17 +24,20 @@ class Company(BaseDAO):
                 continue
             columns[i] = self.table_name + "." + columns[i]
         columns = ", ".join(columns)
-        if "Company.enabled" not in kwargs:
-            kwargs["Company.enabled"] = 1
-        qry = (
-            f"SELECT {columns} FROM {self.table_name}"
-            f" LEFT JOIN TickerType ON Company.ticker_type_id = TickerType.id"
-            f" LEFT JOIN Exchange ON Company.primary_exchange = Exchange.market_id"
-        )
+        qry = f"SELECT {columns} FROM {self.table_name}"
+        if not include_all:
+            if "Company.enabled" not in kwargs:
+                kwargs["Company.enabled"] = 1
+            qry += (
+                f" LEFT JOIN TickerType ON Company.ticker_type_id = TickerType.id"
+                f" LEFT JOIN Exchange ON Company.primary_exchange = Exchange.market_id"
+            )
         params, where_clause = _create_filters(kwargs)
-        where_clause.append("Exchange.active IS NOT 0")
-        where_clause.append("TickerType.enabled IS NOT 0")
-        qry += f" WHERE {' AND '.join(where_clause)}"
+        if not include_all:
+            where_clause.append("Exchange.active IS NOT 0")
+            where_clause.append("TickerType.enabled IS NOT 0")
+        if where_clause:
+            qry += f" WHERE {' AND '.join(where_clause)}"
 
         _log.debug("Query: %s", qry)
 
