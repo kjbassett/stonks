@@ -31,17 +31,17 @@ class BaseDAO:
         query, params, many = construct_insert_query(
             self.table_name, data, on_conflict, update_cols
         )
-        return await self.db.execute_query(query, params, many=many)
+        return await self.db.execute_query(query, params, many=many, query_type="INSERT")
 
     async def update(self, identifier: Any, data: Dict[str, Any]):
         set_clause = ", ".join([f"{key} = ?" for key in data.keys()])
         params = tuple(data.values()) + (identifier,)
         query = f"UPDATE {self.table_name} SET {set_clause} WHERE id = ?;"
-        return await self.db.execute_query(query, params)
+        return await self.db.execute_query(query, params, query_type="UPDATE")
 
     async def delete(self, identifier: Any):
         query = f"DELETE FROM {self.table_name} WHERE id = ?;"
-        return await self.db.execute_query(query, (identifier,))
+        return await self.db.execute_query(query, (identifier,), query_type="DELETE")
 
     async def get(
         self, columns: list | tuple | str = "*", **kwargs

@@ -32,12 +32,12 @@ class News(BaseDAO):
             LEFT JOIN Exchange ON Company.primary_exchange = Exchange.market_id
             WHERE TickerType.enabled <> 1 OR Company.enabled <> 1 OR Exchange.active IS 0
         )"""
-        await self.db.execute_query(query)
+        await self.db.execute_query(query, query_type="DELETE")
         # Delete old news items and ones with no rows in NewsCompanyLink table
         query = "DELETE FROM News WHERE timestamp < ? OR id NOT IN (SELECT news_id FROM NewsCompanyLink)"
-        await self.db.execute_query(query, (min_timestamp,))
+        await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")
         query = f"""
-        DELETE FROM NewsAttemptedQueries 
+        DELETE FROM NewsAttemptedQueries
         WHERE company_id IN (
             SELECT Company.id
             FROM Company
@@ -46,4 +46,4 @@ class News(BaseDAO):
             WHERE TickerType.enabled <> 1 OR Company.enabled <> 1 OR Exchange.active IS 0
         )
         OR end < ?"""
-        await self.db.execute_query(query, (min_timestamp,))
+        await self.db.execute_query(query, (min_timestamp,), query_type="DELETE")

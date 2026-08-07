@@ -55,6 +55,7 @@ class NewsEmbedding(BaseDAO):
         await self.db.execute_query(
             query,
             (news_id, model, embedding.astype(_EMBEDDING_DTYPE).tobytes()),
+            query_type="INSERT",
         )
 
     async def get_unembedded_ids(self, model: str) -> List[str]:
