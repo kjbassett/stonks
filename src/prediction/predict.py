@@ -2,6 +2,7 @@ import logging
 
 import pandas as pd
 
+from src.utils.project_utilities import config
 from ezmt.organism import Organism
 from src.data_access.dao_manager import dao_manager
 from src.utils.email import send_email
@@ -37,7 +38,7 @@ async def predict_latest_data(
         from src.data_sources.watchlist import set_active_symbols
         set_active_symbols(resolved)
     try:
-        model = Organism.load(name, version)
+        model = Organism.load(name, version, directory=config['organism_folder'])
         predictions = await model.run(log_states=log_states, result_name="recommendations")
     finally:
         if resolved:
