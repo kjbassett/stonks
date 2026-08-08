@@ -37,7 +37,7 @@ async def stream_price_data(symbols: str = "watchlist") -> None:
             subs = [f"AM.{t}" for t in tickers]
             stream_client = WebSocketClient(
                 api_key=api_key,
-                feed=Feed.RealTime,
+                feed=Feed.Delayed,
                 market=Market.Stocks,
                 subscriptions=subs,
             )
