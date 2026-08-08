@@ -33,7 +33,7 @@ class DataCompiler(BaseDAO):
         print_query: bool = False,
         symbols: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        query = construct_query(
+        query, params = construct_query(
             aggregation_interval,
             min_timestamp,
             max_timestamp,
@@ -48,12 +48,8 @@ class DataCompiler(BaseDAO):
             include_avg_volume_ratio,
             include_cv_volume_ratio,
             keep_latest_only=keep_latest_only,
+            symbols=symbols if isinstance(symbols, list) else None,
         )
-        params: tuple = ()
-        if symbols and isinstance(symbols, list):
-            placeholders = ",".join("?" * len(symbols))
-            query = f"SELECT * FROM ({query}) WHERE symbol IN ({placeholders})"
-            params = tuple(symbols)
         if print_query:
             _log.debug("Query: %s", query)
         data = await self.db.execute_query(
@@ -81,8 +77,9 @@ def construct_query(
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
     keep_latest_only: bool = False,
-) -> str:
-    inner_query = construct_inner_query(
+    symbols: Optional[List[str]] = None,
+) -> tuple[str, tuple]:
+    inner_query, params = construct_inner_query(
         aggregation_interval,
         min_timestamp,
         max_timestamp,
@@ -96,11 +93,12 @@ def construct_query(
         include_cv_close_ratio,
         include_avg_volume_ratio,
         include_cv_volume_ratio,
+        symbols=symbols,
     )
     query = construct_full_query(
         inner_query, keep_latest_only, include_target, target_offset
     )
-    return query
+    return query, params
 
 
 def construct_inner_query(
@@ -117,7 +115,8 @@ def construct_inner_query(
     include_cv_close_ratio: bool = True,
     include_avg_volume_ratio: bool = True,
     include_cv_volume_ratio: bool = True,
-) -> str:
+    symbols: Optional[List[str]] = None,
+) -> tuple[str, tuple]:
     ctes = []  # common table expressions
     columns = ["c.symbol"]
     joins = [
@@ -205,6 +204,12 @@ def construct_inner_query(
     if aggregation_interval != "minute":
         filters.append(f"t.interval = '{aggregation_interval}'")
 
+    params: tuple = ()
+    if symbols:
+        placeholders = ",".join("?" * len(symbols))
+        filters.append(f"c.symbol IN ({placeholders})")
+        params = tuple(symbols)
+
     # format query parts
     ctes = "WITH " + ",\n".join(ctes) + "\n" if ctes else ""
     columns = ",\n".join(columns)
@@ -213,7 +218,7 @@ def construct_inner_query(
 
     # Construct the query
     query = f"""
-{ctes} 
+{ctes}
 SELECT {columns}
 FROM {table} t
 {joins}
@@ -221,7 +226,7 @@ FROM {table} t
 ORDER BY {end_col}
 """
 
-    return query
+    return query, params
 
 
 def construct_target_column(aggregation_interval, offset):
@@ -502,7 +507,7 @@ def construct_full_query(inner_query, keep_latest_only, include_target, target_o
         FROM ({inner_query})
         {"WHERE rn_target = 1" if isinstance(target_offset, int) and include_target else ""}
     )
-    WHERE rn_latest_only = 1;
+    WHERE rn_latest_only = 1
     """
     return query
 
