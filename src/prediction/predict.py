@@ -22,7 +22,7 @@ async def predict_latest_data(
     send_results: bool = False,
     recipients: str = None,
 ):
-    """Run model inference and save predictions to InferencePredictions.
+    """Run model inference and save predictions to Prediction.
 
     Args:
         name: Organism name to load.
@@ -39,19 +39,29 @@ async def predict_latest_data(
         set_active_symbols(resolved)
     try:
         model = Organism.load(name, version, directory=config['organism_folder'])
+        # model.folder ends in the *resolved* version — version itself stays "latest"
+        # when that was passed in, so resolve it here rather than tagging predictions
+        # with the literal string "latest".
+        resolved_version = model.folder.rsplit("/", 1)[-1]
         predictions = await model.run(log_states=log_states, result_name="recommendations")
     finally:
         if resolved:
             from src.data_sources.watchlist import set_active_symbols
             set_active_symbols(None)
 
-    predictions_dao = dao_manager.get_dao("InferencePredictions")
-    await predictions_dao.save(predictions, name, version)
+    model_id = await dao_manager.get_dao("Model").get_id(name, resolved_version)
+    if model_id is None:
+        raise ValueError(
+            f"No Model row found for organism '{name}' version '{resolved_version}'. "
+            "It must be trained/logged via run_genetic_algorithm or "
+            "run_short_genetic_algorithm before predictions can be linked to it."
+        )
+    await dao_manager.get_dao("Prediction").save(predictions, model_id)
     _log.info("Inference complete: %d recommendations saved.", len(predictions))
 
     if send_results:
         filtered = predictions[
-            predictions["prediction"] / predictions["uncertainty"] > 2.5
+            predictions["prediction"] / (predictions["variance"].pow(0.5) + 1e-8) > 2.5
         ]
         if not recipients:
             raise ValueError("if send_results is truthy, recipients must have a value")

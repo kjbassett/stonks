@@ -266,7 +266,7 @@ class TestExecuteManualTrade(unittest.IsolatedAsyncioTestCase):
             mock_engine = MagicMock()
             MockEngine.return_value = mock_engine
             mock_engine.restore_intraday_state = AsyncMock()
-            mock_engine.execute_manual_trade = AsyncMock(
+            mock_engine.execute_trade = AsyncMock(
                 return_value=TradeResult("AAPL", 0.0, 150.0, False, "halted")
             )
 
@@ -274,7 +274,7 @@ class TestExecuteManualTrade(unittest.IsolatedAsyncioTestCase):
             await _execute_manual_trade("AAPL", 1, "auto", 60.0)
 
         # Assert — trade was attempted through engine but fill_order was not called
-        mock_engine.execute_manual_trade.assert_awaited_once()
+        mock_engine.execute_trade.assert_awaited_once()
         broker.fill_order.assert_not_awaited()
 
 

@@ -1,4 +1,5 @@
 import datetime
+import types
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,20 +10,18 @@ class TestGetRecentSplits(unittest.IsolatedAsyncioTestCase):
     async def test_returns_splits_from_client(self):
         client = MagicMock()
         expected = [{"ticker": "CTNT", "execution_date": "2026-04-28"}]
-        client.get_stock_splits = AsyncMock(return_value=expected)
+        client.list_splits = MagicMock(return_value=expected)
 
         from src.data_sources.corporate_actions import _get_recent_splits
 
         result = await _get_recent_splits(client, "2026-01-01")
 
-        client.get_stock_splits.assert_awaited_once_with(
-            execution_date_gte="2026-01-01", all_pages=True
-        )
+        client.list_splits.assert_called_once_with(execution_date_gte="2026-01-01")
         self.assertEqual(result, expected)
 
     async def test_returns_empty_list_when_no_splits(self):
         client = MagicMock()
-        client.get_stock_splits = AsyncMock(return_value=[])
+        client.list_splits = MagicMock(return_value=[])
 
         from src.data_sources.corporate_actions import _get_recent_splits
 
@@ -32,19 +31,17 @@ class TestGetRecentSplits(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_since_date_correctly(self):
         client = MagicMock()
-        client.get_stock_splits = AsyncMock(return_value=[])
+        client.list_splits = MagicMock(return_value=[])
 
         from src.data_sources.corporate_actions import _get_recent_splits
 
         await _get_recent_splits(client, "2025-06-15")
 
-        client.get_stock_splits.assert_awaited_once_with(
-            execution_date_gte="2025-06-15", all_pages=True
-        )
+        client.list_splits.assert_called_once_with(execution_date_gte="2025-06-15")
 
     async def test_propagates_client_exception(self):
         client = MagicMock()
-        client.get_stock_splits = AsyncMock(side_effect=RuntimeError("API error"))
+        client.list_splits = MagicMock(side_effect=RuntimeError("API error"))
 
         from src.data_sources.corporate_actions import _get_recent_splits
 
@@ -93,6 +90,60 @@ class TestIsSplitProcessed(unittest.IsolatedAsyncioTestCase):
     async def test_empty_ticker_still_queries(self):
         result = await self._run(rows=pd.DataFrame(), ticker="", execution_date="")
         self.assertFalse(result)
+
+
+class TestGetIncrementalSinceDate(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_max_execution_date_when_present(self):
+        mock_db = MagicMock()
+        mock_db.execute_query = AsyncMock(
+            return_value=pd.DataFrame({"max_date": ["2026-07-15"]})
+        )
+
+        with patch("src.data_sources.corporate_actions.dao_manager") as mock_dm:
+            mock_dm.db = mock_db
+            from src.data_sources.corporate_actions import _get_incremental_since_date
+
+            result = await _get_incremental_since_date()
+
+        self.assertEqual(result, "2026-07-15")
+
+    async def test_falls_back_to_earliest_market_time_when_table_empty(self):
+        # SELECT MAX(...) on an empty table returns one row with a NULL value.
+        fixed_ts = datetime.datetime(2020, 3, 1).timestamp()
+        mock_db = MagicMock()
+        mock_db.execute_query = AsyncMock(
+            return_value=pd.DataFrame({"max_date": [None]})
+        )
+
+        with patch("src.data_sources.corporate_actions.dao_manager") as mock_dm, patch(
+            "src.data_sources.corporate_actions.earliest_market_time",
+            return_value=fixed_ts,
+        ):
+            mock_dm.db = mock_db
+            from src.data_sources.corporate_actions import _get_incremental_since_date
+
+            result = await _get_incremental_since_date()
+
+        self.assertEqual(result, "2020-03-01")
+
+    async def test_queries_stock_split_table_for_max_execution_date(self):
+        mock_db = MagicMock()
+        mock_db.execute_query = AsyncMock(
+            return_value=pd.DataFrame({"max_date": [None]})
+        )
+
+        with patch("src.data_sources.corporate_actions.dao_manager") as mock_dm, patch(
+            "src.data_sources.corporate_actions.earliest_market_time",
+            return_value=0.0,
+        ):
+            mock_dm.db = mock_db
+            from src.data_sources.corporate_actions import _get_incremental_since_date
+
+            await _get_incremental_since_date()
+
+        query_arg = mock_db.execute_query.await_args.args[0]
+        self.assertIn("StockSplit", query_arg)
+        self.assertIn("MAX(execution_date)", query_arg)
 
 
 class TestClearCompanyPriceData(unittest.IsolatedAsyncioTestCase):
@@ -150,53 +201,11 @@ class TestClearCompanyPriceData(unittest.IsolatedAsyncioTestCase):
 
 class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
     def _make_split(self, ticker="CTNT", date="2026-04-28", frm=1, to=2):
-        return {
-            "ticker": ticker,
-            "execution_date": date,
-            "split_from": frm,
-            "split_to": to,
-        }
-
-    def _patch_all(
-        self,
-        splits=None,
-        is_processed=False,
-        company_rows=None,
-        since_date="2020-01-01",
-    ):
-        if splits is None:
-            splits = []
-        if company_rows is None:
-            company_rows = pd.DataFrame([{"id": 1}])
-
-        patches = {
-            "get_recent_splits": patch(
-                "src.data_sources.corporate_actions._get_recent_splits",
-                new=AsyncMock(return_value=splits),
-            ),
-            "is_processed": patch(
-                "src.data_sources.corporate_actions._is_split_processed",
-                new=AsyncMock(return_value=is_processed),
-            ),
-            "clear_data": patch(
-                "src.data_sources.corporate_actions._clear_company_price_data",
-                new=AsyncMock(),
-            ),
-            "call_limiter": patch(
-                "src.data_sources.corporate_actions.call_limiter",
-            ),
-            "async_ref_client": patch(
-                "src.data_sources.corporate_actions.AsyncReferenceClient"
-            ),
-            "earliest_market_time": patch(
-                "src.data_sources.corporate_actions.earliest_market_time",
-                return_value=datetime.date(2020, 1, 1).timetuple(),
-            ),
-            "dao_manager": patch(
-                "src.data_sources.corporate_actions.dao_manager",
-            ),
-        }
-        return patches
+        # sync_split_adjustments accesses .ticker/.execution_date/etc as attributes
+        # (real Split objects from massive are attribute-based, not dicts).
+        return types.SimpleNamespace(
+            ticker=ticker, execution_date=date, split_from=frm, split_to=to
+        )
 
     async def test_clears_tracked_company_and_records_split(self):
         split = self._make_split()
@@ -217,7 +226,7 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
         ) as mock_clear, patch(
             "src.data_sources.corporate_actions.call_limiter",
         ) as mock_limiter, patch(
-            "src.data_sources.corporate_actions.AsyncReferenceClient",
+            "src.data_sources.corporate_actions.make_rest_client",
         ), patch(
             "src.data_sources.corporate_actions.dao_manager"
         ) as mock_dm:
@@ -229,7 +238,7 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
 
             from src.data_sources.corporate_actions import sync_split_adjustments
 
-            result = await sync_split_adjustments(since_date="2026-01-01")
+            result = await sync_split_adjustments(since_days=-30)
 
         mock_clear.assert_awaited_once_with(3957)
         mock_split_dao.insert.assert_awaited_once()
@@ -251,14 +260,14 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
         ) as mock_clear, patch(
             "src.data_sources.corporate_actions.call_limiter",
         ) as mock_limiter, patch(
-            "src.data_sources.corporate_actions.AsyncReferenceClient",
+            "src.data_sources.corporate_actions.make_rest_client",
         ):
             mock_limiter.__aenter__ = AsyncMock(return_value=None)
             mock_limiter.__aexit__ = AsyncMock(return_value=None)
 
             from src.data_sources.corporate_actions import sync_split_adjustments
 
-            result = await sync_split_adjustments(since_date="2026-01-01")
+            result = await sync_split_adjustments(since_days=-30)
 
         mock_clear.assert_not_awaited()
         self.assertIn("Skipped 1", result)
@@ -282,7 +291,7 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
         ) as mock_clear, patch(
             "src.data_sources.corporate_actions.call_limiter",
         ) as mock_limiter, patch(
-            "src.data_sources.corporate_actions.AsyncReferenceClient",
+            "src.data_sources.corporate_actions.make_rest_client",
         ), patch(
             "src.data_sources.corporate_actions.dao_manager"
         ) as mock_dm:
@@ -294,14 +303,39 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
 
             from src.data_sources.corporate_actions import sync_split_adjustments
 
-            result = await sync_split_adjustments(since_date="2026-01-01")
+            result = await sync_split_adjustments(since_days=-30)
 
         mock_clear.assert_not_awaited()
         mock_split_dao.insert.assert_awaited_once()
         self.assertIn("Skipped 1", result)
         self.assertIn("none", result)
 
-    async def test_defaults_since_date_to_earliest_market_time(self):
+    async def test_since_days_zero_resumes_from_last_synced_split(self):
+        with patch(
+            "src.data_sources.corporate_actions._get_recent_splits",
+            new=AsyncMock(return_value=[]),
+        ) as mock_get, patch(
+            "src.data_sources.corporate_actions.call_limiter",
+        ) as mock_limiter, patch(
+            "src.data_sources.corporate_actions.make_rest_client",
+        ), patch(
+            "src.data_sources.corporate_actions.dao_manager"
+        ) as mock_dm:
+            mock_limiter.__aenter__ = AsyncMock(return_value=None)
+            mock_limiter.__aexit__ = AsyncMock(return_value=None)
+            mock_dm.db = MagicMock()
+            mock_dm.db.execute_query = AsyncMock(
+                return_value=pd.DataFrame({"max_date": ["2026-07-15"]})
+            )
+
+            from src.data_sources.corporate_actions import sync_split_adjustments
+
+            await sync_split_adjustments()
+
+        _client_arg, since_arg = mock_get.await_args.args
+        self.assertEqual(since_arg, "2026-07-15")
+
+    async def test_defaults_since_date_to_earliest_market_time_on_first_run(self):
         fixed_ts = datetime.datetime(2020, 3, 1).timestamp()
 
         with patch(
@@ -310,13 +344,19 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
         ) as mock_get, patch(
             "src.data_sources.corporate_actions.call_limiter",
         ) as mock_limiter, patch(
-            "src.data_sources.corporate_actions.AsyncReferenceClient",
+            "src.data_sources.corporate_actions.make_rest_client",
         ), patch(
             "src.data_sources.corporate_actions.earliest_market_time",
             return_value=fixed_ts,
-        ):
+        ), patch(
+            "src.data_sources.corporate_actions.dao_manager"
+        ) as mock_dm:
             mock_limiter.__aenter__ = AsyncMock(return_value=None)
             mock_limiter.__aexit__ = AsyncMock(return_value=None)
+            mock_dm.db = MagicMock()
+            mock_dm.db.execute_query = AsyncMock(
+                return_value=pd.DataFrame({"max_date": [None]})
+            )
 
             from src.data_sources.corporate_actions import sync_split_adjustments
 
@@ -332,14 +372,14 @@ class TestSyncSplitAdjustments(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "src.data_sources.corporate_actions.call_limiter",
         ) as mock_limiter, patch(
-            "src.data_sources.corporate_actions.AsyncReferenceClient",
+            "src.data_sources.corporate_actions.make_rest_client",
         ):
             mock_limiter.__aenter__ = AsyncMock(return_value=None)
             mock_limiter.__aexit__ = AsyncMock(return_value=None)
 
             from src.data_sources.corporate_actions import sync_split_adjustments
 
-            result = await sync_split_adjustments(since_date="2026-01-01")
+            result = await sync_split_adjustments(since_days=-30)
 
         self.assertIn("0 companies", result)
         self.assertIn("Skipped 0", result)

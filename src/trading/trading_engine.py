@@ -72,6 +72,7 @@ class TradingEngine:
         self._intraday_sells: defaultdict = defaultdict(int)
         self._trade_log: list = []
         self._last_tick_ts: Optional[float] = None
+        self._warned_pdt_blocked_stop_loss: set = set()
 
     # ------------------------------------------------------------------
     # Execution
@@ -196,14 +197,31 @@ class TradingEngine:
     async def _execute_stop_loss_closes(
         self, symbols: List[str], prices: Dict[str, float], trade_date: date
     ) -> List[TradeResult]:
-        """Force-close all stop-loss-triggered positions."""
+        """Force-close all stop-loss-triggered positions.
+
+        Symbols currently PDT-blocked from selling are skipped (retried on a
+        later tick once the block clears, e.g. the next trade_date) and
+        warned about once per symbol/day rather than every tick, since the
+        block condition doesn't change tick-to-tick.
+        """
+        _, pdt_blocked_sells = self._find_pdt_blocks(trade_date)
+        closeable = []
         for sym in symbols:
+            if sym in pdt_blocked_sells:
+                key = (sym, trade_date)
+                if key not in self._warned_pdt_blocked_stop_loss:
+                    self._warned_pdt_blocked_stop_loss.add(key)
+                    _log.warning(
+                        f"Stop-loss for {sym} blocked by PDT rule; will retry once allowed."
+                    )
+                continue
+            closeable.append(sym)
             _log.warning(f"Stop-loss trigger: closing {sym} @ ${prices[sym]:.2f}.")
         return list(await asyncio.gather(*[
             self.execute_target_exposure(
                 sym, 0.0, prices[sym], 0.0, trade_date, trigger="stop_loss"
             )
-            for sym in symbols
+            for sym in closeable
         ]))
 
     # ------------------------------------------------------------------
@@ -265,7 +283,7 @@ class TradingEngine:
 
         triggered = []
         for sym, pos in positions.items():
-            if sym not in prices or pos.shares <= 0 or pos.avg_price <= 0:
+            if sym not in prices or pos.shares <= 1e-6 or pos.avg_price <= 0:
                 continue
             if prices[sym] < pos.avg_price * (1.0 - self.stop_loss_pct):
                 triggered.append(sym)
@@ -339,8 +357,16 @@ class TradingEngine:
                 symbol, target_exposure, price, equity, trade_date=trade_date
             )
             (sell_coros if is_sell else buy_coros).append(coro)
-        await asyncio.gather(*sell_coros)
-        await asyncio.gather(*buy_coros)
+        sell_results = await asyncio.gather(*sell_coros)
+        buy_results = await asyncio.gather(*buy_coros)
+        n_filled = sum(
+            1 for r in (*sell_results, *buy_results)
+            if r.filled and abs(r.shares_delta) >= 1e-6
+        )
+        _log.info(
+            "Rebalance: %d/%d symbol(s) evaluated, %d trade(s) executed.",
+            len(sell_coros) + len(buy_coros), len(df_ts), n_filled,
+        )
 
     async def _run_adapt(self, df_ts: pd.DataFrame) -> None:
         """Update policy parameters based on the realized return since the last tick."""
@@ -524,7 +550,7 @@ async def train_trading_policy(
     policy = StrategyPolicy(
         [
             InformationRatioRule(
-                min_ratio=0,
+                min_ratio=0.02,
                 learning_rate=0,
             )
         ]

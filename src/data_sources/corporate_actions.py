@@ -43,6 +43,27 @@ async def _is_split_processed(ticker: str, execution_date: str) -> bool:
     return len(rows) > 0
 
 
+async def _get_incremental_since_date() -> str:
+    """Return the lower bound for an incremental split sync.
+
+    Resumes from the latest execution_date already recorded in StockSplit
+    (which accumulates every split ever seen, cleared or skipped — see
+    sync_split_adjustments), falling back to earliest_market_time() when the
+    table is empty (first-ever run).
+
+    Returns:
+        ISO date string ``"YYYY-MM-DD"``.
+    """
+    result = await dao_manager.db.execute_query(
+        "SELECT MAX(execution_date) AS max_date FROM StockSplit",
+        return_type="DataFrame",
+    )
+    max_date = result.iloc[0]["max_date"] if not result.empty else None
+    if not max_date:
+        return datetime.date.fromtimestamp(earliest_market_time()).isoformat()
+    return max_date
+
+
 async def _clear_company_price_data(company_id: int) -> None:
     """Delete all price data for a company so it can be re-fetched.
 
@@ -71,8 +92,9 @@ async def sync_split_adjustments(since_days: int = 0) -> str:
     Run fill_missing after this to repopulate with corrected adjusted prices.
 
     Args:
-        since_days: Relative day offset (e.g. ``-730`` = last 730 days). Defaults to 0
-            which uses the earliest stored data date as the lower bound.
+        since_days: Relative day offset (e.g. ``-730`` = last 730 days) for a manual
+            historical reprocessing run. Defaults to 0, which incrementally resumes
+            from the latest split already recorded (see _get_incremental_since_date).
 
     Returns:
         Summary string listing cleared companies and how many were skipped.
@@ -82,7 +104,7 @@ async def sync_split_adjustments(since_days: int = 0) -> str:
             datetime.date.today() + datetime.timedelta(days=since_days)
         ).isoformat()
     else:
-        since_date = datetime.date.fromtimestamp(earliest_market_time()).isoformat()
+        since_date = await _get_incremental_since_date()
 
     cleared: List[str] = []
     skipped = 0

@@ -24,6 +24,13 @@ import queue
 _listener: logging.handlers.QueueListener | None = None
 
 
+class _ExcludeTradingFilter(logging.Filter):
+    """Reject records from the trading.* logger namespace (routed to trading.log instead)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name != "trading" and not record.name.startswith("trading.")
+
+
 def setup_logging(log_dir: str | None = None) -> None:
     """
     Configure application-wide logging. Safe to call multiple times — subsequent
@@ -78,6 +85,10 @@ def setup_logging(log_dir: str | None = None) -> None:
     )
     app_file.setLevel(logging.DEBUG)
     app_file.setFormatter(fmt)
+    # trading.* already writes to trading.log in full (see below); without this,
+    # every handler on the shared queue sees every record regardless of origin,
+    # so trading.* would otherwise also flood app.log redundantly.
+    app_file.addFilter(_ExcludeTradingFilter())
 
     console = logging.StreamHandler()
     console.setLevel(level)
@@ -100,7 +111,8 @@ def setup_logging(log_dir: str | None = None) -> None:
 
     # Silence noisy third-party library loggers — they flood DEBUG even at root INFO
     for _lib in ("httpx", "urllib3", "sanic", "sanic.access", "asyncio", "aiosqlite",
-                 "websockets", "asyncpraw", "sentence_transformers", "transformers"):
+                 "websockets", "asyncpraw", "sentence_transformers", "transformers",
+                 "httpcore", "matplotlib.font_manager", "WebSocketClient"):
         logging.getLogger(_lib).setLevel(logging.WARNING)
 
     # trading.* logger: routed separately, does not propagate to root

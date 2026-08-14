@@ -199,29 +199,34 @@ class TestLoadTokens(unittest.TestCase):
         # Arrange
         auth = self._make_auth()
         token_data = {"access_token": "tok", "refresh_token": "ref", "expires_at": 9999999999.0}
-        with patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
+        with patch("src.trading.brokers.schwab_auth.os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data=json.dumps(token_data))):
             # Act
             result = auth._load_tokens()
 
         # Assert
         self.assertEqual(result["access_token"], "tok")
 
-    def test_raises_when_file_not_found(self):
-        # Arrange
-        from src.trading.brokers.schwab_auth import SchwabAuthError
-
+    def test_returns_none_when_file_not_found(self):
+        # Arrange — _load_tokens returns None for a missing file; callers
+        # (refresh(), get_client()) already handle None with their own
+        # contextual SchwabAuthError, so this is the correct behavior, not
+        # a raise from _load_tokens itself.
         auth = self._make_auth()
-        with patch("builtins.open", side_effect=FileNotFoundError):
-            # Act / Assert
-            with self.assertRaises(SchwabAuthError):
-                auth._load_tokens()
+        with patch("src.trading.brokers.schwab_auth.os.path.exists", return_value=False):
+            # Act
+            result = auth._load_tokens()
+
+        # Assert
+        self.assertIsNone(result)
 
     def test_raises_when_file_contains_invalid_json(self):
         # Arrange
         from src.trading.brokers.schwab_auth import SchwabAuthError
 
         auth = self._make_auth()
-        with patch("builtins.open", mock_open(read_data="not-json{")):
+        with patch("src.trading.brokers.schwab_auth.os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open(read_data="not-json{")):
             # Act / Assert
             with self.assertRaises(SchwabAuthError):
                 auth._load_tokens()
@@ -245,7 +250,12 @@ class TestRefresh(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_calls_post_token_and_saves(self):
         # Arrange
         auth = self._make_auth()
-        existing = {"access_token": "old", "refresh_token": "ref_tok", "expires_at": 0.0}
+        existing = {
+            "access_token": "old",
+            "refresh_token": "ref_tok",
+            "expires_at": 0.0,
+            "refresh_expires_at": time.time() + 86400,
+        }
         new_tokens = {"access_token": "new", "expires_in": 1800}
 
         auth._load_tokens = MagicMock(return_value=existing)
@@ -287,6 +297,139 @@ class TestRefresh(unittest.IsolatedAsyncioTestCase):
         # Act / Assert
         with self.assertRaises(SchwabAuthError):
             await auth.refresh()
+
+    async def test_refresh_preserves_real_refresh_expires_at_when_token_not_rotated(self):
+        # Arrange — old tokens carry a real, already-partially-elapsed deadline.
+        # Schwab's response (post-_annotate_expiry) always guesses a fresh
+        # "now + 7 days" and omits refresh_token, since routine refreshes don't
+        # rotate it — refresh() must not let that fresh guess overwrite the
+        # real deadline it already knew about.
+        auth = self._make_auth()
+        real_deadline = time.time() + 4 * 86400  # 4 real days left
+        existing = {
+            "access_token": "old",
+            "refresh_token": "stable_ref_tok",
+            "expires_at": 0.0,
+            "refresh_expires_at": real_deadline,
+        }
+        wrong_fresh_guess = time.time() + 7 * 86400
+        new_tokens = {
+            "access_token": "new",
+            "expires_in": 1800,
+            "refresh_expires_at": wrong_fresh_guess,
+        }
+        auth._load_tokens = MagicMock(return_value=existing)
+        auth._post_token = AsyncMock(return_value=new_tokens)
+        auth._save_tokens = MagicMock()
+
+        # Act
+        await auth.refresh()
+
+        # Assert
+        saved = auth._save_tokens.call_args[0][0]
+        self.assertEqual(saved["refresh_expires_at"], real_deadline)
+        self.assertNotEqual(saved["refresh_expires_at"], wrong_fresh_guess)
+
+    async def test_refresh_adopts_new_deadline_when_token_is_rotated(self):
+        # Arrange — Schwab actually returns a NEW refresh_token this time, so
+        # the fresh deadline is legitimate and should be adopted.
+        auth = self._make_auth()
+        real_deadline = time.time() + 4 * 86400
+        existing = {
+            "access_token": "old",
+            "refresh_token": "old_ref_tok",
+            "expires_at": 0.0,
+            "refresh_expires_at": real_deadline,
+        }
+        fresh_deadline = time.time() + 7 * 86400
+        new_tokens = {
+            "access_token": "new",
+            "refresh_token": "ROTATED_ref_tok",
+            "expires_in": 1800,
+            "refresh_expires_at": fresh_deadline,
+        }
+        auth._load_tokens = MagicMock(return_value=existing)
+        auth._post_token = AsyncMock(return_value=new_tokens)
+        auth._save_tokens = MagicMock()
+
+        # Act
+        await auth.refresh()
+
+        # Assert
+        saved = auth._save_tokens.call_args[0][0]
+        self.assertEqual(saved["refresh_token"], "ROTATED_ref_tok")
+        self.assertEqual(saved["refresh_expires_at"], fresh_deadline)
+
+    async def test_refresh_raises_when_refresh_expires_at_missing(self):
+        # Arrange — old-format token file predating refresh_expires_at
+        # tracking entirely. _is_refresh_expired treats a missing deadline as
+        # "expired" and rejects before ever reaching the preservation logic
+        # above, so there's no path where a missing old deadline could let a
+        # fresh (unverified) guess slip through silently — this locks that in.
+        from src.trading.brokers.schwab_auth import SchwabAuthError
+
+        auth = self._make_auth()
+        existing = {"access_token": "old", "refresh_token": "ref_tok", "expires_at": 0.0}
+        auth._load_tokens = MagicMock(return_value=existing)
+        auth._post_token = AsyncMock()
+        auth._save_tokens = MagicMock()
+
+        # Act / Assert
+        with self.assertRaises(SchwabAuthError):
+            await auth.refresh()
+        auth._post_token.assert_not_awaited()
+
+
+class TestSecondsUntilRefreshExpiry(unittest.TestCase):
+    """Tests for SchwabAuth.seconds_until_refresh_expiry."""
+
+    def _make_auth(self) -> "SchwabAuth":
+        from src.trading.brokers.schwab_auth import SchwabAuth
+
+        with patch.dict(
+            "os.environ", {"SCHWAB_APP_KEY": "k", "SCHWAB_APP_SECRET": "s"}
+        ):
+            with patch(
+                "src.trading.brokers.schwab_auth.config",
+                {"schwab": {"token_file": "tokens.json", "callback_url": "https://127.0.0.1"}},
+            ):
+                return SchwabAuth()
+
+    def test_returns_remaining_seconds(self):
+        # Arrange
+        auth = self._make_auth()
+        deadline = time.time() + 3600
+        auth._load_tokens = MagicMock(return_value={"refresh_expires_at": deadline})
+
+        # Act
+        remaining = auth.seconds_until_refresh_expiry()
+
+        # Assert
+        self.assertAlmostEqual(remaining, 3600, delta=2)
+
+    def test_returns_zero_when_no_tokens(self):
+        # Arrange
+        auth = self._make_auth()
+        auth._load_tokens = MagicMock(return_value=None)
+
+        # Act / Assert
+        self.assertEqual(auth.seconds_until_refresh_expiry(), 0.0)
+
+    def test_returns_zero_when_deadline_missing(self):
+        # Arrange
+        auth = self._make_auth()
+        auth._load_tokens = MagicMock(return_value={"access_token": "x"})
+
+        # Act / Assert
+        self.assertEqual(auth.seconds_until_refresh_expiry(), 0.0)
+
+    def test_returns_negative_when_already_expired(self):
+        # Arrange
+        auth = self._make_auth()
+        auth._load_tokens = MagicMock(return_value={"refresh_expires_at": time.time() - 100})
+
+        # Act / Assert
+        self.assertLess(auth.seconds_until_refresh_expiry(), 0)
 
 
 class TestGetClient(unittest.IsolatedAsyncioTestCase):

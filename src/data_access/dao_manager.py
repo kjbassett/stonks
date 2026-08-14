@@ -146,6 +146,5 @@ async def compile_data(
         include_avg_volume_ratio,
         include_cv_volume_ratio,
         keep_latest_only,
-        print_query=True,
     )
     return structured_data

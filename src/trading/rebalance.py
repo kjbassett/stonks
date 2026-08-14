@@ -28,7 +28,7 @@ async def run_rebalance(
     paper_trading: bool = True,
     adapt_policy: bool = False,
 ) -> None:
-    """Execute trades from the latest InferencePredictions for the given organism.
+    """Execute trades from the latest Prediction rows for the given organism.
 
     Reads the most recent predictions saved by ``predict_latest_data`` and steps
     the TradingEngine. The engine is cached by model_name so PDT state and policy
@@ -40,8 +40,12 @@ async def run_rebalance(
         paper_trading: When True, paper-trades instead of using real capital.
         adapt_policy: When True, let the policy update on live returns.
     """
-    predictions_dao = dao_manager.get_dao("InferencePredictions")
-    recommendations = await predictions_dao.load_latest(model_name, model_version)
+    model_id = await dao_manager.get_dao("Model").get_id(model_name, model_version)
+    recommendations = (
+        await dao_manager.get_dao("Prediction").load_latest(model_id)
+        if model_id is not None
+        else None
+    )
     if recommendations is None:
         _log.warning(
             "No predictions found for %s/%s — skipping rebalance.",
@@ -49,6 +53,12 @@ async def run_rebalance(
             model_version,
         )
         return
+
+    n_nonzero = int((recommendations["portfolio_weight"].abs() > 1e-6).sum())
+    _log.info(
+        "Loaded %d prediction(s) for %s/%s — %d with nonzero target weight.",
+        len(recommendations), model_name, model_version, n_nonzero,
+    )
 
     engine = await _get_or_create_engine(model_name, model_version, paper_trading)
     await engine.step(recommendations, adapt_policy=adapt_policy)
@@ -106,5 +116,5 @@ def _load_organism(model_name: str, model_version: str) -> Organism:
     """
     key = (model_name, model_version)
     if key not in _organisms:
-        _organisms[key] = Organism.load(model_name, model_version)
+        _organisms[key] = Organism.load(model_name, model_version, directory=config['organism_folder'])
     return _organisms[key]

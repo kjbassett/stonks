@@ -32,6 +32,7 @@ async def load_data(
     keep_latest_only: bool = False,
     embedding_model_name: str = "all-MiniLM-L6-v2",
     symbols: Optional[List] = None,
+    include_after_hours: bool = False,
 ) -> tuple:
     """Load structured trading data and pre-computed news embeddings.
 
@@ -50,6 +51,9 @@ async def load_data(
         include_cv_volume_ratio: Include CV-of-volume lag ratios.
         keep_latest_only: Keep only the most recent row per symbol.
         embedding_model_name: Sentence-transformer model for embedding lookup.
+        include_after_hours: Whether to include after-hours rows. Defaults to
+            False here (unlike DataCompiler.get_data's neutral True default)
+            since we currently don't want to train/predict on after-hours data.
 
     Returns:
         Tuple of (structured_data, embedding_lookup, raw_price_data).
@@ -76,8 +80,8 @@ async def load_data(
         include_avg_volume_ratio,
         include_cv_volume_ratio,
         keep_latest_only,
-        print_query=True,
         symbols=symbols,
+        include_after_hours=include_after_hours,
     )
     if num_news > 0:
         news_id_cols = [c for c in structured_data.columns if _NEWS_ID_PAT.match(c)]
@@ -127,6 +131,38 @@ def split_data(
     """
     n_train = int(split * len(dataframe))
     return dataframe.iloc[:n_train].copy(), dataframe.iloc[n_train:].copy()
+
+
+def drop_near_zero(
+    structured_data: pd.DataFrame,
+    target_col: str = "target",
+    max_drop_prob: float = 0.0,
+    zero_width: float = 0.01,
+) -> pd.DataFrame:
+    """Probabilistically drop rows whose target is close to zero.
+
+    Drop probability peaks at max_drop_prob when target == 0 and decays
+    linearly to 0 by |target| >= zero_width. Intended to run immediately after
+    load_data, before any of the more expensive preprocessing steps, so it
+    also reduces how much data those steps have to process.
+
+    Args:
+        structured_data: DataFrame with a target column.
+        target_col: Name of the target column.
+        max_drop_prob: Drop probability at target == 0. 0 disables dropping.
+        zero_width: |target| distance at which drop probability reaches 0.
+
+    Returns:
+        structured_data with a random subset of near-zero-target rows removed.
+    """
+    if max_drop_prob <= 0 or target_col not in structured_data.columns:
+        return structured_data
+    distance = structured_data[target_col].abs().clip(upper=zero_width)
+    drop_prob = max_drop_prob * (1 - distance / zero_width)
+    keep = np.random.random(len(structured_data)) >= drop_prob.values
+    n_dropped = (~keep).sum()
+    _log.info("Dropped %d rows near target=0 (probabilistic filter)", n_dropped)
+    return structured_data[keep]
 
 
 def filter_out_missing_data(
@@ -454,6 +490,34 @@ def get_num_x_columns(
         embedding_dim = len(next(iter(embedding_lookup.values())))
         n_cols += num_news * embedding_dim
     return n_cols
+
+
+def get_text_input_dim(
+    structured_data: pd.DataFrame,
+    num_news: int = 0,
+    embedding_lookup: Optional[Dict] = None,
+) -> int:
+    """Count the news-embedding portion of NumericalModel's input dimension.
+
+    A new, separately-named function (not a second return value tacked onto
+    get_num_x_columns) — an old organism resuming mid-DNA before this gene
+    existed would have its frozen single-output-name gene silently bind a
+    2-tuple return to that one key, corrupting structured_input_dim into a
+    tuple. Keeping get_num_x_columns untouched avoids that entirely.
+
+    Args:
+        structured_data: Pre-processed training DataFrame (unused, kept for
+            symmetry with get_num_x_columns / consistent gene wiring).
+        num_news: Number of news slots (from hyperparameter).
+        embedding_lookup: Dict returned by load_data; used to infer embedding_dim.
+
+    Returns:
+        num_news * embedding_dim, or 0 when there's no text/news input.
+    """
+    if num_news > 0 and embedding_lookup:
+        embedding_dim = len(next(iter(embedding_lookup.values())))
+        return num_news * embedding_dim
+    return 0
 
 
 def format_ignore_cols(ignore_cols):

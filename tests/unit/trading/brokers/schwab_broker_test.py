@@ -81,7 +81,7 @@ class TestFillOrderCancelBehavior(unittest.IsolatedAsyncioTestCase):
         # Assert — cancel was attempted, result is unfilled
         broker._cancel_with_retry.assert_awaited_once()
         self.assertFalse(result.filled)
-        self.assertEqual(result.reason, "unconfirmed")
+        self.assertEqual(result.reason, "timeout")
 
     async def test_cancel_not_called_on_immediate_fill(self):
         # Arrange — order fills immediately

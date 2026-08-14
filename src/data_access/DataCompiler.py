@@ -32,6 +32,7 @@ class DataCompiler(BaseDAO):
         keep_latest_only: bool = False,
         print_query: bool = False,
         symbols: Optional[List[str]] = None,
+        include_after_hours: bool = True,
     ) -> pd.DataFrame:
         query, params = construct_query(
             aggregation_interval,
@@ -49,6 +50,7 @@ class DataCompiler(BaseDAO):
             include_cv_volume_ratio,
             keep_latest_only=keep_latest_only,
             symbols=symbols if isinstance(symbols, list) else None,
+            include_after_hours=include_after_hours,
         )
         if print_query:
             _log.debug("Query: %s", query)
@@ -78,6 +80,7 @@ def construct_query(
     include_cv_volume_ratio: bool = True,
     keep_latest_only: bool = False,
     symbols: Optional[List[str]] = None,
+    include_after_hours: bool = True,
 ) -> tuple[str, tuple]:
     inner_query, params = construct_inner_query(
         aggregation_interval,
@@ -96,7 +99,7 @@ def construct_query(
         symbols=symbols,
     )
     query = construct_full_query(
-        inner_query, keep_latest_only, include_target, target_offset
+        inner_query, keep_latest_only, include_target, target_offset, include_after_hours
     )
     return query, params
 
@@ -170,16 +173,21 @@ def construct_inner_query(
         filters += target_filters
 
     # market timing columns
-    columns += construct_market_timing_columns(aggregation_interval)
+    timing_columns, timing_joins = construct_market_timing_columns(aggregation_interval)
+    columns += timing_columns
+    joins += timing_joins
 
     # hour, day of week, and month of year
     columns += construct_dt_columns(aggregation_interval)
 
     # news
-    news_cte, news_cols, news_joins = construct_news_columns(
+    news_cte, news_cols, news_joins, news_params = construct_news_columns(
         aggregation_interval,
         num_news,
         news_history_threshold,
+        min_timestamp,
+        max_timestamp,
+        symbols,
     )
     ctes += news_cte
     columns += news_cols
@@ -204,11 +212,13 @@ def construct_inner_query(
     if aggregation_interval != "minute":
         filters.append(f"t.interval = '{aggregation_interval}'")
 
-    params: tuple = ()
+    # news_params (if any) come from the CTE, which is prepended before this
+    # SELECT in the final query text, so its ? placeholders must bind first.
+    params: tuple = news_params
     if symbols:
         placeholders = ",".join("?" * len(symbols))
         filters.append(f"c.symbol IN ({placeholders})")
-        params = tuple(symbols)
+        params = params + tuple(symbols)
 
     # format query parts
     ctes = "WITH " + ",\n".join(ctes) + "\n" if ctes else ""
@@ -286,28 +296,28 @@ def construct_market_timing_columns(aggregation_interval):
         raise NotImplementedError(
             "construct_market_timing_columns not implemented for minute aggregations"
         )
-    return [
+    # Uses MarketCalendar (pandas_market_calendars-derived, real UTC open/close
+    # timestamps per trading day) instead of a hardcoded UTC offset — correct
+    # across DST transitions and market holidays/half-days, unlike the '-5 hours'
+    # CASE expression this replaces.
+    joins = ["LEFT JOIN MarketCalendar mkt_cal ON mkt_cal.date = t.date"]
+    columns = [
         """
         (
-            CASE
-                WHEN time(datetime(t.end, 'unixepoch', '-5 hours')) < '16:00:00'
-                THEN strftime('%s',
-                     date(datetime(t.end, 'unixepoch', '-5 hours')) || ' 16:00:00',
-                     '+5 hours')
-                ELSE strftime('%s',
-                     date(datetime(t.end, 'unixepoch', '-5 hours'), '+1 day') || ' 16:00:00',
-                     '+5 hours')
-            END
+            SELECT mc2.close_ts FROM MarketCalendar mc2
+            WHERE mc2.close_ts > t.end
+            ORDER BY mc2.close_ts LIMIT 1
         ) - t.end AS seconds_to_next_close
         """,
         """
         CASE
-            WHEN time(datetime(t.end, 'unixepoch', '-5 hours')) >= '16:00:00'
-                 OR time(datetime(t.end, 'unixepoch', '-5 hours')) < '09:30:00'
-            THEN 1 ELSE 0
+            WHEN mkt_cal.date IS NULL THEN NULL
+            WHEN t.end > mkt_cal.open_ts AND t.end <= mkt_cal.close_ts THEN 0
+            ELSE 1
         END AS is_after_hours
         """,
     ]
+    return columns, joins
 
 
 def construct_dt_columns(aggregation_interval):
@@ -363,19 +373,27 @@ def construct_news_columns(
     aggregation_interval: str,
     num_news: int,
     news_history_threshold: int,
+    min_timestamp: int = 0,
+    max_timestamp: int = 0,
+    symbols: Optional[List[str]] = None,
 ) -> tuple:
-    """Build CTEs, columns, and joins for news ID, sentiment, and age features.
+    """Build CTEs, columns, joins, and params for news ID, sentiment, and age features.
 
     Args:
         aggregation_interval: Aggregation level ('minute' or 'hour').
         num_news: Number of most-recent news articles to include per row.
         news_history_threshold: Maximum news age in seconds.
+        min_timestamp: Same lower bound the outer query applies — restricts the
+            CTE's own driving scan to the requested window instead of all history.
+        max_timestamp: Same upper bound the outer query applies.
+        symbols: Same symbol filter the outer query applies — restricts the CTE's
+            driving scan to the requested companies instead of every company.
 
     Returns:
-        A 3-tuple of (ctes, columns, joins) lists.
+        A 4-tuple of (ctes, columns, joins, params).
     """
     if num_news < 1:
-        return [], [], []
+        return [], [], [], ()
 
     if aggregation_interval == "minute":
         t_col = "t.timestamp"
@@ -386,6 +404,36 @@ def construct_news_columns(
     else:
         raise ValueError(f"Unsupported aggregation interval: {aggregation_interval}")
 
+    # The CTE is its own independently-scoped FROM {table} t — it does not
+    # inherit the outer query's company/time filters (SQLite can't push
+    # predicates through the ROW_NUMBER() window function). Without these,
+    # it joins News/NewsCompanyLink against the *entire* history for *every*
+    # company on every call, regardless of how narrow the actual request is
+    # (confirmed: this alone took a 26s query to 58 minutes at ~100 symbols /
+    # 14 days against 22M+ TradingDataAggregation rows). Mirroring the same
+    # bounds the outer query already applies keeps this CTE's driving scan
+    # limited to what's actually requested.
+    cte_joins = [
+        "JOIN NewsCompanyLink ncl ON t.company_id = ncl.company_id",
+        "JOIN News n ON ncl.news_id = n.id",
+    ]
+    cte_filters = [
+        f"n.timestamp <= {t_col}",
+        f"n.timestamp >= {t_col} - {news_history_threshold}",
+    ]
+    params: tuple = ()
+    if min_timestamp != 0:
+        cte_filters.append(f"{t_col} >= {min_timestamp}")
+    if max_timestamp > 0:
+        cte_filters.append(f"{t_col} <= {max_timestamp}")
+    if symbols:
+        placeholders = ",".join("?" * len(symbols))
+        cte_joins.append(
+            f"JOIN Company c2 ON t.company_id = c2.id AND c2.symbol IN ({placeholders})"
+        )
+        params = tuple(symbols)
+
+    cte_joins_str = "\n    ".join(cte_joins)
     cte = [
         f"""
     RankedNews AS (
@@ -397,10 +445,8 @@ def construct_news_columns(
         {t_col} AS trade_ts,
         ROW_NUMBER() OVER (PARTITION BY t.company_id, {t_col} ORDER BY n.timestamp DESC) AS rn
     FROM {table} t
-    JOIN NewsCompanyLink ncl ON t.company_id = ncl.company_id
-    JOIN News n ON ncl.news_id = n.id
-    WHERE n.timestamp <= {t_col}
-    AND n.timestamp >= {t_col} - {news_history_threshold}
+    {cte_joins_str}
+    WHERE {' AND '.join(cte_filters)}
     )"""
     ]
     columns = []
@@ -418,7 +464,7 @@ def construct_news_columns(
             f"LEFT JOIN RankedNews n{i} ON t.company_id = n{i}.company_id"
             f" AND {t_col} = n{i}.trade_ts AND n{i}.rn = {i}"
         )
-    return cte, columns, joins
+    return cte, columns, joins, params
 
 
 def construct_calculated_columns(
@@ -490,12 +536,31 @@ def construct_calculated_columns(
     return calc_columns
 
 
-def construct_full_query(inner_query, keep_latest_only, include_target, target_offset):
+def construct_full_query(
+    inner_query, keep_latest_only, include_target, target_offset, include_after_hours=True
+):
+    # Both conditions filter on columns the inner query already computes
+    # (rn_target from construct_target_column's row-numbering, is_after_hours
+    # from construct_market_timing_columns) — they must stay outer-query
+    # conditions, never pushed into construct_inner_query's own filters, since
+    # the inner query's window functions (LAG-based lag features, the target's
+    # forward join) need the complete, unfiltered per-company row sequence to
+    # produce correct values. Excluding after-hours rows only means they don't
+    # become training examples themselves — an in-hours row whose target or lag
+    # legitimately depends on an after-hours timestamp still needs that row
+    # present while the inner query runs.
+    conditions = []
+    if isinstance(target_offset, int) and include_target:
+        conditions.append("rn_target = 1")
+    if not include_after_hours:
+        conditions.append("is_after_hours = 0")
+
     if not keep_latest_only:
-        if isinstance(target_offset, int) and include_target:
-            # inner query produces a row number called rn_target to rank closest row to target_offset
-            return f"SELECT * FROM ({inner_query}) WHERE rn_target = 1"
+        if conditions:
+            return f"SELECT * FROM ({inner_query}) WHERE {' AND '.join(conditions)}"
         return inner_query
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"""
     SELECT *
     FROM (
@@ -505,7 +570,7 @@ def construct_full_query(inner_query, keep_latest_only, include_target, target_o
                    ORDER BY timestamp DESC
                ) AS rn_latest_only
         FROM ({inner_query})
-        {"WHERE rn_target = 1" if isinstance(target_offset, int) and include_target else ""}
+        {where_clause}
     )
     WHERE rn_latest_only = 1
     """

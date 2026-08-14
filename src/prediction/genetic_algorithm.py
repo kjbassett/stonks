@@ -2,21 +2,25 @@ import logging
 import matplotlib.pyplot as plt
 from ezmt.hyperparameters import ContinuousRange, DiscreteOrdinal
 from ezmt.model_tuner import ModelTuner
+from ezmt.organism import dna2str
 from typing import Union
 
 _log = logging.getLogger("prediction.genetic_algorithm")
 from stonks.src.plot import plot_training
+from src.data_access.dao_manager import dao_manager
 from src.prediction.dataset import create_datasets
 from src.prediction.nn_model import create_model, train_model, load_model, infer
 from src.ml_diagnostics.checks import run_data_quality_checks
 from src.prediction.pipeline_components import (
     clip_values,
+    drop_near_zero,
     filter_out_missing_data,
     split_data,
     scale_data,
     one_hot_encode,
     impute,
     get_num_x_columns,
+    get_text_input_dim,
     unscale_data,
     load_data,
     save_torch_state,
@@ -54,6 +58,7 @@ async def run_genetic_algorithm(
     max_timestamp: int = 0,
     log_states: str = "false",
     organisms_dir: str = "H:/organisms",
+    notes: str = None,
 ):
     # define possible choices for all hyperparameters
     model_space, hyperparam_space, save_load_funcs = create_model_space(
@@ -66,6 +71,8 @@ async def run_genetic_algorithm(
     )
     model = await mt.run(run_name, log_states=_parse_log_states(log_states))
     model.save()
+    # ModelTuner.score_fitness populates both model.score and model.fitness.
+    await log_organism_version(model, fitness=model.fitness, notes=notes)
 
 
 @plugin()
@@ -80,6 +87,7 @@ async def run_short_genetic_algorithm(
     min_timestamp: int = 0,
     max_timestamp: int = 0,
     organisms_dir: str = "H:/organisms",
+    notes: str = None,
 ):
     from ezmt.organism import Organism
     if isinstance(start_after_gene_index, str) and start_after_gene_index.isnumeric():
@@ -104,8 +112,97 @@ async def run_short_genetic_algorithm(
         result_name="score",
         update_knowledge=True,
     )
+    # model.run() only returns the score; it never updates model.score itself
+    # (that only happens via ModelTuner.score_fitness, which this path bypasses).
+    # Setting it here makes model.score authoritative from this point on, correct
+    # regardless of when/whether the organism is saved.
+    model.score = result
     model.save()
+    # No ModelTuner involved on this path, so there's no population to compute a
+    # relative fitness against — log None rather than the object's stale default (0).
+    await log_organism_version(model, fitness=None, notes=notes)
     _log.info("GA run complete: %s", result)
+
+
+@plugin()
+async def backfill_model_version(
+    name: str, version: str, organisms_dir: str = "H:/organisms", notes: str = None
+) -> int:
+    """Retroactively log an on-disk organism version to Model.
+
+    For organism versions saved before the Model-logging feature existed (or
+    otherwise missing their Model row) — loads dna/parameters/knowledge
+    straight from the organism's saved folder and logs them via
+    log_organism_version.
+
+    Args:
+        name: Organism name.
+        version: Exact organism version folder name (not "latest").
+        organisms_dir: Root organisms folder.
+        notes: Optional free-text note; defaults to a note explaining the backfill.
+
+    Returns:
+        The new Model row's id.
+    """
+    from ezmt.organism import Organism
+
+    model = Organism.load(name, version, directory=organisms_dir)
+    # load() always resets score/fitness to 0 regardless of the saved version's
+    # real history — that's not recoverable from disk, so store it as unknown
+    # (None) rather than the misleading fixed 0.
+    model.score = None
+    if notes is None:
+        notes = "Backfilled from on-disk organism data; predates Model-logging feature."
+    return await log_organism_version(model, fitness=None, notes=notes)
+
+
+async def log_organism_version(model, fitness: float | None, notes: str = None) -> int:
+    """Persist a saved organism's score/hyperparameters/diff to the Model table.
+
+    Args:
+        model: The Organism that was just saved (model.save() must already
+            have run so model.folder reflects the final version).
+        fitness: Population-relative fitness, or None when this run didn't go
+            through ModelTuner (model.fitness would otherwise be a stale
+            uninitialized 0, not a real "not applicable" signal).
+        notes: Optional free-text note to attach to this version.
+
+    Returns:
+        The new Model row's id.
+    """
+    resolved_version = model.folder.rsplit("/", 1)[-1]
+    knowledge = model.knowledge or {}
+
+    # data_quality_metrics: properties of the *input data* (feature ranges,
+    # outliers, loss spikes). classification_metrics is about how well the
+    # *model* performs, so it moves to model_performance instead.
+    data_quality_metrics = dict(knowledge.get("data_quality_report") or {})
+    classification_metrics = data_quality_metrics.pop("classification_metrics", None)
+
+    predictions_df = knowledge.get("predictions")
+    final_mse = (
+        float(((predictions_df["target"] - predictions_df["prediction"]) ** 2).mean())
+        if predictions_df is not None and not predictions_df.empty
+        else None
+    )
+    model_performance = {
+        "classification_metrics": classification_metrics,
+        "final_mse": final_mse,
+        "warmup_mse": knowledge.get("warmup_mse"),
+        "final_nll": knowledge.get("val_loss"),
+    }
+
+    return await dao_manager.get_dao("Model").log_version(
+        model.name,
+        resolved_version,
+        score=model.score,
+        fitness=fitness,
+        parameters=model.parameters,
+        dna_summary=dna2str(model.dna),
+        data_quality_metrics=data_quality_metrics or None,
+        model_performance=model_performance,
+        notes=notes,
+    )
 
 
 def save_figure(folder, key, fig):
@@ -154,24 +251,58 @@ def create_model_space(max_timestamp, min_timestamp):
             [20]
         ),  # maximum number of categories/columns will be created per original column when one-hot encoding
         "n_hidden_layers": DiscreteOrdinal(
-            [7]  # [1, 2, 3, 4, 5, 6, 7]
+            [8]  # [1, 2, 3, 4, 5, 6, 7]
         ),  # number of hidden layers in NN
         "hidden_dim": DiscreteOrdinal(
-            [500]  # [100, 250, 500, 750, 1000]
+            [750]  # [100, 250, 500, 750, 1000]
         ),  # number of nodes per hidden layer
         "dropout_rate": ContinuousRange(
             0.3, 0.30000000001  # 4
         ),  # chance of dropout per dropout layer in NN
         "learning_rate": ContinuousRange(1e-5, 1e-5 + 1e-10),
         "missing_data_%_threshold": ContinuousRange(
-            0, 0.000000001  # 0.5, 0.75
+            0.1, 0.10000000001  # 0.05, 0.2
         ),  # threshold of % of missing data to remove pt.
+        "patience": DiscreteOrdinal(
+            [20]
+        ),
+        "max_drop_prob": ContinuousRange(
+            0, 0.000000001  # 0, 0.6
+        ),  # probability of dropping a target=0 row (decays to 0 by zero_width); 0 = disabled
+        "zero_width": ContinuousRange(
+            0.01, 0.01000001  # 0.001, 0.05
+        ),  # |target| distance at which drop probability reaches 0
         "negative_pair_weight": ContinuousRange(
-            0.6, 0.60000001
+            1.0, 1.00000001
         ),  # loss weight when both target and prediction are negative (0 = ignore magnitude)
         "false_positive_weight": ContinuousRange(
-            1.3, 1.30000001
+            1.0, 1.00000001
         ),  # loss weight when target is negative but prediction is positive (buying a loser)
+        # --- Pre-trunk subnetworks (0 layers = passthrough, today's behavior) ---
+        "numeric_subnet_n_layers": DiscreteOrdinal([3]),  # [0, 1, 2, 3]
+        "numeric_subnet_width_mult": ContinuousRange(
+            1.0, 1.00000001  # 0.25, 2.0
+        ),  # numeric subnet hidden width as a multiple of its own input dim
+        "text_subnet_n_layers": DiscreteOrdinal([3]),  # [0, 1, 2, 3]
+        "text_subnet_width_mult": ContinuousRange(
+            1.0, 1.00000001  # 0.25, 2.0
+        ),  # text subnet hidden width as a multiple of text_input_dim
+        # --- Post-trunk heads (0 layers = bare nn.Linear, today's behavior) ---
+        "y_subnet_n_layers": DiscreteOrdinal([3]),  # [0, 1, 2]
+        "y_subnet_width_mult": ContinuousRange(
+            1, 1.00000001  # 0.25, 2.0
+        ),  # y-subnet hidden width as a multiple of hidden_dim
+        "uncertainty_subnet_n_layers": DiscreteOrdinal([3]),  # [0, 1, 2]
+        "uncertainty_subnet_width_mult": ContinuousRange(
+            1, 1.00000001  # 0.25, 2.0
+        ),  # uncertainty-subnet hidden width as a multiple of hidden_dim
+        # --- Two-phase (mean warm-up) training ---
+        "warmup_max_epochs": DiscreteOrdinal(
+            [10]  # [0, 3, 5, 8]
+        ),  # cap on mean-only warm-up epochs; 0 = today's single-phase training.
+        # Warm-up ends adaptively (via warmup_patience) whenever MSE plateaus,
+        # not necessarily after running this many epochs.
+        "warmup_patience": DiscreteOrdinal([10]),  # [3, 5, 8]
     }
     save_load_funcs = {
         "model_state_dict": {"save": save_torch_state, "load": load_torch_state},
@@ -198,6 +329,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_avg_volume_ratio": "include_avg_volume_ratio",
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
                     "embedding_model_name": "embedding_model_name",
+                    "include_after_hours": False,
                 },
                 "outputs": ["structured_data", "embedding_lookup", "raw_price_data"],
             },
@@ -216,9 +348,23 @@ def create_model_space(max_timestamp, min_timestamp):
                     "include_cv_volume_ratio": "include_cv_volume_ratio",
                     "keep_latest_only": True,
                     "embedding_model_name": "embedding_model_name",
+                    "include_after_hours": False,
                 },
                 "outputs": ["structured_data", "embedding_lookup", "raw_price_data"],
             },
+        },
+        {
+            "name": "drop_near_zero",
+            "train": {
+                "func": drop_near_zero,
+                "args": ["structured_data"],
+                "kwargs": {
+                    "max_drop_prob": "max_drop_prob",
+                    "zero_width": "zero_width",
+                },
+                "outputs": "structured_data",
+            },
+            # inference is never target-filtered — no target column to drop by
         },
         {
             "name": "filter_out_missing_data",
@@ -226,7 +372,12 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": filter_out_missing_data,
                 "args": ["structured_data", "missing_data_%_threshold"],
                 "kwargs": {
-                    "ignore_cols": ["symbol", "timestamp"],
+                    # news1_* coupled to num_news being pinned to 1 (DiscreteOrdinal([1])
+                    # above) — a missing article in the trailing news_history_threshold
+                    # is normal/expected, not a data-quality problem, so it shouldn't
+                    # count against a row's missing-data ratio. Revisit if num_news is
+                    # ever unpinned to explore values > 1.
+                    "ignore_cols": ["symbol", "timestamp", "news1_id", "news1_sentiment", "news1_age"],
                     "no_tolerance_cols": ["symbol", "timestamp", "target"],
                 },
                 "outputs": "structured_data",
@@ -235,7 +386,7 @@ def create_model_space(max_timestamp, min_timestamp):
                 "func": filter_out_missing_data,
                 "args": ["structured_data", "missing_data_%_threshold"],
                 "kwargs": {
-                    "ignore_cols": ["symbol", "timestamp"],
+                    "ignore_cols": ["symbol", "timestamp", "news1_id", "news1_sentiment", "news1_age"],
                     "no_tolerance_cols": ["symbol", "timestamp"],
                 },
                 "outputs": "structured_data",
@@ -376,6 +527,18 @@ def create_model_space(max_timestamp, min_timestamp):
             },
         },
         {
+            "name": "get_text_input_dim",
+            "train": {
+                "func": get_text_input_dim,
+                "args": ["train_data"],
+                "kwargs": {
+                    "num_news": "num_news",
+                    "embedding_lookup": "embedding_lookup",
+                },
+                "outputs": ["text_input_dim"],
+            },
+        },
+        {
             "name": "create/load_model",
             "train": {
                 "func": create_model,
@@ -385,6 +548,17 @@ def create_model_space(max_timestamp, min_timestamp):
                     "hidden_dim",
                     "dropout_rate",
                 ],
+                "kwargs": {
+                    "text_input_dim": "text_input_dim",
+                    "numeric_subnet_n_layers": "numeric_subnet_n_layers",
+                    "numeric_subnet_width_mult": "numeric_subnet_width_mult",
+                    "text_subnet_n_layers": "text_subnet_n_layers",
+                    "text_subnet_width_mult": "text_subnet_width_mult",
+                    "y_subnet_n_layers": "y_subnet_n_layers",
+                    "y_subnet_width_mult": "y_subnet_width_mult",
+                    "uncertainty_subnet_n_layers": "uncertainty_subnet_n_layers",
+                    "uncertainty_subnet_width_mult": "uncertainty_subnet_width_mult",
+                },
                 "outputs": ["model"],
                 "run_in_parent_process": True,  # model is not pickleable
             },
@@ -399,6 +573,17 @@ def create_model_space(max_timestamp, min_timestamp):
                     "hidden_dim",
                     "dropout_rate",
                 ],
+                "kwargs": {
+                    "text_input_dim": "text_input_dim",
+                    "numeric_subnet_n_layers": "numeric_subnet_n_layers",
+                    "numeric_subnet_width_mult": "numeric_subnet_width_mult",
+                    "text_subnet_n_layers": "text_subnet_n_layers",
+                    "text_subnet_width_mult": "text_subnet_width_mult",
+                    "y_subnet_n_layers": "y_subnet_n_layers",
+                    "y_subnet_width_mult": "y_subnet_width_mult",
+                    "uncertainty_subnet_n_layers": "uncertainty_subnet_n_layers",
+                    "uncertainty_subnet_width_mult": "uncertainty_subnet_width_mult",
+                },
                 "outputs": ["model", "optimizer", "epoch"],
             },
         },
@@ -415,10 +600,13 @@ def create_model_space(max_timestamp, min_timestamp):
                 ],
                 "kwargs": {
                     "lr": "learning_rate",
+                    "patience": "patience",
                     "batches_before_validation": 250,
                     "val_batches": 50,
                     "negative_pair_weight": "negative_pair_weight",
                     "false_positive_weight": "false_positive_weight",
+                    "warmup_max_epochs": "warmup_max_epochs",
+                    "warmup_patience": "warmup_patience",
                 },
                 "outputs": [
                     "model_state_dict",
@@ -428,6 +616,7 @@ def create_model_space(max_timestamp, min_timestamp):
                     "predictions",
                     "train_loss_history",
                     "val_loss_history",
+                    "warmup_mse",
                 ],
                 "gpu": True,
             },

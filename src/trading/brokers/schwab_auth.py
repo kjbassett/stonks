@@ -93,7 +93,23 @@ class SchwabAuth:
             {"grant_type": "refresh_token", "refresh_token": refresh_token}
         )
         new_tokens.setdefault("refresh_token", refresh_token)
+        if new_tokens["refresh_token"] == refresh_token:
+            # Schwab didn't rotate the refresh token, so it's still the same
+            # fixed-lifetime token from the last authorize()/rotation — keep its
+            # real deadline (guaranteed present: _is_refresh_expired above
+            # already rejects any token missing it) instead of
+            # _annotate_expiry's fresh "now + 7 days" guess, which would
+            # otherwise reset every refresh and mask the actual deadline
+            # until Schwab's hard rejection.
+            new_tokens["refresh_expires_at"] = tokens["refresh_expires_at"]
         self._save_tokens(new_tokens)
+
+    def seconds_until_refresh_expiry(self) -> float:
+        """Seconds remaining until the refresh token's real (Schwab-side) deadline."""
+        tokens = self._load_tokens()
+        if not tokens or tokens.get("refresh_expires_at") is None:
+            return 0.0
+        return float(tokens["refresh_expires_at"]) - time.time()
 
     async def get_client(self) -> "SchwabClient":  # noqa: F821
         """Return an authenticated SchwabClient, refreshing the access token if needed.

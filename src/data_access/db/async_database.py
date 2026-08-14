@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import pathlib
 import time
 from typing import Tuple, Union, List
 
@@ -10,11 +11,17 @@ from async_lru import alru_cache
 
 _log = logging.getLogger("data_access.db")
 
+_READ_POOL_SIZE = 4
+_SLOW_QUERY_THRESHOLD_S = 30.0
+
 
 class AsyncDatabase:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, read_pool_size: int = _READ_POOL_SIZE):
         self.db_path = db_path
-        self.conn = None
+        self.conn = None  # single writer connection
+        self.read_pool_size = read_pool_size
+        self._read_pool: asyncio.Queue = asyncio.Queue()
+        self._read_conns: List[aiosqlite.Connection] = []
         self.query_limiter = asyncio.Semaphore(32)  # Limit concurrent tasks
         self.active_operations = 0
         self.edit_lock = asyncio.Lock()  # Lock for transaction management
@@ -29,6 +36,17 @@ class AsyncDatabase:
             self.conn = await aiosqlite.connect(self.db_path)
             await self.conn.execute("PRAGMA journal_mode = WAL;")
             await self.conn.execute("PRAGMA synchronous = NORMAL;")
+        if not self._read_conns:
+            # WAL mode is a database-level setting (persisted in the file header
+            # by the writer above), so read-only connections pick it up automatically
+            # — they just need mode=ro so SQLite lets a would-be-writer PRAGMA no-op
+            # instead of erroring, and so multiple of these can read concurrently
+            # with each other and with the single writer.
+            ro_uri = pathlib.Path(self.db_path).absolute().as_uri() + "?mode=ro"
+            for _ in range(self.read_pool_size):
+                rconn = await aiosqlite.connect(ro_uri, uri=True)
+                self._read_conns.append(rconn)
+                await self._read_pool.put(rconn)
 
     async def close(self):
         if self.conn is not None:
@@ -36,6 +54,10 @@ class AsyncDatabase:
                 await asyncio.sleep(0.5)  # Allow other tasks to run
             await self.conn.close()
             self.conn = None
+        for rconn in self._read_conns:
+            await rconn.close()
+        self._read_conns = []
+        self._read_pool = asyncio.Queue()
 
     async def __call__(
         self, query: str, params: Tuple = (), return_type: str = "list"
@@ -57,25 +79,39 @@ class AsyncDatabase:
             async with self.operation_lock:  # Lock to prevent simultaneous incrementing of counter
                 # Count how many operations are currently active
                 self.active_operations += 1
+            t0 = time.monotonic()
             try:
                 # Use transaction lock only for write operations
                 # TODO query type = read or write
                 if query_type.upper() in ("INSERT", "UPDATE", "DELETE"):
                     async with self.edit_lock:
                         result = await self._execute(
-                            query, params, return_type, many, query_type, print_query
+                            query, params, return_type, many, query_type, print_query,
+                            conn=self.conn,
                         )
                         await self.conn.commit()  # Commit only for write operations
                 else:
-                    result = await self._execute(
-                        query, params, return_type, many, query_type, print_query
-                    )
+                    rconn = await self._read_pool.get()
+                    try:
+                        result = await self._execute(
+                            query, params, return_type, many, query_type, print_query,
+                            conn=rconn,
+                        )
+                    finally:
+                        await self._read_pool.put(rconn)
                 return result
             except Exception as e:
                 if query_type.upper() in {"INSERT", "UPDATE", "DELETE"}:
                     await self.conn.rollback()  # Rollback on error for write operations
                 raise e
             finally:
+                elapsed = time.monotonic() - t0
+                if elapsed > _SLOW_QUERY_THRESHOLD_S:
+                    preview = " ".join(query.split())[:200]
+                    _log.warning(
+                        "Slow query (%.1fs, type=%s): %s",
+                        elapsed, query_type or "SELECT", preview,
+                    )
                 async with self.operation_lock:
                     self.active_operations -= 1
 
@@ -87,14 +123,16 @@ class AsyncDatabase:
         many=False,
         query_type="",
         print_query=False,
+        conn=None,
     ) -> Union[int, pd.DataFrame, List[Tuple]]:
+        conn = conn if conn is not None else self.conn
         if print_query:
             _log.debug("Executing query:\n%s\nparams: %s", query, params)
 
         if many:  # TODO detect this automatically somehow
-            cursor = await self.conn.executemany(query, params)
+            cursor = await conn.executemany(query, params)
         else:
-            cursor = await self.conn.execute(query, params)
+            cursor = await conn.execute(query, params)
 
         if query.strip().upper().startswith("SELECT") or query_type.upper() == "SELECT":
             result = await cursor.fetchall()

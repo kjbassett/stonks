@@ -184,12 +184,67 @@ class TestStopLoss(unittest.IsolatedAsyncioTestCase):
         triggered = self._run_trigger_check({"MSFT": 50.0})
         self.assertEqual(triggered, [])
 
+    def test_floating_point_residue_shares_not_retriggered(self):
+        """Residue like 1e-12 left over from a prior sell must not re-trigger."""
+        positions = {"AAPL": Position(shares=1e-10, avg_price=10.0)}
+        triggered = self.engine._find_stop_loss_triggers(
+            positions, {"AAPL": 9.4}, equity=1_000.0
+        )
+        self.assertEqual(triggered, [])
+
     async def test_stop_loss_logged_at_warning(self):
         with self.assertLogs("trading.engine", level="WARNING") as cm:
             await self.engine._execute_stop_loss_closes(
                 ["AAPL"], {"AAPL": 9.4}, date(2026, 2, 15)
             )
         self.assertTrue(any("Stop-loss trigger" in m for m in cm.output))
+
+
+# ---------------------------------------------------------------------------
+# Stop-loss vs. PDT block interaction
+# ---------------------------------------------------------------------------
+
+
+class TestStopLossPdtDedup(unittest.IsolatedAsyncioTestCase):
+    """A stop-loss close that's blocked by the PDT rule must not repeatedly
+    attempt execution or repeatedly warn on every tick."""
+
+    async def test_pdt_blocked_stop_loss_skips_execution(self):
+        engine = _make_engine(allow_intraday=False, stop_loss_pct=0.05)
+        today = date(2026, 2, 15)
+        engine._record_trade("AAPL", today, "BUY")  # blocks a same-day SELL
+        engine.broker.portfolio.positions["AAPL"] = Position(shares=10, avg_price=10.0)
+        engine.execute_target_exposure = AsyncMock()
+
+        await engine._execute_stop_loss_closes(["AAPL"], {"AAPL": 9.4}, today)
+
+        engine.execute_target_exposure.assert_not_called()
+
+    async def test_pdt_blocked_stop_loss_warns_once_not_per_tick(self):
+        engine = _make_engine(allow_intraday=False, stop_loss_pct=0.05)
+        today = date(2026, 2, 15)
+        engine._record_trade("AAPL", today, "BUY")
+        engine.broker.portfolio.positions["AAPL"] = Position(shares=10, avg_price=10.0)
+        engine.execute_target_exposure = AsyncMock()
+
+        with self.assertLogs("trading.engine", level="WARNING") as cm:
+            for _ in range(5):  # simulate 5 ticks all re-finding the same trigger
+                await engine._execute_stop_loss_closes(["AAPL"], {"AAPL": 9.4}, today)
+
+        block_warnings = [m for m in cm.output if "blocked by PDT" in m]
+        self.assertEqual(len(block_warnings), 1)
+
+    async def test_non_blocked_stop_loss_still_executes(self):
+        """Symbols that are NOT PDT-blocked must still be closed as before."""
+        engine = _make_engine(allow_intraday=False, stop_loss_pct=0.05)
+        today = date(2026, 2, 15)
+        # No opposite-direction trade recorded for MSFT today, so it's not blocked.
+        engine.broker.portfolio.positions["MSFT"] = Position(shares=5, avg_price=50.0)
+        engine.execute_target_exposure = AsyncMock(return_value=None)
+
+        await engine._execute_stop_loss_closes(["MSFT"], {"MSFT": 47.0}, today)
+
+        engine.execute_target_exposure.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -488,11 +543,67 @@ class TestPDTRebalancePrescreening(unittest.IsolatedAsyncioTestCase):
 
         # No trades recorded for MSFT, so it is not PDT-blocked
         df_ts = pd.DataFrame([{"symbol": "MSFT", "close": 50.0, "portfolio_weight": 0.5}])
-        engine.execute_target_exposure = AsyncMock(return_value=None)
+        engine.execute_target_exposure = AsyncMock(
+            return_value=TradeResult("MSFT", 10.0, 50.0, True)
+        )
 
         await engine._run_rebalance(df_ts, equity=1_000.0, trade_date=today)
 
         engine.execute_target_exposure.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Rebalance summary logging
+# ---------------------------------------------------------------------------
+
+
+class TestRebalanceSummaryLogging(unittest.IsolatedAsyncioTestCase):
+    """_run_rebalance must always log a one-line summary so a silent rebalance
+    (no trades) is distinguishable from one that never ran."""
+
+    async def test_logs_summary_when_a_trade_executes(self):
+        engine = _make_engine()
+        today = date(2026, 2, 15)
+        # 20% of $1000 equity @ $10/share = 20 shares, well within the $1000 cash.
+        df_ts = pd.DataFrame([
+            {"symbol": "AAPL", "close": 10.0, "portfolio_weight": 0.2},
+            {"symbol": "MSFT", "close": 10.0, "portfolio_weight": 0.0},
+        ])
+
+        with self.assertLogs("trading.engine", level="INFO") as cm:
+            await engine._run_rebalance(df_ts, equity=1_000.0, trade_date=today)
+
+        summary = [m for m in cm.output if "Rebalance:" in m]
+        self.assertEqual(len(summary), 1)
+        self.assertIn("2/2 symbol(s) evaluated", summary[0])
+        self.assertIn("1 trade(s) executed", summary[0])
+
+    async def test_logs_zero_trades_when_all_no_change(self):
+        engine = _make_engine()
+        today = date(2026, 2, 15)
+        # No position held and 0% target -> shares_delta rounds to 0 -> no_change.
+        df_ts = pd.DataFrame([{"symbol": "AAPL", "close": 10.0, "portfolio_weight": 0.0}])
+
+        with self.assertLogs("trading.engine", level="INFO") as cm:
+            await engine._run_rebalance(df_ts, equity=1_000.0, trade_date=today)
+
+        summary = next(m for m in cm.output if "Rebalance:" in m)
+        self.assertIn("1/1 symbol(s) evaluated", summary)
+        self.assertIn("0 trade(s) executed", summary)
+
+    async def test_summary_excludes_pdt_blocked_symbols_from_evaluated_count(self):
+        engine = _make_engine(allow_intraday=False)
+        today = date(2026, 2, 15)
+        engine._record_trade("AAPL", today, "BUY")  # blocks a same-day SELL
+        engine.broker.portfolio.positions["AAPL"] = Position(shares=5, avg_price=10.0)
+        df_ts = pd.DataFrame([{"symbol": "AAPL", "close": 10.0, "portfolio_weight": 0.0}])
+
+        with self.assertLogs("trading.engine", level="INFO") as cm:
+            await engine._run_rebalance(df_ts, equity=1_000.0, trade_date=today)
+
+        summary = next(m for m in cm.output if "Rebalance:" in m)
+        self.assertIn("0/1 symbol(s) evaluated", summary)
+        self.assertIn("0 trade(s) executed", summary)
 
 
 if __name__ == "__main__":

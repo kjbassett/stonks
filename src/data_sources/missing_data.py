@@ -219,6 +219,8 @@ async def fill_gaps(
     else:
         companies = await cmp.get()
     n_cpy = len(companies)
+    total_gaps = 0
+    symbols_with_gaps = 0
     for i, (c, cpy) in enumerate(companies.iterrows(), 1):
         if pause_check is not None:
             await pause_check()
@@ -229,7 +231,12 @@ async def fill_gaps(
         if max_gap_size:
             gaps = break_large_gaps(gaps, max_gap_size)
         n_gaps = len(gaps)
-        _log.info("[%d/%d] %s: %d gap(s)", i, n_cpy, cpy["symbol"], n_gaps)
+        if n_gaps:
+            symbols_with_gaps += 1
+            total_gaps += n_gaps
+            _log.info("[%d/%d] %s: %d gap(s)", i, n_cpy, cpy["symbol"], n_gaps)
+        else:
+            _log.debug("[%d/%d] %s: no gaps", i, n_cpy, cpy["symbol"])
         company_tasks = []
         for gap in gaps:
             _log.debug(
@@ -243,4 +250,7 @@ async def fill_gaps(
             )
         if company_tasks:
             await asyncio.gather(*company_tasks)
-    _log.info("Gap filling complete")
+    _log.info(
+        "Gap filling complete: %d/%d symbols had gaps (%d total)",
+        symbols_with_gaps, n_cpy, total_gaps,
+    )
